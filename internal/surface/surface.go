@@ -220,8 +220,8 @@ func fileImports(file *ast.File) map[string]string {
 			continue
 		}
 		name := path
-		if i := strings.LastIndexByte(path, '/'); i >= 0 {
-			name = path[i+1:]
+		if _, last, found := strings.CutLast(path, "/"); found {
+			name = last
 		}
 		if spec.Name != nil {
 			name = spec.Name.Name
