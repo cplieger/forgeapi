@@ -4,19 +4,19 @@
 
 forgeapi lets your Go code read and write pull requests, issues, merges, checks, releases and labels on GitHub, GitLab, Gitea and Forgejo through one set of types.
 
-It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle yourself. It needs Go 1.27.1 or later. Its code imports six modules, all by the same author, and none of their types appears in its API. It is licensed under Apache-2.0.
+It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It has no operations for comments, reviews or file contents. It needs Go 1.27.1 or later, is at v1 and is licensed under Apache-2.0. It depends only on atomicfile, httpx, jsoncap, runesafe, ssrf and urlform, six modules by the same author.
 
 ## Why use it
 
-forgeapi is built for Go tools that work with more than one forge.
+forgeapi is built for Go tools that span several forges.
 
-- Each operation is one method that returns the same type on all four products. Where a product lacks a feature, the field always reads unknown, empty or zero there.
-- Each remote operation's godoc lists its route, its request cost and every field that differs per product. [SUPPORT.md](SUPPORT.md) shows which operations each product supports.
-- It serves github.com, gitlab.com and Gitea and Forgejo instances. GitHub Enterprise Server and self-managed GitLab run the same code but were not [measured](docs/tested-against.md). `families.Open` detects which family a URL points at.
-- A client [paces itself from the forge's rate limit](docs/request-prices.md) and [reports a repository that moved](docs/renames.md).
-- `creds` runs the OAuth device grant on GitHub and GitLab and refreshes tokens. `gitcred` hands them to git.
+- Each operation is one method with the same result types on all four products. A field a product does not supply keeps its zero value, the unknown member for an enumeration.
+- Each operation's godoc lists its route, request cost and differing fields per product, and [SUPPORT.md](SUPPORT.md) maps operations to products.
+- It serves github.com, gitlab.com, and Gitea and Forgejo instances. GitHub Enterprise Server and self-managed GitLab run the same code but were not [measured](docs/tested-against.md).
+- A client [paces itself to the rate limit](docs/request-prices.md) and [reports a repository that moved](docs/renames.md).
+- `creds` runs the OAuth device flow on GitHub and GitLab and refreshes tokens. `gitcred` hands them to git.
 
-Consider [go-github](https://github.com/google/go-github) if you target GitHub alone and want a client organized around GitHub's REST API. Consider [go-scm](https://github.com/drone/go-scm) if you need Bitbucket, Gitee or Gogs, or comment and file endpoints.
+Consider [go-github](https://github.com/google/go-github) if you target GitHub alone and want services that mirror its API documentation. Consider [go-scm](https://github.com/drone/go-scm) if you need Bitbucket, Gitee or Gogs, or comment and file endpoints. Consider [git-pkgs/forge](https://github.com/git-pkgs/forge) if you need reviews, branches, Bitbucket Cloud or Gerrit, or a command-line tool.
 
 ## Install
 
@@ -44,38 +44,39 @@ if err != nil {
 prs, err := client.ListPRs(ctx, repos.Items[0].Ref, forgeapi.WithState(forgeapi.ListStateOpen))
 ```
 
-`Example` in [example_test.go](example_test.go) is the compiling form of this, with the credential source and the error branch written out.
+[example_test.go](example_test.go) holds the compiling form, with a credential source and error handling.
 
-A client asks its `CredentialSource` for a token on every request, so a rotating token and a static one use the same code. Use the `RepoRef` values a call returns rather than building your own, because each one records the family it belongs to. Call `Close` when you are done with a client, because it holds a pool of connections.
+The `github`, `gitlab` and `gitea` packages each hold one client, and `gitea` serves Forgejo too. A client asks its `CredentialSource` for a token on every request, so a rotating token and a static one use the same code. Take each `RepoRef` from a call such as `ListRepos` rather than building one, because it carries its family's own spelling of the repository path. Call `Close` when you are done, to release the client's connection pool.
 
-- When you do not know the family, `families.Open` detects it and returns a `forgeapi.Core`. [Connecting to a forge](docs/connecting.md) covers detection and what it costs.
+- `families.Open` detects which forge a URL points at and returns a `forgeapi.Core`. [Connecting to a forge](docs/connecting.md) covers what detection costs.
 - An instance on a private network or on plain `http` is refused until you pass `forgeapi.WithPrivateAddresses(true)` or `forgeapi.WithPlaintextHTTP(true)`. Plain HTTP sends the token and every request in cleartext.
 - `forgeapi.WithMutations(false)` makes a client read-only. In tests, `forgeapi.WithWireTransport` takes an `http.RoundTripper` that answers requests without a network.
-- The `Example` in the `creds` package signs a user in through the device grant and runs a client on the stored credential. Run one refreshing process per credential store, because two can lose a rotated token and force the user to reconnect. [Credentials](docs/credentials.md) covers the store and the git credential helper.
+- The `creds` package `Example` signs a user in and builds a client on the stored credential. Let only one process refresh tokens from a store, because two can lose a rotated token and force the user to sign in again. [Credentials](docs/credentials.md) covers the store and the git credential helper.
 
 ## API
 
-- `Core` is what every client satisfies: `Whoami`, `ListRepos`, `ListPRs`, `ListMyPRs`, `ReadPR`, `CreatePR`, `ClosePR`, `ReopenPR`, `RerunFailedChecks`, `MergePR`, `MergeStatus`, `CommitStatus`, `ListRuns`, `ListIssues`, `ListMyIssues`, `CreateIssue`, `CloseIssue`, the capability reads, `BudgetState` and `Close`. Declare the narrowest role your code uses, and use `Core` only where one value must support every core operation.
-- `Releases`, with `ListReleases` and `CreateRelease`, and `Labels`, with `ListLabels`, are optional roles. Check for one with a type assertion, `rel, ok := client.(forgeapi.Releases)`. A family that cannot serve it fails the assertion.
+- `Core` is what every client satisfies. It joins eight interfaces, `Identity`, `Repos`, `PullRequests`, `Merges`, `Checks`, `Issues`, `Capabilities` and `Governor`, plus `Close`. Declare the narrowest one your code uses.
+- `Releases` and `Labels` sit outside `Core`, and all three clients implement both. Reach them from a `Core` with a type assertion such as `rel, ok := client.(forgeapi.Releases)`.
+- The writes are `CreatePR`, `ClosePR`, `ReopenPR`, `MergePR`, `RerunFailedChecks`, `CreateIssue`, `CloseIssue` and `CreateRelease`. Every other operation reads.
+- `Checks.CommitStatus` returns a commit's combined check verdict. `Checks.ListRuns` lists GitHub Actions runs, GitLab pipelines, and Gitea and Forgejo Actions runs.
 - `Connection` describes an instance, `RepoRef` and `PRRef` address a repository and a pull request, and `Option` and `ListOption` configure a client and a list call.
-- Every list answers a `Page` with a `Next` cursor. [Pages and continuations](docs/pagination.md) covers short pages and resuming a walk.
-- `creds` holds the device grant, the refreshing source and the file store. `gitcred` holds the git credential helper.
-- No operation reads or writes comments, reviews or file contents.
+- Every list answers a `Page` with a `Next` cursor, and [Pages and continuations](docs/pagination.md) covers short pages and resuming.
+- `creds` holds the device flow, the refreshing source and the file store. `gitcred` holds the git credential helper.
 
 Per-symbol detail is on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi).
 
 ## Every call answers nil, an Error or a context error
 
-A caller can branch on these three outcomes completely. Recover the pointer form, which is the form every operation returns, and branch on the code:
+A caller can branch on these three outcomes completely. Every operation of a client, and `families.Open`, returns a forge or library failure as the `*forgeapi.Error` pointer, so recover it with `errors.As` and branch on its code:
 
 ```go
 var ferr *forgeapi.Error
 if errors.As(err, &ferr) && ferr.Code == forgeapi.CodeRepoRefStale { ... }
 ```
 
-`Error` carries an `ErrorKind` and a `Code`, because one status means different things per product and per operation. Never branch on `Error.Message`, which is the forge's own text. `Error` wraps nothing and the library declares no sentinel of its own, so the chain ends there.
+`Error` carries an `ErrorKind` and a `Code`, because one HTTP status means different things per product and per operation. `Error.Message` is the forge's own text, so never branch on it. `Error` wraps no other error, and the library declares no sentinel errors of its own.
 
-A cancelled or expired context returns Go's own sentinel unchanged, so `errors.Is(err, context.Canceled)` works. Each operation also runs under a deadline of its own, `Budget.OperationTimeout`, and its expiry is a context error too. To know whether your own context ended, check `ctx.Err()` rather than the returned error.
+A cancelled or expired context returns Go's own `context.Canceled` or `context.DeadlineExceeded` unchanged, so `errors.Is` works on it. Each operation also runs under its own deadline, `Budget.OperationTimeout`, 20 seconds by default, which expires as `context.DeadlineExceeded` too. To tell whether your own context ended, check `ctx.Err()`. The `creds` file store and the `gitcred` helper return ordinary Go errors when a read or write fails.
 
 ## Unsupported by design
 
@@ -85,7 +86,7 @@ forgeapi leaves these out on purpose. [Non-goals](docs/non-goals.md) gives the r
 - A vendor SDK behind any of the clients
 - Receiving webhooks
 - Git operations such as clone, fetch and push
-- A "partly supported" mark in [SUPPORT.md](SUPPORT.md). Each difference is stated on the field it affects.
+- A "partly supported" mark in [SUPPORT.md](SUPPORT.md). A difference between products is stated on the field it affects
 - Reading a proxy from the environment
 - A polling loop in the API
 - Code scanning
@@ -93,11 +94,11 @@ forgeapi leaves these out on purpose. [Non-goals](docs/non-goals.md) gives the r
 
 ## Documentation
 
-- [Connecting to a forge](docs/connecting.md) covers connections, family detection, options and capabilities.
+- [Connecting to a forge](docs/connecting.md) covers connections, forge detection, options and capabilities.
 - [Pages and continuations](docs/pagination.md) explains paging and resuming a list.
 - [Renamed and moved repositories](docs/renames.md) says what a call answers after a move.
 - [Request prices and the budget](docs/request-prices.md) covers call costs and pacing.
-- [Credentials](docs/credentials.md) covers the device grant, token refresh, the store and the git credential helper.
+- [Credentials](docs/credentials.md) covers the device flow, token refresh, the store and the git credential helper.
 - [Tested against](docs/tested-against.md) lists the measured instances and versions.
 - [Non-goals](docs/non-goals.md) explains what is left out and why.
 
