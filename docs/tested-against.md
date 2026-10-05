@@ -21,4 +21,4 @@ This table is the one place a version appears. The per-product facts in the godo
 
 ## The weekly live run
 
-A scheduled workflow, [`live.yaml`](../.github/workflows/live.yaml), runs the test suite against github.com, gitlab.com and released Gitea and Forgejo images every week, writes included. On 2026-10-04 it passed all 26 cases against github.com and all 26 against gitlab.com. GitHub Enterprise Server and self-managed GitLab are served by the same code, and neither the measurement nor that run reaches them.
+A scheduled workflow, [`live.yaml`](../.github/workflows/live.yaml), runs the test suite against github.com, gitlab.com and released Gitea and Forgejo images every week, writes included. It runs the github.com cases twice, once with a classic token and then with a fine-grained token scoped to the sandbox repository. On 2026-10-04 it passed all 26 cases against github.com and all 26 against gitlab.com. On 2026-10-05 all 26 github.com cases passed with the fine-grained token. GitHub Enterprise Server and self-managed GitLab are served by the same code, and neither the measurement nor the weekly run reaches them.
