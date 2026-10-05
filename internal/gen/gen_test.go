@@ -1,45 +1,75 @@
-package main
+package gen
 
 import (
 	"bytes"
+	"errors"
+	"flag"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
+// update is passed by the go:generate directive in doc.go.
+var update = flag.Bool("update", false, "write the generated files instead of comparing them")
+
+// moduleDir is the module root seen from this package's directory, where go test
+// runs a test.
+const moduleDir = "../.."
+
 // TestGeneratedFilesAreCurrent is the stale-output gate: it renders both outputs
 // into memory from the expectation table and fails when either differs from the
 // file on disk, so a per-forge block edited by hand and a table changed without a
-// regeneration are the same failure.
+// regeneration are the same failure. With -update it writes them instead.
 //
 // It is the whole of the byte-identity gate, rather than a test of its own beside
 // one: what a renderer-against-fixture gate compares is two renderings, and what this
 // compares is the published documentation against the table it comes from.
 func TestGeneratedFilesAreCurrent(t *testing.T) {
-	root, err := moduleRoot()
+	// An os.Root on the module keeps every read and write inside it.
+	root, err := os.OpenRoot(moduleDir)
 	if err != nil {
-		t.Fatalf("Setup: moduleRoot(): %v", err)
+		t.Fatalf("Setup: os.OpenRoot(%q): %v", moduleDir, err)
 	}
-	rolesPath := filepath.Join(root, rolesFile)
-	current, err := os.ReadFile(rolesPath)
+	defer root.Close()
+	current, err := root.ReadFile(rolesFile)
 	if err != nil {
-		t.Fatalf("Setup: reading %s: %v", rolesPath, err)
+		t.Fatalf("Setup: reading %s: %v", rolesFile, err)
 	}
+	outputs := map[string][]byte{supportFile: renderSupport()}
 	roles, err := renderRoles(current)
 	if err != nil {
 		t.Errorf("renderRoles(%s) = %v, want a rendered file", rolesFile, err)
-	} else if !bytes.Equal(roles, current) {
-		t.Errorf("%s is stale: %s\n\trun go generate ./... from %s", rolesFile, firstDifference(current, roles), root)
+	} else {
+		outputs[rolesFile] = roles
 	}
-	supportPath := filepath.Join(root, supportFile)
-	held, err := os.ReadFile(supportPath)
-	if err != nil {
-		t.Fatalf("Setup: reading %s: %v", supportPath, err)
+	for name, want := range outputs {
+		if *update {
+			if err := write(root, name, want); err != nil {
+				t.Errorf("write(%s) = %v, want the file written", name, err)
+			}
+			continue
+		}
+		held, err := root.ReadFile(name)
+		if err != nil {
+			t.Fatalf("Setup: reading %s: %v", name, err)
+		}
+		if !bytes.Equal(held, want) {
+			t.Errorf("%s is stale: %s\n\trun go generate ./... from the module root", name, firstDifference(held, want))
+		}
 	}
-	if support := renderSupport(); !bytes.Equal(support, held) {
-		t.Errorf("%s is stale: %s\n\trun go generate ./... from %s", supportFile, firstDifference(held, support), root)
+}
+
+// write leaves a file whose content already matches untouched, so a generate run
+// over an up-to-date tree changes no timestamp.
+func write(root *os.Root, name string, want []byte) error {
+	got, err := root.ReadFile(name)
+	if err == nil && bytes.Equal(got, want) {
+		return nil
 	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return root.WriteFile(name, want, 0o600)
 }
 
 // TestEveryEntryRenders exercises the renderers over the whole table rather than
