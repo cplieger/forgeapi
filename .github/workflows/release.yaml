@@ -1,0 +1,61 @@
+# Synced from cplieger/ci/.github/workflow-templates/release.yml — DO NOT EDIT.
+# The release pipeline is fully centralized in
+# cplieger/ci/.github/workflows/release.yaml; this file only calls it. The
+# central pipeline selects the channel from the branch it runs on (main is the
+# stable channel), computes the version, detects the repo type and the changed
+# paths, and publishes. This file triggers on main only until the pinned
+# pipeline is one that publishes a dev channel from a dev push. Per-repo
+# behaviour is the "Resolve repo policy" step there; no override surface here.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      # Read by the v2 pipeline's no-change gate through github.event.inputs
+      # (deliberately not forwarded via `with:`); the scheduled staleness
+      # rebuild dispatches with it while a repo's default branch is main.
+      skip_if_unchanged:
+        description: "Skip publishing when the rebuilt image is package-identical to :latest (used by the scheduled staleness rebuild)."
+        type: boolean
+        default: false
+
+# Serialize release runs per repo. Two merges seconds apart otherwise race:
+# the losing run can 403 even on the git-refs tag create and strand a
+# releasable commit behind a root_changed=false skip (observed on
+# web-terminal-server, 2026-07-19). Queued, never cancelled — when GitHub
+# replaces a superseded queued run with a newer one, the newer run's cliff
+# window covers the superseded run's commits, so nothing is lost. Lives here
+# and not in the reusable workflow: workflow-level concurrency only takes
+# effect in the workflow GitHub actually schedules (the caller); the called
+# workflow supports it at job level only.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Top-level permissions are read-only (least privilege); the release job declares
+# the write scopes it actually needs. GitHub takes the intersection of these
+# job-level grants and what the called reusable workflow declares, so scoping
+# them to the job is functionally equivalent.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      statuses: write
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+    uses: cplieger/ci/.github/workflows/release.yaml@51affb0eab0a80aa0711a6e7c7e0d1339e0c62f2 # v2
+    # Forward only the two Docker Hub publish credentials the reusable pipeline
+    # actually declares and consumes, rather than `secrets: inherit` (which
+    # exposes every repo secret to the reusable-workflow trust boundary). Both
+    # are `required: false` upstream, so repos without them (Go/TS libs that
+    # publish via OIDC) pass empty values and skip the Docker Hub job entirely.
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
