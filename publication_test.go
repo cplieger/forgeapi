@@ -52,7 +52,7 @@ var workingDocumentTokens = []string{
 // TestNoPublishedCommentPointsAtAWorkingDocument holds EVERY file the module ships
 // to the rule above, whatever its extension.
 //
-// The reach is the whole tree rather than the Go and Markdown subset, because the
+// The reach is the whole shipped tree rather than the Go and Markdown subset, because the
 // rule is about what a reader meets and a reader meets the workflow YAML, the golden
 // surface file, the lint configuration and the recorded bodies too. A gate over the
 // two extensions a maintainer thinks of as published leaves every other file free to
@@ -70,6 +70,9 @@ func TestNoPublishedCommentPointsAtAWorkingDocument(t *testing.T) {
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if unshipped(root, path, d) {
+			return fs.SkipDir
 		}
 		if d.IsDir() {
 			return nil
@@ -108,6 +111,9 @@ func TestEveryRecordedBodyNamesItsRecordingWithoutAPath(t *testing.T) {
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if unshipped(root, path, d) {
+			return fs.SkipDir
 		}
 		if d.IsDir() || filepath.Ext(path) != ".json" || !strings.Contains(path, "testdata") {
 			return nil
@@ -204,6 +210,19 @@ func checkText(t *testing.T, root, path string) {
 			t.Errorf("%s names %q, and that does not ship with this library", relative(root, path), token)
 		}
 	}
+}
+
+// unshipped reports whether the walk has reached a directory this repository does
+// not publish. A dot-directory below the root holds version-control state, tool
+// caches or local scratch, none of which a reader of the repository receives; .github
+// is the exception, because its workflows ship. testdata ships: it holds the golden
+// surface file and the recorded bodies.
+func unshipped(root, path string, d fs.DirEntry) bool {
+	if !d.IsDir() || path == root {
+		return false
+	}
+	name := d.Name()
+	return strings.HasPrefix(name, ".") && name != ".github"
 }
 
 // moduleRoot is the directory holding go.mod, which is where the root package's own
