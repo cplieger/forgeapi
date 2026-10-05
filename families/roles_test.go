@@ -69,9 +69,9 @@ type (
 // this a statement about the declared surface rather than about one
 // implementation.
 var (
-	_ listReleasesOp  = (forgeapi.Releases)(nil)
-	_ createReleaseOp = (forgeapi.Releases)(nil)
-	_ listLabelsOp    = (forgeapi.Labels)(nil)
+	_ listReleasesOp  = forgeapi.Releases(nil)
+	_ createReleaseOp = forgeapi.Releases(nil)
+	_ listLabelsOp    = forgeapi.Labels(nil)
 )
 
 // TestNarrowFamilyLacksTheOptionalRoles is the NEGATIVE half of the role

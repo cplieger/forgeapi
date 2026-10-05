@@ -55,7 +55,7 @@ func TestEveryEntryRenders(t *testing.T) {
 		if !strings.HasPrefix(got, marker+"\n") {
 			t.Errorf("block(%q) does not open with %q", method, marker)
 		}
-		for _, line := range strings.Split(strings.TrimSuffix(got, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSuffix(got, "\n"), "\n") {
 			if !strings.HasPrefix(line, comment) {
 				t.Errorf("block(%q) has the non-comment line %q", method, line)
 			}

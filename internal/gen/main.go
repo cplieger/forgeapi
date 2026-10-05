@@ -51,12 +51,19 @@ func main() {
 	}
 }
 
+// run reads and writes through an os.Root on the module directory, so no output
+// path can resolve outside the module.
 func run() error {
-	root, err := moduleRoot()
+	dir, err := moduleRoot()
 	if err != nil {
 		return err
 	}
-	current, err := os.ReadFile(filepath.Join(root, rolesFile))
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	current, err := root.ReadFile(rolesFile)
 	if err != nil {
 		return err
 	}
@@ -64,23 +71,23 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := write(filepath.Join(root, rolesFile), roles); err != nil {
+	if err := write(root, rolesFile, roles); err != nil {
 		return err
 	}
-	return write(filepath.Join(root, supportFile), renderSupport())
+	return write(root, supportFile, renderSupport())
 }
 
 // write leaves a file whose content already matches untouched, so a generate run
 // over an up-to-date tree changes no timestamp.
-func write(path string, want []byte) error {
-	got, err := os.ReadFile(path)
+func write(root *os.Root, name string, want []byte) error {
+	got, err := root.ReadFile(name)
 	if err == nil && bytes.Equal(got, want) {
 		return nil
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return os.WriteFile(path, want, 0o600)
+	return root.WriteFile(name, want, 0o600)
 }
 
 // moduleRoot walks up from the working directory to the directory holding go.mod,
@@ -115,48 +122,66 @@ func renderRoles(src []byte) ([]byte, error) {
 	role := ""
 	seen := map[string]bool{}
 	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		if found := interfaceLine.FindStringSubmatch(strings.TrimSuffix(line, "\n")); found != nil {
+		line := strings.TrimSuffix(lines[i], "\n")
+		if found := interfaceLine.FindStringSubmatch(line); found != nil {
 			role = found[1]
 		}
-		if strings.TrimSuffix(line, "\n") != marker {
-			out.WriteString(line)
+		if line != marker {
+			out.WriteString(lines[i])
 			continue
 		}
-		end := i
-		for end < len(lines) && strings.HasPrefix(lines[end], comment) {
-			end++
-		}
-		if end >= len(lines) {
-			return nil, fmt.Errorf("%s: a %q block at the end of the file", rolesFile, marker)
-		}
-		found := signature.FindStringSubmatch(lines[end])
-		if found == nil {
-			return nil, fmt.Errorf("%s: the block above %q opens no method", rolesFile, strings.TrimSpace(lines[end]))
-		}
-		method := role + "." + found[1]
-		block, err := block(method)
+		end, name, err := span(lines, i)
 		if err != nil {
 			return nil, err
 		}
-		out.WriteString(block)
+		method := role + "." + name
+		rendered, err := block(method)
+		if err != nil {
+			return nil, err
+		}
+		out.WriteString(rendered)
 		seen[method] = true
 		i = end - 1
 	}
-	for _, method := range methods() {
-		if !seen[method] {
-			return nil, fmt.Errorf("%s: no %q block for %s", rolesFile, marker, method)
-		}
+	if err := covered(seen); err != nil {
+		return nil, err
 	}
 	return []byte(out.String()), nil
+}
+
+// span finds the end of the generated span opening at lines[start]: the index of
+// the signature line that closes it, and the name of the method it declares.
+func span(lines []string, start int) (end int, name string, err error) {
+	end = start
+	for end < len(lines) && strings.HasPrefix(lines[end], comment) {
+		end++
+	}
+	if end >= len(lines) {
+		return 0, "", fmt.Errorf("%s: a %q block at the end of the file", rolesFile, marker)
+	}
+	found := signature.FindStringSubmatch(lines[end])
+	if found == nil {
+		return 0, "", fmt.Errorf("%s: the block above %q opens no method", rolesFile, strings.TrimSpace(lines[end]))
+	}
+	return end, found[1], nil
+}
+
+// covered fails on the first table method roles.go carries no block for.
+func covered(seen map[string]bool) error {
+	for _, method := range methods() {
+		if !seen[method] {
+			return fmt.Errorf("%s: no %q block for %s", rolesFile, marker, method)
+		}
+	}
+	return nil
 }
 
 // methods lists the table's operations once, in table order.
 func methods() []string {
 	var out []string
-	for _, entry := range spec.Table {
-		if !slices.Contains(out, entry.Method) {
-			out = append(out, entry.Method)
+	for i := range spec.Table {
+		if method := spec.Table[i].Method; !slices.Contains(out, method) {
+			out = append(out, method)
 		}
 	}
 	return out
@@ -166,19 +191,24 @@ func methods() []string {
 func entries(method string) ([]spec.Entry, error) {
 	out := make([]spec.Entry, 0, len(spec.Products))
 	for _, product := range spec.Products {
-		found := false
-		for _, entry := range spec.Table {
-			if entry.Method == method && entry.Product == product {
-				out = append(out, entry)
-				found = true
-				break
-			}
-		}
-		if !found {
+		entry := lookup(method, product)
+		if entry == nil {
 			return nil, fmt.Errorf("the table has no %s entry for %s", product, method)
 		}
+		out = append(out, *entry)
 	}
 	return out, nil
+}
+
+// lookup returns the table's entry for one method on one product, or nil when the
+// table has none.
+func lookup(method string, product spec.Product) *spec.Entry {
+	for i := range spec.Table {
+		if entry := &spec.Table[i]; entry.Method == method && entry.Product == product {
+			return entry
+		}
+	}
+	return nil
 }
 
 // block renders one method's generated span: the four exercise rows, then one
@@ -196,8 +226,8 @@ func block(method string) (string, error) {
 	for _, product := range spec.Products {
 		width = max(width, len(product))
 	}
-	for _, entry := range found {
-		out.WriteString(fmt.Sprintf("%s\t%-*s  %s\n", comment, width, entry.Product, exercises(entry)))
+	for i := range found {
+		fmt.Fprintf(&out, "%s\t%-*s  %s\n", comment, width, found[i].Product, exercises(&found[i]))
 	}
 	group(&out, found, departures, func(names []string) string {
 		return fmt.Sprintf("%s %s %s from the normalized contract:\n", comment, join(names), verb(len(names)))
@@ -224,8 +254,8 @@ func group(out *strings.Builder, found []spec.Entry, rows func(*spec.Entry) stri
 			end++
 		}
 		names := make([]string, 0, end-start)
-		for _, entry := range found[start:end] {
-			names = append(names, string(entry.Product))
+		for i := start; i < end; i++ {
+			names = append(names, string(found[i].Product))
 		}
 		out.WriteString(comment + "\n")
 		out.WriteString(heading(names))
@@ -252,7 +282,7 @@ func sends(entry *spec.Entry) string {
 	}
 	var out strings.Builder
 	for _, row := range entry.Sends {
-		out.WriteString(fmt.Sprintf("%s\t%-*s  %-*s  %s\n", comment, field, row.Field, where, row.Where, row.Says))
+		fmt.Fprintf(&out, "%s\t%-*s  %-*s  %s\n", comment, field, row.Field, where, row.Where, row.Says)
 	}
 	return out.String()
 }
@@ -271,7 +301,7 @@ func sendVerb(count int) string {
 // that carries no such verb, where the capability refuses the call and a departure
 // row of that entry says what is absent, and a route nothing has settled yet,
 // where the row says that rather than naming a plausible one.
-func exercises(entry spec.Entry) string {
+func exercises(entry *spec.Entry) string {
 	switch {
 	case entry.Exercises != "":
 		return entry.Exercises + ", " + price(entry.Requests) + needs(entry)
@@ -317,7 +347,7 @@ func price(requests spec.Requests) string {
 	return out
 }
 
-func needs(entry spec.Entry) string {
+func needs(entry *spec.Entry) string {
 	if entry.Needs == "" {
 		return ""
 	}
@@ -361,7 +391,7 @@ func departures(entry *spec.Entry) string {
 	}
 	var out strings.Builder
 	for i, g := range groups {
-		out.WriteString(fmt.Sprintf("%s\t%-*s  %-*s  %s\n", comment, subject, subjects[i], kind, g.kind, g.says))
+		fmt.Fprintf(&out, "%s\t%-*s  %-*s  %s\n", comment, subject, subjects[i], kind, g.kind, g.says)
 	}
 	return out.String()
 }
@@ -426,11 +456,10 @@ func renderSupport() []byte {
 		out.WriteString("| `" + method + "` |")
 		for _, product := range spec.Products {
 			cell := ""
-			for _, entry := range spec.Table {
-				if entry.Method != method || entry.Product != product {
-					continue
+			for i := range spec.Table {
+				if entry := &spec.Table[i]; entry.Method == method && entry.Product == product {
+					cell = string(entry.Support)
 				}
-				cell = string(entry.Support)
 			}
 			out.WriteString(" " + cell + " |")
 		}
