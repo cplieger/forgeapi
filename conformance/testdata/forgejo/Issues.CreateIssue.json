@@ -1,0 +1,93 @@
+{
+  "//": "cut from a recorded mutations_local response, read 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the mutation's own answer, captured on 2026-10-02 on local instances of its current stable and long-term releases: after the label read, the create answers 201 with label objects, as this body does; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer codeberg.org gave anonymously, read 2026-10-02",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/repos/example/example/labels",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "name": "example-label",
+          "color": "ededed",
+          "description": "Example label.",
+          "id": 1
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/repos/example/example/issues",
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "number": 1,
+        "state": "open",
+        "title": "Example issue",
+        "body": "Example issue body.",
+        "user": {
+          "login": "example-user"
+        },
+        "html_url": "https://forge.example/example/example/issues/1",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-02T00:00:00Z",
+        "labels": [
+          {
+            "name": "example-label",
+            "color": "ededed",
+            "description": "Example label."
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/version",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "version": "16.0.0+gitea-1.22.0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/swagger.v1.json",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "swagger": "2.0",
+        "basePath": "/api/v1",
+        "info": {
+          "title": "Forgejo API",
+          "version": "16.0.0+gitea-1.22.0"
+        },
+        "paths": {
+          "/repos/{owner}/{repo}/actions/runs/{run_id}/logs": {
+            "get": {
+              "operationId": "repoGetActionRunLogs"
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/api",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "max_response_items": 50
+      }
+    }
+  ]
+}

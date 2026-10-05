@@ -1,0 +1,489 @@
+{
+  "//": "cut from this product's own recorded responses, read 2026-09-18, and 2026-10-01 for the run listing's rows and the issue search row, trimmed to the keys this family's wire types read and with the owner, repository, login, ids, branches, URLs and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
+  "graphql_pr_read": {
+    "nameWithOwner": "example/example",
+    "viewerPermission": null,
+    "pullRequest": {
+      "number": 1,
+      "title": "Example pull request",
+      "body": "Example body.",
+      "url": "https://forge.example/example/example/pull/1",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-01-02T00:00:00Z",
+      "isDraft": false,
+      "state": "OPEN",
+      "author": {
+        "login": "example-user"
+      },
+      "headRefName": "example-feature",
+      "baseRefName": "main",
+      "headRefOid": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "BLOCKED",
+      "merged": false,
+      "autoMergeRequest": {
+        "enabledAt": "2026-09-17T10:08:09Z",
+        "mergeMethod": "SQUASH"
+      },
+      "mergeQueueEntry": null,
+      "labels": {
+        "totalCount": 1,
+        "nodes": [
+          {
+            "name": "example-label",
+            "color": "ededed",
+            "description": "Example label."
+          }
+        ]
+      },
+      "commits": {
+        "nodes": [
+          {
+            "commit": {
+              "oid": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+              "statusCheckRollup": {
+                "state": "FAILURE",
+                "contexts": {
+                  "totalCount": 25,
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": "MjU"
+                  },
+                  "nodes": [
+                    {
+                      "__typename": "CheckRun",
+                      "name": "example/build",
+                      "conclusion": "SUCCESS",
+                      "status": "COMPLETED",
+                      "detailsUrl": "https://ci.example/build/1"
+                    },
+                    {
+                      "__typename": "CheckRun",
+                      "name": "example/build",
+                      "conclusion": "SUCCESS",
+                      "status": "COMPLETED",
+                      "detailsUrl": "https://ci.example/build/1"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "graphql_search_row": {
+    "__typename": "PullRequest",
+    "number": 1,
+    "title": "Example pull request",
+    "body": "Example body.",
+    "url": "https://forge.example/example/example/pull/1",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "isDraft": false,
+    "state": "OPEN",
+    "author": {
+      "login": "example-user"
+    },
+    "headRefName": "example-feature",
+    "baseRefName": "main",
+    "headRefOid": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "merged": false,
+    "autoMergeRequest": null,
+    "mergeQueueEntry": null,
+    "repository": {
+      "nameWithOwner": "example/example"
+    },
+    "labels": {
+      "totalCount": 0,
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "oid": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+            "statusCheckRollup": {
+              "state": "SUCCESS",
+              "contexts": {
+                "totalCount": 7,
+                "checkRunCount": 7,
+                "statusContextCount": 0,
+                "checkRunCountsByState": [
+                  {
+                    "count": 0,
+                    "state": "ACTION_REQUIRED"
+                  },
+                  {
+                    "count": 0,
+                    "state": "CANCELLED"
+                  },
+                  {
+                    "count": 0,
+                    "state": "COMPLETED"
+                  },
+                  {
+                    "count": 0,
+                    "state": "FAILURE"
+                  },
+                  {
+                    "count": 0,
+                    "state": "IN_PROGRESS"
+                  },
+                  {
+                    "count": 0,
+                    "state": "NEUTRAL"
+                  },
+                  {
+                    "count": 0,
+                    "state": "PENDING"
+                  },
+                  {
+                    "count": 0,
+                    "state": "QUEUED"
+                  },
+                  {
+                    "count": 3,
+                    "state": "SKIPPED"
+                  },
+                  {
+                    "count": 0,
+                    "state": "STALE"
+                  },
+                  {
+                    "count": 0,
+                    "state": "STARTUP_FAILURE"
+                  },
+                  {
+                    "count": 4,
+                    "state": "SUCCESS"
+                  },
+                  {
+                    "count": 0,
+                    "state": "TIMED_OUT"
+                  },
+                  {
+                    "count": 0,
+                    "state": "WAITING"
+                  }
+                ],
+                "statusContextCountsByState": [
+                  {
+                    "count": 0,
+                    "state": "EXPECTED"
+                  },
+                  {
+                    "count": 0,
+                    "state": "ERROR"
+                  },
+                  {
+                    "count": 0,
+                    "state": "FAILURE"
+                  },
+                  {
+                    "count": 0,
+                    "state": "PENDING"
+                  },
+                  {
+                    "count": 0,
+                    "state": "SUCCESS"
+                  }
+                ],
+                "pageInfo": {
+                  "hasNextPage": false,
+                  "endCursor": "Nw"
+                },
+                "nodes": []
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "graphql_issue_search_row": {
+    "__typename": "Issue",
+    "number": 1,
+    "title": "Example issue",
+    "body": "Example issue body.",
+    "url": "https://forge.example/example/example/issues/1",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "state": "OPEN",
+    "author": {
+      "login": "example-user"
+    },
+    "labels": {
+      "totalCount": 1,
+      "nodes": [
+        {
+          "name": "example-label",
+          "color": "ededed",
+          "description": "Example label."
+        }
+      ]
+    },
+    "repository": {
+      "nameWithOwner": "example/example"
+    }
+  },
+  "rest_pull": {
+    "number": 1,
+    "state": "closed",
+    "title": "Example pull request",
+    "body": "Example body.",
+    "user": {
+      "login": "example-user"
+    },
+    "html_url": "https://forge.example/example/example/pull/1",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-02T00:00:00Z",
+    "draft": false,
+    "labels": [
+      {
+        "name": "example-label",
+        "color": "ededed",
+        "description": "Example label."
+      }
+    ],
+    "head": {
+      "ref": "example-feature",
+      "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"
+    },
+    "base": {
+      "ref": "main"
+    },
+    "merged": false,
+    "mergeable": true,
+    "mergeable_state": "clean",
+    "auto_merge": null
+  },
+  "rest_issue": {
+    "number": 1,
+    "state": "closed",
+    "title": "Example issue",
+    "body": "Example issue body.",
+    "user": {
+      "login": "example-user"
+    },
+    "html_url": "https://forge.example/example/example/issues/1",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-02T00:00:00Z",
+    "labels": [
+      {
+        "name": "example-label",
+        "color": "ededed",
+        "description": "Example label."
+      }
+    ]
+  },
+  "rest_issue_that_is_a_pull_request": {
+    "number": 2,
+    "state": "open",
+    "title": "Example pull request",
+    "body": "Example body.",
+    "user": {
+      "login": "example-user"
+    },
+    "html_url": "https://forge.example/example/example/pull/1",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-02T00:00:00Z",
+    "labels": [],
+    "pull_request": {
+      "url": "https://api.forge.example/repos/example/example/pulls/2"
+    }
+  },
+  "rest_repo": {
+    "full_name": "example/example",
+    "name": "example",
+    "owner": {
+      "login": "example"
+    },
+    "description": "Example repository.",
+    "html_url": "https://forge.example/example/example",
+    "clone_url": "https://forge.example/example/example.git",
+    "updated_at": "2026-01-02T00:00:00Z",
+    "private": false,
+    "archived": false,
+    "fork": false,
+    "default_branch": "main",
+    "has_issues": true,
+    "permissions": {
+      "admin": true,
+      "push": true,
+      "pull": true
+    },
+    "allow_merge_commit": false,
+    "allow_squash_merge": true,
+    "allow_rebase_merge": true
+  },
+  "rest_repo_listing_row": {
+    "full_name": "example/example",
+    "name": "example",
+    "owner": {
+      "login": "example"
+    },
+    "description": "Example repository.",
+    "html_url": "https://forge.example/example/example",
+    "clone_url": "https://forge.example/example/example.git",
+    "updated_at": "2026-01-02T00:00:00Z",
+    "private": false,
+    "archived": false,
+    "fork": false,
+    "default_branch": "main",
+    "has_issues": true,
+    "permissions": {
+      "admin": true,
+      "push": true,
+      "pull": true
+    }
+  },
+  "rest_release": {
+    "tag_name": "v1.0.0",
+    "name": "Example release",
+    "body": "Example release notes.",
+    "html_url": "https://forge.example/example/example/releases/tag/v1.0.0",
+    "published_at": "2026-01-03T00:00:00Z",
+    "draft": false,
+    "prerelease": false,
+    "target_commitish": "main"
+  },
+  "rest_release_draft": {
+    "tag_name": "v1.0.0-rc1",
+    "name": "Example release",
+    "body": "Example release notes.",
+    "html_url": "https://forge.example/example/example/releases/tag/v1.0.0-rc1",
+    "published_at": null,
+    "draft": true,
+    "prerelease": true,
+    "target_commitish": "main"
+  },
+  "rest_combined_status_on_an_actions_repository": {
+    "state": "pending",
+    "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+    "total_count": 0,
+    "statuses": []
+  },
+  "rest_combined_status_on_a_commit_with_no_ci": {
+    "state": "pending",
+    "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+    "total_count": 0,
+    "statuses": []
+  },
+  "rest_combined_status_with_real_statuses": {
+    "state": "failure",
+    "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+    "total_count": 26,
+    "statuses": [
+      {
+        "context": "example/build",
+        "description": "Example build.",
+        "target_url": "https://ci.example/build/1",
+        "state": "success"
+      },
+      {
+        "context": "example/build",
+        "description": "Example build.",
+        "target_url": "https://ci.example/build/1",
+        "state": "success"
+      },
+      {
+        "context": "example/build",
+        "description": "Example build.",
+        "target_url": "https://ci.example/build/1",
+        "state": "success"
+      }
+    ]
+  },
+  "rest_check_runs": {
+    "total_count": 2,
+    "check_runs": [
+      {
+        "name": "example/build",
+        "status": "completed",
+        "conclusion": "success",
+        "details_url": "https://ci.example/build/1",
+        "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"
+      },
+      {
+        "name": "example/build",
+        "status": "completed",
+        "conclusion": "success",
+        "details_url": "https://ci.example/build/1",
+        "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"
+      }
+    ]
+  },
+  "rest_workflow_runs": {
+    "total_count": 11703,
+    "workflow_runs": [
+      {
+        "id": 1,
+        "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+        "status": "completed",
+        "conclusion": "success",
+        "name": "example"
+      }
+    ]
+  },
+  "rest_workflow_runs_listing": {
+    "total_count": 2,
+    "workflow_runs": [
+      {
+        "id": 1,
+        "name": "example",
+        "head_branch": "example-feature",
+        "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+        "status": "completed",
+        "conclusion": "failure",
+        "html_url": "https://forge.example/example/example/actions/runs/1",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-02T00:00:00Z"
+      },
+      {
+        "id": 2,
+        "name": "example-security",
+        "head_branch": "example-feature",
+        "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://forge.example/example/example/actions/runs/2",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-02T00:00:00Z"
+      }
+    ]
+  },
+  "rest_merge_accepted": {
+    "status": "pending",
+    "details": {
+      "message": "Merge request enqueued.",
+      "uuid": "00000000-0000-4000-8000-000000000000",
+      "merge_method": "squash",
+      "merge_action": "default",
+      "expected_head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"
+    }
+  },
+  "rest_merge_handle_read": {
+    "status": "merged",
+    "details": {
+      "message": "Pull request was merged.",
+      "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"
+    }
+  },
+  "rest_user": {
+    "login": "example-user",
+    "name": "Example User",
+    "email": null,
+    "html_url": "https://forge.example/example-user"
+  },
+  "rest_meta_dotcom": {
+    "verifiable_password_authentication": false
+  },
+  "rest_meta_appliance": {
+    "verifiable_password_authentication": false,
+    "installed_version": "3.20.0"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "//": "cut from a recorded ConnectionCaps-actions-runs response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the first two routes are connection setup, which establishes the family from the header this product sends on every response and reads the version set, that set read 2026-09-20; this call itself resolves the head commit's workflow run and retries its failed jobs",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/meta",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Github-Request-Id": "EXAMPLE:REQUEST:ID"
+      },
+      "body": {
+        "verifiable_password_authentication": false,
+        "installed_version": "3.20.0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/versions",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Github-Request-Id": "EXAMPLE:REQUEST:ID"
+      },
+      "body": [
+        "2026-03-10",
+        "2022-11-28"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/repos/example/example/actions/runs",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "total_count": 1,
+        "workflow_runs": [
+          {
+            "id": 1,
+            "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+            "status": "completed",
+            "conclusion": "failure",
+            "name": "example"
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/repos/example/example/actions/runs/{}/rerun-failed-jobs",
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {}
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "//": "cut from a recorded list_runs_paged response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured with a credential on a local instance of this product's current release, 2026-10-01: pages of 2 over 7 runs, each sending a Link rel=next and x-total-count beside the body's total_count; a run that has not finished carries no conclusion key; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer gitea.com gave anonymously, read 2026-10-02",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/repos/example/example/actions/runs",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Total-Count": "1"
+      },
+      "body": {
+        "total_count": 1,
+        "workflow_runs": [
+          {
+            "id": 1,
+            "display_title": "Example pull request",
+            "path": "example.yml@refs/heads/main",
+            "head_branch": "example-feature",
+            "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+            "html_url": "https://forge.example/example/example/actions/runs/1",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z",
+            "status": "completed",
+            "conclusion": "failure",
+            "repository": {
+              "full_name": "example/example"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/version",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "version": "1.27.0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/swagger.v1.json",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "swagger": "2.0",
+        "basePath": "/api/v1",
+        "info": {
+          "title": "Gitea API",
+          "version": "1.27.0"
+        },
+        "paths": {
+          "/repos/{owner}/{repo}/actions/runs": {
+            "get": {
+              "operationId": "getWorkflowRuns",
+              "parameters": [
+                {
+                  "name": "head_sha",
+                  "in": "query"
+                }
+              ]
+            }
+          },
+          "/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs": {
+            "post": {
+              "operationId": "rerunFailedWorkflowRun"
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/api",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "max_response_items": 50
+      }
+    }
+  ]
+}

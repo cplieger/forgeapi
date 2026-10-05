@@ -1,0 +1,29 @@
+{
+  "//": "cut from a recorded commit-status-recent-bot response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; read as a bot account with a credential on 2026-10-01: the route answers the commit's whole status history on one page with x-total, several rows per context name",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/projects/example%2Fexample/repository/commits/1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d/statuses",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "name": "example/build",
+          "description": "Example build.",
+          "target_url": "https://ci.example/build/1",
+          "status": "success",
+          "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"
+        },
+        {
+          "name": "example/test",
+          "description": "Example test.",
+          "target_url": "https://ci.example/test/1",
+          "status": "success",
+          "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"
+        }
+      ]
+    }
+  ]
+}

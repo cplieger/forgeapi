@@ -1,0 +1,41 @@
+{
+  "//": "cut from a recorded list-my-issues-scope-viewer-bot response beside a recorded list-my-issues-scope-owner-group-labels response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; both arms measured on 2026-10-01, the viewer arm as a bot account with a credential: the group route answers label names unless the label detail parameter is sent, and a user's own namespace answers 404 as an absent owner does, so the route the fixture serves second is the owner arm's",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/issues",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "iid": 1,
+          "state": "opened",
+          "title": "Example issue",
+          "description": "Example issue body.",
+          "author": {
+            "username": "example-user"
+          },
+          "web_url": "https://forge.example/example/example/issues/1",
+          "created_at": "2026-01-01T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "labels": [
+            {
+              "name": "example-label",
+              "color": "#ededed",
+              "description": "Example label."
+            }
+          ],
+          "project_id": 1,
+          "references": {
+            "full": "example/example#1"
+          }
+        }
+      ],
+      "paths": [
+        "/api/v4/groups/example/issues"
+      ]
+    }
+  ]
+}

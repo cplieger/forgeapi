@@ -1,0 +1,24 @@
+{
+  "//": "cut from a recorded Mutations-sandbox-bot response, read 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the mutation's own answer, captured as a bot account on the GitHub sandbox: the asynchronous route accepts a mergeable pull request with 202, status pending and a handle, which this route answers, and the live lane's merge read the same accept",
+  "routes": [
+    {
+      "method": "PUT",
+      "path": "/repos/example/example/pulls/1/merge-async",
+      "status": 202,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "details": {
+          "bypass_rules": false,
+          "expected_head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+          "merge_action": "default",
+          "merge_method": "merge",
+          "message": "Merge request enqueued.",
+          "uuid": "00000000-0000-4000-8000-000000000001"
+        },
+        "status": "pending"
+      }
+    }
+  ]
+}

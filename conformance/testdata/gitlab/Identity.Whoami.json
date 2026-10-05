@@ -1,0 +1,19 @@
+{
+  "//": "cut from a recorded whoami-bot response beside a recorded pat-self-bot response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; read as a bot account with a credential on 2026-10-01: the user route answers the credential's own address and no scope list, and the token route's scopes describe that one token",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/user",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "username": "example-user",
+        "name": "Example User",
+        "email": "example-user@forge.example",
+        "web_url": "https://forge.example/example-user"
+      }
+    }
+  ]
+}

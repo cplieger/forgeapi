@@ -1,0 +1,26 @@
+{
+  "//": "cut from a recorded mutations-sandbox-bot response, read 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the mutation's own answer, captured on 2026-10-02 on the GitLab sandbox as a bot account: the release answers description, released_at and _links.self and no draft or prerelease key, as this body does",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v4/projects/example%2Fexample/releases",
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "tag_name": "v1.0.0",
+        "name": "Example release",
+        "description": "Example release notes.",
+        "released_at": "2026-01-03T00:00:00Z",
+        "upcoming_release": false,
+        "_links": {
+          "self": "https://forge.example/example/example/releases/tag/v1.0.0"
+        },
+        "commit": {
+          "id": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"
+        }
+      }
+    }
+  ]
+}

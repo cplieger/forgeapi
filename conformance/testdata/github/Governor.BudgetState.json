@@ -1,0 +1,41 @@
+{
+  "//": "cut from a recorded BudgetState-headers response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured: this product's rate-limit ENDPOINT reported a full pool with a fresh window on three separate reads while the same credential's GraphQL budget was demonstrably drawn down, because that pool is materialized lazily, so the signal read here is the one riding the response below",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/user/repos",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "X-RateLimit-Limit": "5000",
+        "X-RateLimit-Remaining": "4990",
+        "X-RateLimit-Reset": "1790000000",
+        "X-RateLimit-Used": "10",
+        "X-RateLimit-Resource": "core"
+      },
+      "body": [
+        {
+          "full_name": "example/example",
+          "name": "example",
+          "owner": {
+            "login": "example"
+          },
+          "description": "Example repository.",
+          "html_url": "https://forge.example/example/example",
+          "clone_url": "https://forge.example/example/example.git",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "private": false,
+          "archived": false,
+          "fork": false,
+          "default_branch": "main",
+          "has_issues": true,
+          "permissions": {
+            "admin": false,
+            "push": true,
+            "pull": true
+          }
+        }
+      ]
+    }
+  ]
+}

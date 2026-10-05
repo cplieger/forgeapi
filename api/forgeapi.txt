@@ -1,0 +1,721 @@
+# forgeapi exported surface, rendered by internal/surface. Regenerate with:
+#   UPDATE_GOLDEN=1 go test ./... -run TestExportedSurfaceMatchesGolden
+
+## package forgeapi (./.)
+
+type Account struct {
+	Login string
+	Name string
+	Email string
+	WebURL string
+	Scopes []string
+}
+type ActionState struct {
+	Mergeable Support
+	Checks CheckState
+	ChecksPassing int
+	ChecksFailing int
+	ChecksPending int
+	ChecksNeutral int
+	ChecksUnknown int
+	ChecksTotal int
+	AutoMergeArmed Support
+	QueueState QueueState
+	QueuePosition int
+	MergeBlocked MergeBlockReason
+}
+type Budget struct {
+	ListPages int
+	StatusPages int
+	StatusReadsPerInterval int
+	Retries int
+	ReadConcurrency int
+	MutationConcurrency int
+	OperationTimeout time.Duration
+	StatusTimePerInterval time.Duration
+	MutationInterval time.Duration
+}
+const BudgetRemainingUnknown = -1
+type BudgetState struct {
+	Remaining int
+	Reset time.Time
+	LastCost int
+	RotationCursor RotationCursor
+}
+const CapCanPush Capability = "can_push"
+const CapHasIssues Capability = "has_issues"
+const CapMergeTrain Capability = "merge_train"
+const CapReadMergeState Capability = "read_merge_state"
+const CapRerunChecks Capability = "rerun_checks"
+type Capabilities interface {
+	ConnectionCaps(ctx context.Context) (ConnectionCaps, error)
+	GrantCaps(ctx context.Context) (GrantCaps, error)
+	RepoAffordances(ctx context.Context, repo RepoRef) (RepoAffordances, error)
+}
+type Capability string
+type CheckContext struct {
+	Name string
+	Description string
+	TargetURL string
+	State CheckState
+}
+const CheckFailing CheckState = iota + 2
+const CheckNeutral CheckState = iota + 4
+const CheckPassing CheckState = iota + 1
+const CheckPending CheckState = iota + 3
+type CheckState int
+func (c CheckState) String() string
+const CheckUnknown CheckState = iota
+type Checks interface {
+	CommitStatus(ctx context.Context, repo RepoRef, ref string) (CommitChecks, error)
+	ListRuns(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Run], error)
+}
+const CodeAPIVersionRetired = "api_version_retired"
+const CodeAlreadyEnqueued = "already_enqueued"
+const CodeAnonymousRefused = "anonymous_refused"
+const CodeBranchCannotMerge = "branch_cannot_merge"
+const CodeBudgetInvalid = "budget_invalid"
+const CodeCapabilityUnsupported = "capability_unsupported"
+const CodeConnectionInvalid = "connection_invalid"
+const CodeCursorInvalid = "cursor_invalid"
+const CodeFamilyUndetected = "family_undetected"
+const CodeGrantDenied = "grant_denied"
+const CodeGrantExpired = "grant_expired"
+const CodeGrantUnsupported = "grant_unsupported"
+const CodeHeaderReserved = "header_reserved"
+const CodeLabelPageTruncated = "label_page_truncated"
+const CodeListOwnerInvalid = "list_owner_invalid"
+const CodeListStateInvalid = "list_state_invalid"
+const CodeMissingSHA = "missing_sha"
+const CodeMutationsDisabled = "mutations_disabled"
+const CodeNoMergePermission = "no_merge_permission"
+const CodeNotMergeable = "not_mergeable"
+const CodeOwnerUnresolved = "owner_unresolved"
+const CodePRNotFound = "pr_not_found"
+const CodePageBoundInvalid = "page_bound_invalid"
+const CodePlaintextRefused = "plaintext_refused"
+const CodePrivateAddressRefused = "private_address_refused"
+const CodeReconnectRequired = "reconnect_required"
+const CodeRedirectHopCap = "redirect_hop_cap"
+const CodeRedirectPortRefused = "redirect_port_refused"
+const CodeRefInvalid = "ref_invalid"
+const CodeRepoArchived = "repo_archived"
+const CodeRepoOrPRNotVisible = "repo_or_pr_not_visible"
+const CodeRepoRefInvalid = "repo_ref_invalid"
+const CodeRepoRefStale = "repo_ref_stale"
+const CodeScopeInsufficient = "scope_insufficient"
+const CodeStaleHead = "stale_head"
+const CodeStrategyNotAllowed = "strategy_not_allowed"
+const CodeValidation = "validation"
+type CommitChecks struct {
+	Ref string
+	Contexts []CheckContext
+	Partial *Partial
+	Successor *RepoRef
+	State CheckState
+	Passing int
+	Failing int
+	Pending int
+	Neutral int
+	Unknown int
+	Total int
+}
+type Connection struct {
+	WebBaseURL string
+	APIBaseURL string
+	CABytes []byte
+	ClientCert []byte
+	ClientKey []byte
+	Proxy string
+	Headers []Header
+}
+type ConnectionCaps struct {
+	Caps map[Capability]Support
+	Ev map[Capability]Evidence
+}
+type Core interface {
+	Identity
+	Repos
+	PullRequests
+	Merges
+	Checks
+	Issues
+	Capabilities
+	Governor
+	Close()
+}
+type Counters struct {
+	UnknownEnumValue func(family Family, field string)
+	CapabilityContradicted func(family Family, capability Capability)
+	RateLimited func(family Family)
+	Retried func(family Family, op string)
+	PartialResult func(family Family, reason PartialReason)
+	RefreshOutcome func(family Family, terminal CredState)
+	HelperDecline func(reason string)
+	HelperErase func(family Family)
+	EnvelopeError func(family Family, errType string)
+	SunsetSeen func(family Family)
+	AddressRefusal func(family Family, kind string)
+	RedirectHopCapExceeded func(family Family)
+	RedirectPortRefused func(family Family)
+	NonDurableCredentialWrite func(family Family)
+	ReadDeferred func(family Family, op string)
+}
+type CredKind int
+func (k CredKind) String() string
+const CredKindRotatingOAuth CredKind = iota + 2
+const CredKindStaticPAT CredKind = iota + 1
+const CredKindUnknown CredKind = iota
+const CredReconnectRequired CredState = iota + 4
+const CredRefreshDue CredState = iota + 2
+const CredRefreshing CredState = iota + 3
+type CredState int
+func (s CredState) String() string
+const CredUnknown CredState = iota
+const CredValid CredState = iota + 1
+type CredentialSource interface {
+	Token(ctx context.Context) (string, error)
+	Kind() CredKind
+	State() CredState
+}
+type Cursor string
+func DecodeRepoRef(id string, family Family) (RepoRef, error)
+func DefaultBudget() Budget
+const DefaultListPages = 3
+const DefaultMutationConcurrency = 1
+const DefaultMutationInterval = time.Second
+const DefaultMutationReserve = 50
+const DefaultOperationTimeout = 20 * time.Second
+const DefaultPageBound = 100
+const DefaultReadConcurrency = 2
+const DefaultRefreshLead = 5 * time.Minute
+const DefaultRetries = 2
+const DefaultStatusPages = 3
+const DefaultStatusReadsPerInterval = 20
+const DefaultStatusTimePerInterval = 60 * time.Second
+const DiagIDLength = 13
+type Error struct {
+	Op string
+	Code string
+	Family Family
+	Status int
+	Kind ErrorKind
+	Retryable bool
+	Message string
+	RetryAfter time.Duration
+	DiagID string
+	Successor *RepoRef
+	Capability Capability
+	Evidence Evidence
+}
+func (e *Error) Error() string
+type ErrorKind int
+func (k ErrorKind) String() string
+type Evidence struct {
+	Source EvidenceSource
+	Detail string
+}
+const EvidenceDefault EvidenceSource = "default"
+const EvidenceMetadata EvidenceSource = "metadata"
+const EvidenceProbe EvidenceSource = "probe"
+const EvidenceResponseBody EvidenceSource = "response-body"
+const EvidenceResponseHeader EvidenceSource = "response-header"
+type EvidenceSource string
+func (s EvidenceSource) String() string
+const EvidenceSwagger EvidenceSource = "swagger"
+const EvidenceUnknown EvidenceSource = ""
+const EvidenceVersion EvidenceSource = "version"
+type Family int
+func (f Family) String() string
+const FamilyGitHub Family = iota + 1
+const FamilyGitLab Family = iota + 2
+const FamilyGitea Family = iota + 3
+const FamilyUnknown Family = iota
+type Governor interface {
+	BudgetState() BudgetState
+}
+type GrantCaps struct {
+	Caps map[Capability]Support
+	Ev map[Capability]Evidence
+}
+type Header struct {
+	Name string
+	Value string
+}
+type Identity interface {
+	Whoami(ctx context.Context) (Account, error)
+}
+const IntentDefault MergeIntent = iota
+const IntentNoSquash MergeIntent = iota + 2
+const IntentSquash MergeIntent = iota + 1
+type Issue struct {
+	Ref IssueRef
+	Repo RepoRef
+	Title string
+	Body string
+	Author string
+	WebURL string
+	Labels []Label
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	State IssueState
+}
+type IssueRef struct {
+	Number int
+}
+type IssueState int
+func (i IssueState) String() string
+const IssueStateClosed IssueState = iota + 2
+const IssueStateOpen IssueState = iota + 1
+const IssueStateUnknown IssueState = iota
+type Issues interface {
+	ListIssues(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Issue], error)
+	ListMyIssues(ctx context.Context, opts ...ListOption) (Page[Issue], error)
+	CreateIssue(ctx context.Context, repo RepoRef, req NewIssue) (Issue, error)
+	CloseIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
+}
+const KindConflict ErrorKind = iota + 5
+const KindForbidden ErrorKind = iota + 2
+const KindNotFound ErrorKind = iota + 3
+const KindNotMergeable ErrorKind = iota + 4
+const KindRateLimited ErrorKind = iota + 6
+const KindTransient ErrorKind = iota + 7
+const KindUnauthorized ErrorKind = iota + 1
+const KindUnknown ErrorKind = iota
+const KindUpstream ErrorKind = iota + 8
+type Label struct {
+	Name string
+	Color string
+	Description string
+}
+type Labels interface {
+	ListLabels(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Label], error)
+}
+type ListOption interface {
+	// contains unexported members
+}
+type ListSettings struct {
+	After Cursor
+	Owner string
+	PageBound int
+	State ListState
+	StateSet bool
+	OwnerSet bool
+}
+type ListState int
+func (l ListState) String() string
+const ListStateAll ListState = iota + 4
+const ListStateClosed ListState = iota + 2
+const ListStateMerged ListState = iota + 3
+const ListStateOpen ListState = iota + 1
+const ListStateUnknown ListState = iota
+const MaxRedirectHops = 5
+const MergeBlockBehind MergeBlockReason = iota + 6
+const MergeBlockBlocked MergeBlockReason = iota + 7
+const MergeBlockChecksFailing MergeBlockReason = iota + 4
+const MergeBlockChecksRunning MergeBlockReason = iota + 5
+const MergeBlockConflicts MergeBlockReason = iota + 3
+const MergeBlockDraft MergeBlockReason = iota + 2
+const MergeBlockNone MergeBlockReason = iota + 1
+type MergeBlockReason int
+func (m MergeBlockReason) String() string
+const MergeBlockUnknown MergeBlockReason = iota
+type MergeIntent int
+func (m MergeIntent) String() string
+type MergeOutcome struct {
+	State MergeOutcomeState
+	Code string
+	QueueState QueueState
+	QueuePosition int
+}
+const MergeOutcomeAccepted MergeOutcomeState = iota + 3
+const MergeOutcomeEnqueued MergeOutcomeState = iota + 2
+const MergeOutcomeInFlight MergeOutcomeState = iota + 4
+const MergeOutcomeMerged MergeOutcomeState = iota + 1
+const MergeOutcomeRefused MergeOutcomeState = iota + 5
+type MergeOutcomeState int
+func (m MergeOutcomeState) String() string
+const MergeOutcomeUnknown MergeOutcomeState = iota
+type MergeRequest struct {
+	Intent MergeIntent
+	Strategy string
+	HeadSHA string
+	DeleteBranch bool
+	AutoMerge bool
+}
+type MergeStatus struct {
+	Merged Support
+	Queue QueueState
+	WebURL string
+	Successor *RepoRef
+}
+type Merges interface {
+	MergePR(ctx context.Context, repo RepoRef, pr PRRef, req MergeRequest) (MergeOutcome, error)
+	MergeStatus(ctx context.Context, repo RepoRef, pr PRRef) (MergeStatus, error)
+}
+type NewIssue struct {
+	Title string
+	Body string
+	Labels []string
+}
+type NewPullRequest struct {
+	Title string
+	Body string
+	SourceBranch string
+	TargetBranch string
+	Labels []string
+	Draft bool
+}
+type NewRelease struct {
+	TagName string
+	Name string
+	Body string
+	Target string
+	Draft bool
+	Prerelease bool
+}
+type Option interface {
+	// contains unexported members
+}
+type PRRef struct {
+	Number int
+	Sigil string
+}
+type PRState int
+func (p PRState) String() string
+const PRStateClosed PRState = iota + 2
+const PRStateMerged PRState = iota + 3
+const PRStateOpen PRState = iota + 1
+const PRStateUnknown PRState = iota
+type Page[T any] struct {
+	Items []T
+	Next Cursor
+	Partial *Partial
+	Successor *RepoRef
+}
+type Partial struct {
+	Reason PartialReason
+	Fetched int
+	OmittedAtLeast int
+}
+const PartialBudget PartialReason = iota + 1
+const PartialGraphQLPartial PartialReason = iota + 3
+const PartialLabelsNotApplied PartialReason = iota + 5
+const PartialPaginationCap PartialReason = iota + 4
+const PartialRateLimited PartialReason = iota + 2
+type PartialReason int
+func (p PartialReason) String() string
+const PartialResultWindow PartialReason = iota + 6
+const PartialUnknown PartialReason = iota
+type PullRequest struct {
+	Ref PRRef
+	Repo RepoRef
+	Title string
+	Body string
+	Author string
+	SourceBranch string
+	SourceRepo RepoRef
+	TargetBranch string
+	WebURL string
+	HeadSHA string
+	Labels []Label
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Action ActionState
+	Partial *Partial
+	State PRState
+	Draft bool
+}
+type PullRequests interface {
+	ListPRs(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[PullRequest], error)
+	ListMyPRs(ctx context.Context, opts ...ListOption) (Page[PullRequest], error)
+	ReadPR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
+	CreatePR(ctx context.Context, repo RepoRef, req NewPullRequest) (PullRequest, error)
+	ClosePR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
+	ReopenPR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
+	RerunFailedChecks(ctx context.Context, repo RepoRef, pr PRRef, headSHA string) error
+}
+const QueueAwaitingChecks QueueState = iota + 3
+const QueueLocked QueueState = iota + 6
+const QueueMergeable QueueState = iota + 4
+const QueueNone QueueState = iota + 1
+const QueuePositionUnknown = -1
+const QueueQueued QueueState = iota + 2
+type QueueState int
+func (q QueueState) String() string
+const QueueUnknown QueueState = iota
+const QueueUnmergeable QueueState = iota + 5
+type Release struct {
+	TagName string
+	Name string
+	Body string
+	WebURL string
+	PublishedAt time.Time
+	Draft bool
+	Prerelease bool
+}
+type Releases interface {
+	ListReleases(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Release], error)
+	CreateRelease(ctx context.Context, repo RepoRef, req NewRelease) (Release, error)
+}
+type RepoAffordances struct {
+	MergeStrategies []string
+	HasIssues Support
+	CanPush Support
+	MergeTrain Support
+	Ev map[Capability]Evidence
+	DefaultBranch string
+}
+const RepoIDPrefix = "v1."
+type RepoRef struct {
+	ID string
+	Family Family
+	Selector string
+	DisplayPath string
+}
+func (r RepoRef) Encode() string
+type Repos interface {
+	ListRepos(ctx context.Context, opts ...ListOption) (Page[Repository], error)
+}
+type Repository struct {
+	Ref RepoRef
+	Description string
+	WebURL string
+	CloneURL string
+	UpdatedAt time.Time
+	Affordances RepoAffordances
+	Private bool
+	Archived bool
+	Fork bool
+}
+func ReservedHeaders() []string
+func Resolve(opts ...Option) Settings
+func ResolveList(opts ...ListOption) (ListSettings, error)
+type RotationCursor string
+type Run struct {
+	Repo RepoRef
+	Name string
+	Branch string
+	HeadSHA string
+	WebURL string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	State CheckState
+}
+type Settings struct {
+	Logger *slog.Logger
+	Credential CredentialSource
+	WireTransport http.RoundTripper
+	RequestObserver func(next http.RoundTripper) http.RoundTripper
+	AttemptObserver func(next http.RoundTripper) http.RoundTripper
+	Counters Counters
+	Budget Budget
+	MutationReserve int
+	RotationCursor RotationCursor
+	Mutations bool
+	PrivateAddresses bool
+	PlaintextHTTP bool
+	RefreshLead time.Duration
+}
+type Support int
+func (s Support) String() string
+const SupportNo Support = iota + 2
+const SupportUnknown Support = iota
+const SupportYes Support = iota + 1
+func ValidateCursor(c Cursor) error
+func ValidateOwner(family Family, owner string) error
+func ValidateRef(ref string) error
+func ValidateSelector(family Family, selector string) error
+func WithAfter(c Cursor) ListOption
+func WithAttemptObserver(wrap func(next http.RoundTripper) http.RoundTripper) Option
+func WithCounters(c Counters) Option
+func WithCredentialSource(src CredentialSource) Option
+func WithListPages(n int) Option
+func WithLogger(l *slog.Logger) Option
+func WithMutationConcurrency(n int) Option
+func WithMutationInterval(d time.Duration) Option
+func WithMutationReserve(n int) Option
+func WithMutations(allowed bool) Option
+func WithOperationTimeout(d time.Duration) Option
+func WithOwner(owner string) ListOption
+func WithPageBound(n int) ListOption
+func WithPlaintextHTTP(allowed bool) Option
+func WithPrivateAddresses(allowed bool) Option
+func WithReadConcurrency(n int) Option
+func WithRefreshLead(d time.Duration) Option
+func WithRequestObserver(wrap func(next http.RoundTripper) http.RoundTripper) Option
+func WithRetries(n int) Option
+func WithRotationCursor(c RotationCursor) Option
+func WithState(s ListState) ListOption
+func WithStatusPages(n int) Option
+func WithStatusReadsPerInterval(n int) Option
+func WithStatusTimePerInterval(d time.Duration) Option
+func WithWireTransport(rt http.RoundTripper) Option
+
+## package creds (./creds)
+
+type DeviceGrant struct {
+	UserCode string
+	VerificationURI string
+	Expires time.Time
+	Interval time.Duration
+	// contains unexported members
+}
+func (g *DeviceGrant) Close()
+func (g *DeviceGrant) Poll(ctx context.Context) (Record, bool, error)
+type FileStore struct {
+	// contains unexported members
+}
+func (s *FileStore) Delete(key string) error
+func (s *FileStore) Keys() ([]string, error)
+func (s *FileStore) Load(key string) (Record, bool, error)
+func (s *FileStore) Save(key string, rec Record) error
+type GrantRequest struct {
+	ClientID string
+	Scopes []string
+}
+func NewSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*Source, error)
+func OpenFileStore(dir string, opts ...forgeapi.Option) (*FileStore, error)
+type Record struct {
+	Family forgeapi.Family
+	WebBaseURL string
+	Kind forgeapi.CredKind
+	Token string
+	Issued time.Time
+	Expiry time.Time
+	RefreshToken string
+	RefreshExpiry time.Time
+	ClientID string
+	Scopes []string
+	Account string
+	Usability Usability
+}
+type Source struct {
+	// contains unexported members
+}
+func (s *Source) Kind() forgeapi.CredKind
+func (s *Source) State() forgeapi.CredState
+func (s *Source) Token(ctx context.Context) (string, error)
+func StartDeviceGrant(ctx context.Context, conn forgeapi.Connection, family forgeapi.Family, req GrantRequest, opts ...forgeapi.Option) (*DeviceGrant, error)
+type Store interface {
+	Load(key string) (Record, bool, error)
+	Save(key string, rec Record) error
+	Delete(key string) error
+	Keys() ([]string, error)
+	// contains unexported members
+}
+type Usability int
+func (u Usability) String() string
+const UsabilityReconnectRequired Usability = iota + 2
+const UsabilitySpent Usability = iota + 1
+const UsabilityUnmarked Usability = iota
+
+## package families (./families)
+
+func Open(ctx context.Context, conn forgeapi.Connection, opts ...forgeapi.Option) (forgeapi.Core, forgeapi.Family, error)
+
+## package gitcred (./gitcred)
+
+type Helper struct {
+	// contains unexported members
+}
+func (h *Helper) Serve(ctx context.Context, action string, in io.Reader, out, diag io.Writer) error
+func New(store creds.Store, opts ...forgeapi.Option) *Helper
+
+## package gitea (./gitea)
+
+type Client struct {
+	// contains unexported members
+}
+func (c *Client) BudgetState() forgeapi.BudgetState
+func (c *Client) Close()
+func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
+func (c *Client) ClosePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref string) (forgeapi.CommitChecks, error)
+func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, error)
+func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewIssue) (forgeapi.Issue, error)
+func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewPullRequest) (forgeapi.PullRequest, error)
+func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewRelease) (forgeapi.Release, error)
+func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error)
+func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error)
+func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Label], error)
+func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error)
+func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error)
+func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error)
+func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Release], error)
+func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error)
+func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error)
+func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
+func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
+func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
+func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
+func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
+func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
+
+## package github (./github)
+
+const APIVersion = "2026-03-10"
+const APIVersionHeader = "X-GitHub-Api-Version"
+type Client struct {
+	// contains unexported members
+}
+func (c *Client) BudgetState() forgeapi.BudgetState
+func (c *Client) Close()
+func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
+func (c *Client) ClosePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref string) (forgeapi.CommitChecks, error)
+func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, error)
+func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewIssue) (forgeapi.Issue, error)
+func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewPullRequest) (forgeapi.PullRequest, error)
+func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewRelease) (forgeapi.Release, error)
+func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error)
+func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error)
+func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Label], error)
+func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error)
+func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error)
+func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error)
+func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Release], error)
+func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error)
+func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error)
+func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
+func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
+func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
+func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
+func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
+func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
+
+## package gitlab (./gitlab)
+
+type Client struct {
+	// contains unexported members
+}
+func (c *Client) BudgetState() forgeapi.BudgetState
+func (c *Client) Close()
+func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
+func (c *Client) ClosePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref string) (forgeapi.CommitChecks, error)
+func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, error)
+func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewIssue) (forgeapi.Issue, error)
+func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewPullRequest) (forgeapi.PullRequest, error)
+func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewRelease) (forgeapi.Release, error)
+func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error)
+func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error)
+func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Label], error)
+func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error)
+func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error)
+func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error)
+func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Release], error)
+func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error)
+func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error)
+func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
+func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
+func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
+func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
+func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
+func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)

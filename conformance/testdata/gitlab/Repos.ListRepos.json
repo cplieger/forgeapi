@@ -1,0 +1,38 @@
+{
+  "//": "cut from a recorded list-repos-bot response beside a recorded repo-flags-4d response, read 2026-10-01 and 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; read as a bot account with a credential on 2026-10-01: a membership row carries the permission object, the issue access level, the merge method and the squash option; it carried no merge-train key on the projects read, so that key alone is this product's documented shape; read on 2026-10-02: every membership row carries archived, false on each the bot's memberships hold, which this row carries, and a fork's row its forked_from_project, which this row, no fork, omits",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/projects",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "id": 1,
+          "path_with_namespace": "example/example",
+          "name_with_namespace": "Example / Example",
+          "description": "Example repository.",
+          "web_url": "https://forge.example/example/example",
+          "http_url_to_repo": "https://forge.example/example/example.git",
+          "last_activity_at": "2026-01-02T00:00:00Z",
+          "visibility": "public",
+          "default_branch": "main",
+          "issues_enabled": true,
+          "issues_access_level": "enabled",
+          "permissions": {
+            "project_access": {
+              "access_level": 40
+            },
+            "group_access": null
+          },
+          "merge_trains_enabled": true,
+          "merge_method": "merge",
+          "squash_option": "default_off",
+          "archived": false
+        }
+      ]
+    }
+  ]
+}

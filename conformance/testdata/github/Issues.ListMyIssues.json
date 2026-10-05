@@ -1,0 +1,57 @@
+{
+  "//": "cut from a recorded ListMyIssues-scope-viewer response beside a recorded ListMyIssues-scope-owner-user response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured under both scopes on 2026-10-01: the search answers Issue rows only where the query names the issue type, an owner qualifier resolves an organization as it resolves a user, and an owner the index holds no account for answers an empty page with no error",
+  "routes": [
+    {
+      "graphql": true,
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "data": {
+          "rateLimit": {
+            "cost": 1,
+            "limit": 5000,
+            "remaining": 4990,
+            "resetAt": "2026-01-02T00:00:00Z"
+          },
+          "search": {
+            "issueCount": 1,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "__typename": "Issue",
+                "number": 1,
+                "title": "Example issue",
+                "body": "Example issue body.",
+                "url": "https://forge.example/example/example/issues/1",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-02T00:00:00Z",
+                "state": "OPEN",
+                "author": {
+                  "login": "example-user"
+                },
+                "labels": {
+                  "totalCount": 1,
+                  "nodes": [
+                    {
+                      "name": "example-label",
+                      "color": "ededed",
+                      "description": "Example label."
+                    }
+                  ]
+                },
+                "repository": {
+                  "nameWithOwner": "example/example"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

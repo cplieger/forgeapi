@@ -1,0 +1,36 @@
+{
+  "//": "cut from a recorded ListRepos response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/user/repos",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "full_name": "example/example",
+          "name": "example",
+          "owner": {
+            "login": "example"
+          },
+          "description": "Example repository.",
+          "html_url": "https://forge.example/example/example",
+          "clone_url": "https://forge.example/example/example.git",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "private": false,
+          "archived": false,
+          "fork": false,
+          "default_branch": "main",
+          "has_issues": true,
+          "permissions": {
+            "admin": false,
+            "push": true,
+            "pull": true
+          }
+        }
+      ]
+    }
+  ]
+}

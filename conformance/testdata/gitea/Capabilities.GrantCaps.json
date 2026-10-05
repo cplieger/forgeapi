@@ -1,0 +1,48 @@
+{
+  "//": "cut from a recorded grant_caps response beside a recorded phase4d_local response, read 2026-09-18 and 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; read on 2026-10-02 on local instances of its current release with the instance token: the pull-request record answers its mergeable flag with the instance token as it does without one, as this body does",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/repos/example/example/pulls/1",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "number": 1,
+        "state": "open",
+        "title": "Example pull request",
+        "body": "Example body.",
+        "user": {
+          "login": "example-user"
+        },
+        "html_url": "https://forge.example/example/example/pull/1",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-02T00:00:00Z",
+        "draft": false,
+        "merged": false,
+        "mergeable": true,
+        "labels": [
+          {
+            "name": "example-label",
+            "color": "ededed",
+            "description": "Example label."
+          }
+        ],
+        "head": {
+          "ref": "example-feature",
+          "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+          "repo": {
+            "full_name": "example/example"
+          }
+        },
+        "base": {
+          "ref": "main",
+          "repo": {
+            "full_name": "example/example"
+          }
+        }
+      }
+    }
+  ]
+}

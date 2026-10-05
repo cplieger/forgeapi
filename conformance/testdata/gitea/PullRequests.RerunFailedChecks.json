@@ -1,0 +1,89 @@
+{
+  "//": "cut from a recorded connection_caps response beside a recorded gitea-swagger response, read 2026-09-18 and 2026-09-16, recorded 2026-09-19; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; no sandbox capture exists for this mutation on this product, so the response shape is the same product's read capture, which this product's swagger document gives the mutation as its response schema; the third route is connection setup's read of the instance's stated maximum page size, cut from a recorded settings_api response, the answer gitea.com gave anonymously, read 2026-10-02",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/version",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "version": "1.27.0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/swagger.v1.json",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "swagger": "2.0",
+        "basePath": "/api/v1",
+        "info": {
+          "title": "Gitea API",
+          "version": "1.27.0"
+        },
+        "paths": {
+          "/repos/{owner}/{repo}/actions/runs": {
+            "get": {
+              "operationId": "getWorkflowRuns",
+              "parameters": [
+                {
+                  "name": "head_sha",
+                  "in": "query"
+                }
+              ]
+            }
+          },
+          "/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs": {
+            "post": {
+              "operationId": "rerunFailedWorkflowRun"
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/api",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "max_response_items": 50
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/repos/example/example/actions/runs",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "total_count": 1,
+        "workflow_runs": [
+          {
+            "id": 1,
+            "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+            "status": "completed",
+            "conclusion": "failure"
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/repos/example/example/actions/runs/{}/rerun-failed-jobs",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {}
+    }
+  ]
+}

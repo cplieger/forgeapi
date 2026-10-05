@@ -1,0 +1,60 @@
+{
+  "//": "cut from a recorded detect response, read 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; per product, the answer to each connection read families.Open sends ahead of that product's own family, read anonymously on github.com, gitlab.com, gitea.com and codeberg.org; a text body is kept under text; the product's own connection read is its conformance fixture",
+  "products": {
+    "github": [
+      {
+        "method": "GET",
+        "path": "/api/v4/metadata",
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Github-Request-Id": "EXAMPLE:REQUEST:ID"
+        },
+        "body": {
+          "error": "Not Found"
+        }
+      }
+    ],
+    "gitlab": [],
+    "gitea": [
+      {
+        "method": "GET",
+        "path": "/api/v4/metadata",
+        "status": 404,
+        "headers": {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        "text": "Not found.\n"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v3/meta",
+        "status": 404,
+        "headers": {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        "text": "Not found.\n"
+      }
+    ],
+    "forgejo": [
+      {
+        "method": "GET",
+        "path": "/api/v4/metadata",
+        "status": 404,
+        "headers": {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        "text": "Not found.\n"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v3/meta",
+        "status": 404,
+        "headers": {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        "text": "Not found.\n"
+      }
+    ]
+  }
+}

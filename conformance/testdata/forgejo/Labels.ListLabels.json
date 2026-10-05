@@ -1,0 +1,65 @@
+{
+  "//": "cut from a recorded list_labels response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer codeberg.org gave anonymously, read 2026-10-02",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/repos/example/example/labels",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "name": "example-label",
+          "color": "ededed",
+          "description": "Example label."
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/version",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "version": "16.0.0+gitea-1.22.0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/swagger.v1.json",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "swagger": "2.0",
+        "basePath": "/api/v1",
+        "info": {
+          "title": "Forgejo API",
+          "version": "16.0.0+gitea-1.22.0"
+        },
+        "paths": {
+          "/repos/{owner}/{repo}/actions/runs/{run_id}/logs": {
+            "get": {
+              "operationId": "repoGetActionRunLogs"
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/api",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "max_response_items": 50
+      }
+    }
+  ]
+}

@@ -1,0 +1,364 @@
+name: live
+
+# The scheduled live lane. It runs the conformance suite's LIVE mode against one real
+# instance per product, reads and writes, which is the only thing that reports when a
+# product has moved under a recorded response and the only place the write paths meet
+# a real forge. The offline mode is what the pull request gate runs, and it needs no
+# network, no credential and nothing here.
+#
+# Three conditions are part of why this lane may hold a credential at all, and none of
+# them is optional:
+#
+#   1. Each token belongs to a dedicated machine account, never a person's, which owns
+#      nothing but its sandbox, and carries the narrowest scopes the cases need, writes
+#      included: GitHub classic repo, read:org and workflow; GitLab legacy api.
+#   2. The jobs are reachable by schedule and by a maintainer's dispatch ONLY. There is
+#      deliberately no pull_request trigger, so a fork cannot reach a secret.
+#   3. A change to this file lands only through a pull request to the default branch,
+#      under that branch's own required check. The tokens are secrets of the
+#      GitHub Environment named live, whose deployment branches are the default branch
+#      alone, so a run from any other ref is refused them by GitHub itself.
+#
+# A mutation writes only to the repository its product's SANDBOX variable names, and
+# leaves it as it found it: the suite removes what an aborted run left under the
+# lane's marks, lists the sandbox, closes what each case opened, deletes the branches,
+# tags and releases it made, and fails when the closing listing differs from the
+# opening one. One run at a time, so the run's own prefix is one run's.
+#
+# The hosted sandboxes carry their own CI: one passing and one failing job on a push to
+# a forgeapi-ci-* branch and on dispatch, which is what the run listing and the re-run
+# of failed checks read.
+#
+# Each hosted sandbox also holds a permanent read subject: a branch named seed, an open
+# pull request from it and an open issue, made once and never by this lane. The lane's
+# listings count them as found state, so a run leaves them open, and the PR variable
+# names the seed pull request's number for the cases that read one pull request.
+#
+# Gitea and Forgejo run as service containers pinned by digest, each a fresh instance
+# with a throwaway admin made through the image's own CLI and a token made through its
+# API, so those jobs hold no secret. They run no CI runner, which their RUN_WAIT of 0
+# tells the re-run case.
+#
+# The schema drift detector stays out of this lane on purpose: it is credential free on
+# every product, so a compromised token must not be able to blind it.
+
+on:
+  schedule:
+    # Mondays, 04:17 UTC. A live failure arrives on a schedule rather than beside the
+    # change that caused it, which is the accepted cost of the lane.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: live
+  cancel-in-progress: false
+
+jobs:
+  # One job per hosted product rather than one matrix job, and the repetition is the
+  # point: a job holds its own product's token and nothing else, where a matrix would
+  # have to reach the secrets context dynamically and hand every entry both.
+  github:
+    name: live (GitHub)
+    runs-on: ubuntu-24.04
+    environment: live
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run the live lane
+        env:
+          FORGEAPI_LIVE_GITHUB_URL: https://github.com
+          FORGEAPI_LIVE_GITHUB_REPO: cplieger-bot/forgeapi-sandbox
+          FORGEAPI_LIVE_GITHUB_SANDBOX: cplieger-bot/forgeapi-sandbox
+          FORGEAPI_LIVE_GITHUB_REF: main
+          FORGEAPI_LIVE_GITHUB_PR: "15"
+          FORGEAPI_LIVE_GITHUB_LABEL: forgeapi-a
+          FORGEAPI_LIVE_GITHUB_TOKEN: ${{ secrets.FORGEAPI_LIVE_GITHUB_TOKEN }}
+          FORGEAPI_LIVE_RUN: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          # A missing token is a broken lane, not an optional case: every case
+          # would skip and the job would pass having run nothing.
+          if [ -z "${FORGEAPI_LIVE_GITHUB_TOKEN}" ]; then
+            echo "::error title=live lane::no FORGEAPI_LIVE_GITHUB_TOKEN in the live environment, so no GitHub case can run"
+            exit 1
+          fi
+          go test -count=1 -v -timeout 25m -run 'TestLive' ./conformance/
+
+  gitlab:
+    name: live (GitLab)
+    runs-on: ubuntu-24.04
+    environment: live
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run the live lane
+        env:
+          FORGEAPI_LIVE_GITLAB_URL: https://gitlab.com
+          FORGEAPI_LIVE_GITLAB_REPO: forgeapi-live/nested/sandbox
+          FORGEAPI_LIVE_GITLAB_SANDBOX: forgeapi-live/nested/sandbox
+          FORGEAPI_LIVE_GITLAB_REF: main
+          FORGEAPI_LIVE_GITLAB_PR: "11"
+          FORGEAPI_LIVE_GITLAB_LABEL: forgeapi-a
+          FORGEAPI_LIVE_GITLAB_TOKEN: ${{ secrets.FORGEAPI_LIVE_GITLAB_TOKEN }}
+          FORGEAPI_LIVE_RUN: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          # A missing token is a broken lane, not an optional case: the
+          # credentialed cases and every write would skip and the job would pass.
+          if [ -z "${FORGEAPI_LIVE_GITLAB_TOKEN}" ]; then
+            echo "::error title=live lane::no FORGEAPI_LIVE_GITLAB_TOKEN in the live environment, so no credentialed GitLab case can run"
+            exit 1
+          fi
+          go test -count=1 -v -timeout 25m -run 'TestLive' ./conformance/
+
+  # The self-hosted products, one matrix entry per supported release that publishes an
+  # image: Gitea's current stable, Forgejo's current stable and Forgejo's LTS. No entry
+  # holds a secret, so a matrix hands nothing anywhere it should not reach.
+  instance:
+    name: live (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Gitea 28.0.0
+            product: gitea
+            cli: gitea
+            image: gitea/gitea:28.0.0@sha256:a9dc25679ebdd33356242d2e0667cc220043745e8339922879f187c20329a42e
+          - name: Forgejo 16.0.5
+            product: forgejo
+            cli: forgejo
+            image: codeberg.org/forgejo/forgejo:16.0.5@sha256:cf5f5ae6acf2ababca0ee3d255705b83a47f35b25e07fc931d694d60664053fe
+          - name: Forgejo 15.0.9 LTS
+            product: forgejo
+            cli: forgejo
+            image: codeberg.org/forgejo/forgejo:15.0.9@sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1
+    services:
+      forge:
+        image: ${{ matrix.image }}
+        ports:
+          - 127.0.0.1:3000:3000
+        env:
+          # Both products read the GITEA__ prefix.
+          GITEA__security__INSTALL_LOCK: "true"
+          GITEA__server__ROOT_URL: http://127.0.0.1:3000/
+          GITEA__server__DISABLE_SSH: "true"
+          GITEA__database__DB_TYPE: sqlite3
+          GITEA__service__DISABLE_REGISTRATION: "true"
+          GITEA__actions__ENABLED: "true"
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Stand up the instance
+        env:
+          FORGE_URL: http://127.0.0.1:3000
+          FORGE_PRODUCT: ${{ matrix.product }}
+          FORGE_CLI: ${{ matrix.cli }}
+          FORGE_CONTAINER: ${{ job.services.forge.id }}
+        run: |
+          set -euo pipefail
+          # The instance is fresh and holds nothing, so this step makes everything the
+          # suite reads and writes: an admin through the product's own CLI, a token for
+          # it through the API, an organization the admin owns, which is the owner
+          # the owner-scoped cases name, and in it one public repository carrying the
+          # sandboxes' labels and the hosted sandboxes' read subject, a branch named
+          # seed with an open pull request from it into main and an open issue, each
+          # carrying the lane's label. Every secret here lives for one run in one
+          # throwaway container, and none is printed.
+          for _ in $(seq 1 90); do
+            curl -fsS -o /dev/null "${FORGE_URL}/api/v1/version" && break
+            sleep 2
+          done
+          curl -fsS "${FORGE_URL}/api/v1/version"
+          echo
+          admin=forgeapi-admin
+          owner=forgeapi-live
+          repo="${owner}/sandbox"
+          password=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          echo "::add-mask::${password}"
+          docker exec -u git "${FORGE_CONTAINER}" "${FORGE_CLI}" admin user create \
+            --admin --username "${admin}" --email "${admin}@example.invalid" \
+            --password "${password}" --must-change-password=false > /dev/null
+          umask 077
+          conf="${RUNNER_TEMP}/forge-curl.conf"
+          printf 'user = "%s:%s"\n' "${admin}" "${password}" > "${conf}"
+          token=$(curl -fsS -K "${conf}" -H 'Content-Type: application/json' \
+            -d '{"name":"forgeapi-live","scopes":["all"]}' \
+            "${FORGE_URL}/api/v1/users/${admin}/tokens" | jq -r '.sha1')
+          [ -n "${token}" ] && [ "${token}" != null ]
+          echo "::add-mask::${token}"
+          printf 'header = "Authorization: token %s"\n' "${token}" > "${conf}"
+          api() { curl -fsS -o /dev/null -K "${conf}" -H 'Content-Type: application/json' "$@"; }
+          api -d "{\"username\":\"${owner}\",\"visibility\":\"public\"}" \
+            "${FORGE_URL}/api/v1/orgs"
+          # The owner-scoped cases prove the organization route only if the owner is one.
+          perms="${FORGE_URL}/api/v1/users/${admin}/orgs/${owner}/permissions"
+          if ! curl -fsS -K "${conf}" "${perms}" | jq -e '.is_owner == true' > /dev/null; then
+            echo "::error title=live lane::${owner} is no organization ${admin} owns"
+            exit 1
+          fi
+          api -d '{"name":"sandbox","auto_init":true,"default_branch":"main","private":false}' \
+            "${FORGE_URL}/api/v1/orgs/${owner}/repos"
+          # The lane's label is the first, and the seeds carry it by its id.
+          seed_label=""
+          for label in forgeapi-a forgeapi-b forgeapi-c; do
+            id=$(curl -fsS -K "${conf}" -H 'Content-Type: application/json' \
+              -d "{\"name\":\"${label}\",\"color\":\"#ededed\",\"description\":\"Applied by the live lane.\"}" \
+              "${FORGE_URL}/api/v1/repos/${repo}/labels" | jq -r '.id')
+            if [ -z "${seed_label}" ]; then
+              seed_label=${id}
+            fi
+          done
+          case "${seed_label}" in
+            '' | *[!0-9]*)
+              echo "::error title=live lane::the lane's label answered no id"
+              exit 1
+              ;;
+          esac
+          content=$(printf 'The branch the seed pull request is opened from.\n' | base64 -w0)
+          api -d "{\"branch\":\"main\",\"new_branch\":\"seed\",\"content\":\"${content}\",\"message\":\"Seed the second branch\"}" \
+            "${FORGE_URL}/api/v1/repos/${repo}/contents/seed.md"
+          # The cases that read one pull request read the seed, at the number its own
+          # creation answered.
+          pr=$(curl -fsS -K "${conf}" -H 'Content-Type: application/json' \
+            -d "{\"head\":\"seed\",\"base\":\"main\",\"title\":\"Seed pull request\",\"body\":\"A pull request the read cases list.\",\"labels\":[${seed_label}]}" \
+            "${FORGE_URL}/api/v1/repos/${repo}/pulls" | jq -r '.number')
+          case "${pr}" in
+            '' | *[!0-9]*)
+              echo "::error title=live lane::the seed pull request answered no number"
+              exit 1
+              ;;
+          esac
+          api -d "{\"title\":\"Seed issue\",\"body\":\"An issue the read cases list.\",\"labels\":[${seed_label}]}" \
+            "${FORGE_URL}/api/v1/repos/${repo}/issues"
+          rm -f "${conf}"
+          upper=$(printf '%s' "${FORGE_PRODUCT}" | tr '[:lower:]' '[:upper:]')
+          {
+            echo "FORGEAPI_LIVE_${upper}_URL=${FORGE_URL}"
+            echo "FORGEAPI_LIVE_${upper}_TOKEN=${token}"
+            echo "FORGEAPI_LIVE_${upper}_REPO=${repo}"
+            echo "FORGEAPI_LIVE_${upper}_SANDBOX=${repo}"
+            echo "FORGEAPI_LIVE_${upper}_REF=main"
+            echo "FORGEAPI_LIVE_${upper}_PR=${pr}"
+            echo "FORGEAPI_LIVE_${upper}_LABEL=forgeapi-a"
+            echo "FORGEAPI_LIVE_${upper}_RUN_WAIT=0"
+          } >> "${GITHUB_ENV}"
+      - name: Run the live lane
+        env:
+          FORGEAPI_LIVE_RUN: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          go test -count=1 -v -timeout 25m -run 'TestLive' ./conformance/
+
+  # A red scheduled run reaches nobody on its own, so this job keeps one issue for it:
+  # opened on the first red run, commented on each later one, closed on the next green
+  # one. The verdict is the needs context, so needs lists every other job here; a
+  # dispatched run has a maintainer watching it already.
+  notify:
+    name: notify
+    needs: [github, gitlab, instance]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write # the tracker issue and its labels
+    steps:
+      - name: Track the scheduled result in an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NEEDS: ${{ toJSON(needs) }}
+          TITLE: Scheduled live run is failing
+        run: |
+          set -euo pipefail
+          label=weekly-ci-failure
+          # An empty context is a broken read, and reading it as green would close the issue.
+          if ! jq -e 'type == "object" and length > 0' <<<"${NEEDS}" > /dev/null; then
+            echo "::error::the needs context names no job; the tracker issue is left as it is"
+            exit 1
+          fi
+          # A timed-out job ends cancelled, so anything but success or skipped is red.
+          red=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped")
+            | "- \(.key): \(.value.result)"' <<<"${NEEDS}")
+
+          # A failed read of the setting falls through: a loud failure beats a dropped result.
+          if enabled=$(gh repo view "${REPO}" --json hasIssuesEnabled --jq .hasIssuesEnabled); then
+            if [ "${enabled}" != true ]; then
+              echo "::notice::${REPO} has issues disabled, so the scheduled result is not tracked"
+              exit 0
+            fi
+          else
+            echo "could not read the issue setting of ${REPO}; attempting the issue writes anyway" >&2
+          fi
+          exact() { jq -r --arg title "${TITLE}" 'map(select(.title == $title)) | first | .number // empty'; }
+
+          if [ -z "${red}" ]; then
+            number=$(gh issue list -R "${REPO}" --state open --limit 100 --label "${label}" \
+              --json number,title | exact)
+            if [ -n "${number}" ]; then
+              gh issue close "${number}" -R "${REPO}" --reason completed \
+                --comment "The scheduled run is green again: ${RUN_URL}"
+            fi
+            exit 0
+          fi
+
+          body="${RUNNER_TEMP}/tracker-body.md"
+          printf 'Run: %s\n\nJobs that did not succeed:\n\n%s\n' "${RUN_URL}" "${red}" > "${body}"
+          number=$(gh issue list -R "${REPO}" --state open --limit 100 --search "${TITLE} in:title" \
+            --json number,title | exact)
+          if [ -n "${number}" ]; then
+            { printf 'Still failing.\n\n'; cat "${body}"; } > "${RUNNER_TEMP}/tracker-comment.md"
+            gh issue comment "${number}" -R "${REPO}" --body-file "${RUNNER_TEMP}/tracker-comment.md"
+            exit 0
+          fi
+          # Labels are made on first use, since gh issue create refuses a missing one.
+          ensure_label() {
+            if ! err=$(gh label create "$1" -R "${REPO}" --color "$2" --description "$3" 2>&1 > /dev/null); then
+              case "${err}" in
+                *'already exists'*) ;;
+                *) echo "label $1 not created in ${REPO}: ${err}" >&2 ;;
+              esac
+            fi
+          }
+          ensure_label "${label}" b60205 'A scheduled CI run failed and needs triage'
+          ensure_label auto-generated ededed 'Maintained by automation'
+          {
+            printf 'The scheduled **live** run failed. Nothing else reports this result, '
+            printf 'so this issue tracks it until a scheduled run is green again.\n\n'
+            cat "${body}"
+          } > "${RUNNER_TEMP}/tracker-issue.md"
+          gh issue create -R "${REPO}" --title "${TITLE}" --label "${label},auto-generated" \
+            --body-file "${RUNNER_TEMP}/tracker-issue.md"

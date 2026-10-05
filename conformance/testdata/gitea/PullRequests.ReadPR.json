@@ -1,0 +1,132 @@
+{
+  "//": "cut from a recorded read_pr response beside a recorded commit_status response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer gitea.com gave anonymously, read 2026-10-02",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/repos/example/example/pulls/1",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "number": 1,
+        "state": "open",
+        "title": "Example pull request",
+        "body": "Example body.",
+        "user": {
+          "login": "example-user"
+        },
+        "html_url": "https://forge.example/example/example/pull/1",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-02T00:00:00Z",
+        "draft": false,
+        "merged": false,
+        "mergeable": true,
+        "labels": [
+          {
+            "name": "example-label",
+            "color": "ededed",
+            "description": "Example label."
+          }
+        ],
+        "head": {
+          "ref": "example-feature",
+          "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+          "repo": {
+            "full_name": "example/example"
+          }
+        },
+        "base": {
+          "ref": "main",
+          "repo": {
+            "full_name": "example/example"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/repos/example/example/commits/1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d/status",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+        "state": "success",
+        "total_count": 2,
+        "commit_url": "https://forge.example/example/example/commit/1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+        "statuses": [
+          {
+            "context": "example/build",
+            "description": "Example build.",
+            "target_url": "https://ci.example/build/1",
+            "status": "success"
+          },
+          {
+            "context": "example/test",
+            "description": "Example test.",
+            "target_url": "https://ci.example/test/1",
+            "status": "success"
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/version",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "version": "1.27.0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/swagger.v1.json",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "swagger": "2.0",
+        "basePath": "/api/v1",
+        "info": {
+          "title": "Gitea API",
+          "version": "1.27.0"
+        },
+        "paths": {
+          "/repos/{owner}/{repo}/actions/runs": {
+            "get": {
+              "operationId": "getWorkflowRuns",
+              "parameters": [
+                {
+                  "name": "head_sha",
+                  "in": "query"
+                }
+              ]
+            }
+          },
+          "/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs": {
+            "post": {
+              "operationId": "rerunFailedWorkflowRun"
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/api",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "max_response_items": 50
+      }
+    }
+  ]
+}

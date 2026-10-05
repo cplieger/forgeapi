@@ -1,0 +1,275 @@
+{
+  "//": "cut from api.github.com's own GraphQL schema, read 2026-09-18 by introspection with includeDeprecated set on both fields and enum values, which is the form a deprecated member is visible in at all; CheckRunState rides its own row because this product caps an introspection field at two uses per document, so one query could not carry every enumeration. The REST spellings are the same member sets in lower snake case, which is the spelling that product's REST fields answer",
+  "source": "api.github.com GraphQL schema, read 2026-09-18",
+  "enums": {
+    "status_state": {
+      "declared_by": "StatusState, on StatusContext.state and the rollup's own state",
+      "enum": [
+        {
+          "name": "EXPECTED",
+          "deprecated": false
+        },
+        {
+          "name": "ERROR",
+          "deprecated": false
+        },
+        {
+          "name": "FAILURE",
+          "deprecated": false
+        },
+        {
+          "name": "PENDING",
+          "deprecated": false
+        },
+        {
+          "name": "SUCCESS",
+          "deprecated": false
+        }
+      ]
+    },
+    "check_conclusion_state": {
+      "declared_by": "CheckConclusionState, on CheckRun.conclusion",
+      "enum": [
+        {
+          "name": "ACTION_REQUIRED",
+          "deprecated": false
+        },
+        {
+          "name": "TIMED_OUT",
+          "deprecated": false
+        },
+        {
+          "name": "CANCELLED",
+          "deprecated": false
+        },
+        {
+          "name": "FAILURE",
+          "deprecated": false
+        },
+        {
+          "name": "SUCCESS",
+          "deprecated": false
+        },
+        {
+          "name": "NEUTRAL",
+          "deprecated": false
+        },
+        {
+          "name": "SKIPPED",
+          "deprecated": false
+        },
+        {
+          "name": "STARTUP_FAILURE",
+          "deprecated": false
+        },
+        {
+          "name": "STALE",
+          "deprecated": false
+        }
+      ]
+    },
+    "check_status_state": {
+      "declared_by": "CheckStatusState, on CheckRun.status",
+      "enum": [
+        {
+          "name": "REQUESTED",
+          "deprecated": false
+        },
+        {
+          "name": "QUEUED",
+          "deprecated": false
+        },
+        {
+          "name": "IN_PROGRESS",
+          "deprecated": false
+        },
+        {
+          "name": "COMPLETED",
+          "deprecated": false
+        },
+        {
+          "name": "WAITING",
+          "deprecated": false
+        },
+        {
+          "name": "PENDING",
+          "deprecated": false
+        }
+      ]
+    },
+    "check_run_state": {
+      "declared_by": "CheckRunState, on the rollup contexts connection's per-state counts",
+      "enum": [
+        {
+          "name": "ACTION_REQUIRED",
+          "deprecated": false
+        },
+        {
+          "name": "CANCELLED",
+          "deprecated": false
+        },
+        {
+          "name": "COMPLETED",
+          "deprecated": false
+        },
+        {
+          "name": "FAILURE",
+          "deprecated": false
+        },
+        {
+          "name": "IN_PROGRESS",
+          "deprecated": false
+        },
+        {
+          "name": "NEUTRAL",
+          "deprecated": false
+        },
+        {
+          "name": "PENDING",
+          "deprecated": false
+        },
+        {
+          "name": "QUEUED",
+          "deprecated": false
+        },
+        {
+          "name": "SKIPPED",
+          "deprecated": false
+        },
+        {
+          "name": "STALE",
+          "deprecated": false
+        },
+        {
+          "name": "STARTUP_FAILURE",
+          "deprecated": false
+        },
+        {
+          "name": "SUCCESS",
+          "deprecated": false
+        },
+        {
+          "name": "TIMED_OUT",
+          "deprecated": false
+        },
+        {
+          "name": "WAITING",
+          "deprecated": false
+        }
+      ]
+    },
+    "merge_state_status": {
+      "declared_by": "MergeStateStatus, on PullRequest.mergeStateStatus",
+      "enum": [
+        {
+          "name": "DIRTY",
+          "deprecated": false
+        },
+        {
+          "name": "UNKNOWN",
+          "deprecated": false
+        },
+        {
+          "name": "BLOCKED",
+          "deprecated": false
+        },
+        {
+          "name": "BEHIND",
+          "deprecated": false
+        },
+        {
+          "name": "DRAFT",
+          "deprecated": true
+        },
+        {
+          "name": "UNSTABLE",
+          "deprecated": false
+        },
+        {
+          "name": "HAS_HOOKS",
+          "deprecated": false
+        },
+        {
+          "name": "CLEAN",
+          "deprecated": false
+        }
+      ]
+    },
+    "mergeable_state": {
+      "declared_by": "MergeableState, on PullRequest.mergeable",
+      "enum": [
+        {
+          "name": "MERGEABLE",
+          "deprecated": false
+        },
+        {
+          "name": "CONFLICTING",
+          "deprecated": false
+        },
+        {
+          "name": "UNKNOWN",
+          "deprecated": false
+        }
+      ]
+    },
+    "merge_queue_entry_state": {
+      "declared_by": "MergeQueueEntryState, on MergeQueueEntry.state",
+      "enum": [
+        {
+          "name": "QUEUED",
+          "deprecated": false
+        },
+        {
+          "name": "AWAITING_CHECKS",
+          "deprecated": false
+        },
+        {
+          "name": "MERGEABLE",
+          "deprecated": false
+        },
+        {
+          "name": "UNMERGEABLE",
+          "deprecated": false
+        },
+        {
+          "name": "LOCKED",
+          "deprecated": false
+        }
+      ]
+    },
+    "pull_request_state": {
+      "declared_by": "PullRequestState, on PullRequest.state",
+      "enum": [
+        {
+          "name": "OPEN",
+          "deprecated": false
+        },
+        {
+          "name": "CLOSED",
+          "deprecated": false
+        },
+        {
+          "name": "MERGED",
+          "deprecated": false
+        }
+      ]
+    },
+    "merge_method": {
+      "declared_by": "PullRequestMergeMethod, on the merge route's own strategy",
+      "enum": [
+        {
+          "name": "MERGE",
+          "deprecated": false
+        },
+        {
+          "name": "SQUASH",
+          "deprecated": false
+        },
+        {
+          "name": "REBASE",
+          "deprecated": false
+        }
+      ]
+    }
+  }
+}

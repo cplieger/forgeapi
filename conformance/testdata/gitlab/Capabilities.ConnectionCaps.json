@@ -1,0 +1,35 @@
+{
+  "//": "cut from a recorded metadata-bot response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the second route is connection setup's bounded schema question, whose answer was measured anonymously against this product's own public instance on 2026-09-20: a null project beside the complexity charged, 68 bytes at a score of 53 against that instance's limit of 200, because the question resolves no project and reads no row. The same question carrying one field the schema does not declare answered 200 with an undefinedField error and no data, which is the refusal that sends this connection's document reads to REST; the metadata route answered 200 when read as a bot account with a credential on 2026-10-01",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/metadata",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "x-gitlab-meta": "{\"correlation_id\":\"example-correlation-id\",\"version\":\"1\"}"
+      },
+      "body": {
+        "version": "18.4.0",
+        "enterprise": false,
+        "revision": "abcdef1"
+      }
+    },
+    {
+      "graphql": true,
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "data": {
+          "project": null,
+          "queryComplexity": {
+            "score": 53,
+            "limit": 200
+          }
+        }
+      }
+    }
+  ]
+}

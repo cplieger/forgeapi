@@ -1,0 +1,63 @@
+{
+  "//": "cut from a recorded read-pr response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "routes": [
+    {
+      "graphql": true,
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "data": {
+          "queryComplexity": {
+            "score": 99,
+            "limit": 200
+          },
+          "project": {
+            "fullPath": "example/example",
+            "userPermissions": {
+              "pushCode": true,
+              "readMergeRequest": true
+            },
+            "mergeRequest": {
+              "iid": "1",
+              "title": "Example pull request",
+              "description": "Example body.",
+              "author": {
+                "username": "example-user"
+              },
+              "sourceBranch": "example-feature",
+              "sourceProject": {
+                "fullPath": "example/example"
+              },
+              "targetBranch": "main",
+              "webUrl": "https://forge.example/example/example/pull/1",
+              "createdAt": "2026-01-01T00:00:00Z",
+              "updatedAt": "2026-01-02T00:00:00Z",
+              "state": "opened",
+              "draft": false,
+              "mergedAt": null,
+              "mergeable": true,
+              "detailedMergeStatus": "MERGEABLE",
+              "autoMergeEnabled": false,
+              "diffHeadSha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+              "labels": {
+                "nodes": [
+                  {
+                    "title": "example-label",
+                    "color": "#ededed",
+                    "description": "Example label."
+                  }
+                ]
+              },
+              "headPipeline": {
+                "status": "SUCCESS",
+                "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

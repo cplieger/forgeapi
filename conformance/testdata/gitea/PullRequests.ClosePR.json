@@ -1,0 +1,48 @@
+{
+  "//": "cut from a recorded mutations_local response, read 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the mutation's own answer, captured on 2026-10-02 on local instances of its current release: the close answers 201 with state closed and closed_at set, so this route answers 201",
+  "routes": [
+    {
+      "method": "PATCH",
+      "path": "/api/v1/repos/example/example/pulls/1",
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "number": 1,
+        "state": "closed",
+        "title": "Example pull request",
+        "body": "Example body.",
+        "user": {
+          "login": "example-user"
+        },
+        "html_url": "https://forge.example/example/example/pull/1",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-02T00:00:00Z",
+        "draft": false,
+        "merged": false,
+        "mergeable": true,
+        "labels": [
+          {
+            "name": "example-label",
+            "color": "ededed",
+            "description": "Example label."
+          }
+        ],
+        "head": {
+          "ref": "example-feature",
+          "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+          "repo": {
+            "full_name": "example/example"
+          }
+        },
+        "base": {
+          "ref": "main",
+          "repo": {
+            "full_name": "example/example"
+          }
+        }
+      }
+    }
+  ]
+}

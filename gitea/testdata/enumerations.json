@@ -1,0 +1,37 @@
+{
+  "//": "cut from the two swagger documents the products of this family publish, read 2026-09-16 and recorded 2026-09-19; each entry is the enum array that document declares for the field named, and a null array is a document that declares the field as a bare string with no machine-readable set",
+  "gitea": {
+    "version": "1.27.0+dev-954-g1f3981a301",
+    "commit_status_state": {
+      "declared_by": "CommitStatus.status and CombinedStatus.state",
+      "enum": [
+        "pending",
+        "success",
+        "error",
+        "failure",
+        "warning",
+        "skipped"
+      ]
+    },
+    "issue_and_pull_request_state": {
+      "declared_by": "Issue.state and PullRequest.state",
+      "enum": [
+        "open",
+        "closed"
+      ]
+    }
+  },
+  "forgejo": {
+    "version": "16.0.0-dev-741-6f391573+gitea-1.22.0",
+    "commit_status_state": {
+      "declared_by": "CommitStatusState, which CommitStatus.status and CombinedStatus.state reference",
+      "enum": null,
+      "prose": "CommitStatusState holds the state of a CommitStatus\nIt can be \"pending\", \"success\", \"error\", \"failure\", \"warning\", or \"skipped\""
+    },
+    "issue_and_pull_request_state": {
+      "declared_by": "StateType, which Issue.state and PullRequest.state reference",
+      "enum": null,
+      "prose": "StateType issue state type"
+    }
+  }
+}

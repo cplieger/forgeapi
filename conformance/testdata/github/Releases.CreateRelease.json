@@ -1,0 +1,23 @@
+{
+  "//": "cut from a recorded CreateRelease response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/repos/example/example/releases",
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "tag_name": "v1.0.0",
+        "name": "Example release",
+        "body": "Example release notes.",
+        "html_url": "https://forge.example/example/example/releases/tag/v1.0.0",
+        "published_at": "2026-01-03T00:00:00Z",
+        "draft": false,
+        "prerelease": true,
+        "target_commitish": "main"
+      }
+    }
+  ]
+}

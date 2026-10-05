@@ -1,0 +1,43 @@
+{
+  "//": "cut from a recorded mutations-sandbox-bot response, read 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the mutation's own answer, captured on 2026-10-02 on the GitLab sandbox as a bot account: the reopen answers head_pipeline null and merge_status and detailed_merge_status unchecked, which this body serves",
+  "routes": [
+    {
+      "method": "PUT",
+      "path": "/api/v4/projects/example%2Fexample/merge_requests/1",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "iid": 1,
+        "project_id": 1,
+        "source_project_id": 1,
+        "target_project_id": 1,
+        "state": "opened",
+        "title": "Example pull request",
+        "description": "Example body.",
+        "author": {
+          "username": "example-user"
+        },
+        "web_url": "https://forge.example/example/example/pull/1",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-02T00:00:00Z",
+        "draft": false,
+        "labels": [
+          "example-label"
+        ],
+        "source_branch": "example-feature",
+        "target_branch": "main",
+        "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+        "merge_status": "unchecked",
+        "detailed_merge_status": "unchecked",
+        "merged_at": null,
+        "references": {
+          "full": "example/example!1"
+        },
+        "head_pipeline": null,
+        "merge_when_pipeline_succeeds": false
+      }
+    }
+  ]
+}

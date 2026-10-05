@@ -1,0 +1,20 @@
+{
+  "//": "cut from a recorded list-labels-bot response beside a recorded list-labels-sandbox-bot response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; read as a bot account with a credential on 2026-10-01: colours carry a leading #, some in upper-case hex",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/projects/example%2Fexample/labels",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "name": "example-label",
+          "color": "#ededed",
+          "description": "Example label."
+        }
+      ]
+    }
+  ]
+}

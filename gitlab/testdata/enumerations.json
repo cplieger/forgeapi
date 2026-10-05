@@ -1,0 +1,234 @@
+{
+  "//": "cut from gitlab.com's own GraphQL schema, introspected anonymously on 2026-09-20 with includeDeprecated set on both fields and enum values, which is the form a deprecated member is visible in at all; the two REST enumerations are the same member sets in lower snake case, which is the spelling that product's REST fields answer",
+  "source": "gitlab.com GraphQL schema, read 2026-09-20",
+  "enums": {
+    "pipeline_status": {
+      "declared_by": "PipelineStatusEnum",
+      "enum": [
+        "CREATED",
+        "WAITING_FOR_RESOURCE",
+        "PREPARING",
+        "WAITING_FOR_CALLBACK",
+        "PENDING",
+        "RUNNING",
+        "FAILED",
+        "SUCCESS",
+        "CANCELING",
+        "CANCELED",
+        "SKIPPED",
+        "MANUAL",
+        "SCHEDULED"
+      ]
+    },
+    "job_status": {
+      "declared_by": "CiJobStatus",
+      "enum": [
+        "CREATED",
+        "WAITING_FOR_RESOURCE",
+        "PREPARING",
+        "WAITING_FOR_CALLBACK",
+        "PENDING",
+        "RUNNING",
+        "SUCCESS",
+        "FAILED",
+        "CANCELING",
+        "CANCELED",
+        "SKIPPED",
+        "MANUAL",
+        "SCHEDULED"
+      ]
+    },
+    "detailed_merge_status": {
+      "declared_by": "DetailedMergeStatus",
+      "enum": [
+        "UNCHECKED",
+        "CHECKING",
+        "MERGEABLE",
+        "COMMITS_STATUS",
+        "CI_MUST_PASS",
+        "CI_STILL_RUNNING",
+        "DISCUSSIONS_NOT_RESOLVED",
+        "DRAFT_STATUS",
+        "NOT_OPEN",
+        "NOT_APPROVED",
+        "BLOCKED_STATUS",
+        "EXTERNAL_STATUS_CHECKS",
+        "PREPARING",
+        "JIRA_ASSOCIATION",
+        "CONFLICT",
+        "NEED_REBASE",
+        "APPROVALS_SYNCING",
+        "LOCKED_PATHS",
+        "LOCKED_LFS_FILES",
+        "MERGE_TIME",
+        "SECURITY_POLICIES_VIOLATIONS",
+        "TITLE_NOT_MATCHING",
+        "REQUESTED_CHANGES",
+        "SECURITY_POLICY_PIPELINE_CHECK"
+      ]
+    },
+    "merge_status": {
+      "declared_by": "MergeStatus",
+      "enum": [
+        "UNCHECKED",
+        "CHECKING",
+        "CAN_BE_MERGED",
+        "CANNOT_BE_MERGED",
+        "CANNOT_BE_MERGED_RECHECK"
+      ]
+    },
+    "merge_request_state": {
+      "declared_by": "MergeRequestState",
+      "enum": [
+        "merged",
+        "opened",
+        "closed",
+        "locked",
+        "all"
+      ]
+    },
+    "issue_state": {
+      "declared_by": "IssueState",
+      "enum": [
+        "opened",
+        "closed",
+        "locked",
+        "all"
+      ]
+    }
+  },
+  "fields": {
+    "MergeRequest.mergeStatus": {
+      "deprecated": true,
+      "reason": "Renamed. Use `MergeRequest.mergeStatusEnum` instead. Deprecated in GitLab 14.0."
+    },
+    "MergeRequest.detailedMergeStatus": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Project.mergeTrains": {
+      "deprecated": true,
+      "reason": "Status: Experiment. Introduced in GitLab 17.1."
+    },
+    "MergeTrain.cars": {
+      "deprecated": true,
+      "reason": "Status: Experiment. Introduced in GitLab 17.1."
+    },
+    "MergeRequest.diffHeadSha": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.autoMergeEnabled": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.headPipeline": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.labels": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.mergeable": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.state": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.draft": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.mergedAt": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.webUrl": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.iid": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.title": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.description": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.author": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.sourceBranch": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.targetBranch": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.createdAt": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "MergeRequest.updatedAt": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Project.fullPath": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Project.userPermissions": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Project.mergeRequests": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Project.mergeRequest": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Query.project": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Query.queryComplexity": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Pipeline.status": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Label.title": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Label.color": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "Label.description": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "ProjectPermissions.pushCode": {
+      "deprecated": false,
+      "reason": ""
+    },
+    "ProjectPermissions.readMergeRequest": {
+      "deprecated": false,
+      "reason": ""
+    }
+  }
+}

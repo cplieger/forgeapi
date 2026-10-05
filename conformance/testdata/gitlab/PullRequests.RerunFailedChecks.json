@@ -1,0 +1,60 @@
+{
+  "//": "cut from a recorded connection-caps response beside a recorded commit-pipelines response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; no sandbox capture exists for this mutation on this product, so the response shape is the same product's read capture, which this product's swagger document gives the mutation as its response schema; the first two routes are connection setup, whose bounded schema question was measured anonymously against this product's own public instance on 2026-09-20 and answers a null project beside the complexity charged; this call itself reads the pipelines route and retries the pipeline it resolved, on a fresh connection as on a used one, because the capability it is gated on is the connection's and is held from setup",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/metadata",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "x-gitlab-meta": "{\"correlation_id\":\"example-correlation-id\",\"version\":\"1\"}"
+      },
+      "body": {
+        "version": "18.4.0",
+        "enterprise": false,
+        "revision": "abcdef1"
+      }
+    },
+    {
+      "graphql": true,
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "data": {
+          "project": null,
+          "queryComplexity": {
+            "score": 53,
+            "limit": 200
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v4/projects/example%2Fexample/pipelines",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "id": 1,
+          "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+          "status": "failed",
+          "ref": "main"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v4/projects/example%2Fexample/pipelines/{}/retry",
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {}
+    }
+  ]
+}

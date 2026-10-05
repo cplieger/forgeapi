@@ -1,0 +1,20 @@
+{
+  "//": "cut from a recorded ListLabels response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/repos/example/example/labels",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "name": "example-label",
+          "color": "ededed",
+          "description": "Example label."
+        }
+      ]
+    }
+  ]
+}

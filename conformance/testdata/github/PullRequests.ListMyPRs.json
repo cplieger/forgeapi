@@ -1,0 +1,104 @@
+{
+  "//": "cut from a recorded ListMyPRs response beside a recorded ListMyPRs-scope-owner-user response, read 2026-09-18 and 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "routes": [
+    {
+      "graphql": true,
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "data": {
+          "rateLimit": {
+            "cost": 1,
+            "limit": 5000,
+            "remaining": 4990,
+            "resetAt": "2026-01-02T00:00:00Z"
+          },
+          "search": {
+            "issueCount": 1,
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            },
+            "nodes": [
+              {
+                "number": 1,
+                "title": "Example pull request",
+                "body": "Example body.",
+                "author": {
+                  "login": "example-user"
+                },
+                "headRefName": "example-feature",
+                "headRepository": {
+                  "nameWithOwner": "example/example"
+                },
+                "baseRefName": "main",
+                "url": "https://forge.example/example/example/pull/1",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-02T00:00:00Z",
+                "state": "OPEN",
+                "isDraft": false,
+                "merged": false,
+                "mergeable": "MERGEABLE",
+                "mergeStateStatus": "CLEAN",
+                "autoMergeRequest": null,
+                "mergeQueueEntry": null,
+                "labels": {
+                  "nodes": [
+                    {
+                      "name": "example-label",
+                      "color": "ededed",
+                      "description": "Example label."
+                    }
+                  ]
+                },
+                "headRefOid": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+                "commits": {
+                  "nodes": [
+                    {
+                      "commit": {
+                        "oid": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+                        "statusCheckRollup": {
+                          "state": "SUCCESS",
+                          "contexts": {
+                            "pageInfo": {
+                              "hasNextPage": false,
+                              "endCursor": null
+                            },
+                            "nodes": [
+                              {
+                                "__typename": "StatusContext",
+                                "context": "example/build",
+                                "description": "Example build.",
+                                "targetUrl": "https://ci.example/build/1",
+                                "state": "SUCCESS"
+                              },
+                              {
+                                "__typename": "StatusContext",
+                                "context": "example/test",
+                                "description": "Example test.",
+                                "targetUrl": "https://ci.example/test/1",
+                                "state": "SUCCESS"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                "__typename": "PullRequest",
+                "repository": {
+                  "nameWithOwner": "example/example",
+                  "viewerPermission": "WRITE",
+                  "url": "https://forge.example/example/example"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

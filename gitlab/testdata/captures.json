@@ -1,0 +1,154 @@
+{
+  "//": "cut from this product's own recorded responses, read 2026-09-18, trimmed to the keys this family's wire types read and with the namespace, login, host, branch and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
+  "graphql_pr_read": {
+    "fullPath": "example/group/example",
+    "userPermissions": {
+      "pushCode": false,
+      "readMergeRequest": true
+    },
+    "mergeRequest": {
+      "iid": "2672",
+      "title": "Example pull request",
+      "description": "Example body.",
+      "author": {
+        "username": "example-user"
+      },
+      "sourceBranch": "example-feature",
+      "targetBranch": "main",
+      "webUrl": "https://forge.example/example/group/example/-/merge_requests/2672",
+      "diffHeadSha": "a16e082cbfe51d912438753de8e26d213ec34d49",
+      "createdAt": "2026-09-18T04:19:48Z",
+      "updatedAt": "2026-09-18T04:39:26Z",
+      "state": "opened",
+      "draft": false,
+      "mergedAt": null,
+      "mergeable": false,
+      "detailedMergeStatus": "NOT_APPROVED",
+      "autoMergeEnabled": false,
+      "labels": {
+        "pageInfo": {
+          "hasNextPage": false
+        },
+        "nodes": [
+          {
+            "title": "category:jetbrains",
+            "color": "#6699cc",
+            "description": "AI category within the Developer Clients group."
+          }
+        ]
+      },
+      "headPipeline": {
+        "sha": "4f30a69cef33296cfe2efac8fc480467d5fe4b43",
+        "status": "SUCCESS"
+      }
+    }
+  },
+  "rest_merge_request": {
+    "iid": 2672,
+    "state": "opened",
+    "title": "Example pull request",
+    "description": "Example body.",
+    "author": {
+      "username": "example-user",
+      "name": "Example User",
+      "web_url": "https://forge.example/example-user"
+    },
+    "web_url": "https://forge.example/example/group/example/-/merge_requests/2672",
+    "created_at": "2026-09-18T04:19:48.442Z",
+    "updated_at": "2026-09-18T04:39:26.294Z",
+    "draft": false,
+    "labels": [
+      "category:jetbrains",
+      "devops::ai clients",
+      "group::developer clients",
+      "section::ai",
+      "type::bug"
+    ],
+    "source_branch": "example-feature",
+    "target_branch": "main",
+    "sha": "a16e082cbfe51d912438753de8e26d213ec34d49",
+    "merge_status": "can_be_merged",
+    "detailed_merge_status": "not_approved",
+    "merged_at": null,
+    "references": {
+      "short": "!2672",
+      "relative": "!2672",
+      "full": "example/group/example!2672"
+    }
+  },
+  "rest_issue": {
+    "iid": 1584,
+    "state": "opened",
+    "title": "Example issue",
+    "description": "Example issue body.",
+    "author": {
+      "username": "lauraionel",
+      "name": "Laura Ionel",
+      "web_url": "https://forge.example/lauraionel"
+    },
+    "web_url": "https://forge.example/example/group/example/-/work_items/1584",
+    "created_at": "2026-08-19T16:08:06.663Z",
+    "updated_at": "2026-08-19T16:08:46.628Z",
+    "labels": [
+      {
+        "id": 51687905,
+        "name": "category:jetbrains",
+        "description": "AI category within the Developer Clients group.",
+        "text_color": "#FFFFFF",
+        "description_html": "AI category within the Developer Clients group.",
+        "color": "#6699cc",
+        "archived": false
+      }
+    ]
+  },
+  "rest_project": {
+    "path_with_namespace": "example/group/example",
+    "description": "Example repository.",
+    "web_url": "https://forge.example/example/group/example",
+    "http_url_to_repo": "https://forge.example/example/group/example.git",
+    "last_activity_at": "2026-09-18T06:35:26.274Z",
+    "visibility": "public",
+    "default_branch": "main"
+  },
+  "rest_release": {
+    "tag_name": "v3.48.0",
+    "name": "Example release",
+    "description": "Example release notes.",
+    "released_at": "2026-09-14T22:04:09.248Z",
+    "upcoming_release": false,
+    "_links": {
+      "closed_issues_url": "https://forge.example/example/group/example/-/issues?release_tag=v3.48.0&scope=all&state=closed",
+      "closed_merge_requests_url": "https://forge.example/example/group/example/-/merge_requests?release_tag=v3.48.0&scope=all&state=closed",
+      "merged_merge_requests_url": "https://forge.example/example/group/example/-/merge_requests?release_tag=v3.48.0&scope=all&state=merged",
+      "opened_issues_url": "https://forge.example/example/group/example/-/issues?release_tag=v3.48.0&scope=all&state=opened",
+      "opened_merge_requests_url": "https://forge.example/example/group/example/-/merge_requests?release_tag=v3.48.0&scope=all&state=opened",
+      "self": "https://forge.example/example/group/example/-/releases/v3.48.0"
+    },
+    "commit": {
+      "id": "6fa5df6cea510c68d73dd344e69382c2fa4ff2f6",
+      "short_id": "6fa5df6c",
+      "created_at": "2026-09-14T13:49:36.000-07:00",
+      "parent_ids": [
+        "97a5c1d2a5ede08dff4c4669bb2c1918870cacaf",
+        "5da8c97ed2accba6df44e620e9e79539cc0b84ba"
+      ],
+      "title": "Merge branch 'example-user/3.48.0-release' into 'main'",
+      "message": "Merge branch 'example-user/3.48.0-release' into 'main'\n\nchore: prepare 3.48.0 release\n\nSee merge request example/group/example!2663",
+      "author_name": "Example User",
+      "author_email": "21925675-example-user@users.noreply.forge.example",
+      "authored_date": "2026-09-14T13:49:36.000-07:00",
+      "committer_name": "GitLab",
+      "committer_email": "noreply@forge.example",
+      "committed_date": "2026-09-14T13:49:36.000-07:00",
+      "trailers": {},
+      "extended_trailers": {},
+      "web_url": "https://forge.example/example/group/example/-/commit/6fa5df6cea510c68d73dd344e69382c2fa4ff2f6"
+    }
+  },
+  "rest_pipeline": {
+    "id": 2860241265,
+    "sha": "a16e082cbfe51d912438753de8e26d213ec34d49",
+    "status": "success",
+    "ref": "refs/workloads/6ef60ccf74a"
+  }
+}

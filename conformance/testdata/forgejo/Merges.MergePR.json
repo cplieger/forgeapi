@@ -1,0 +1,14 @@
+{
+  "//": "cut from a recorded merge_status response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; no sandbox capture exists for this mutation on this product, so the response shape is the same product's read capture, which this product's swagger document gives the mutation as its response schema",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v1/repos/example/example/pulls/1/merge",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {}
+    }
+  ]
+}

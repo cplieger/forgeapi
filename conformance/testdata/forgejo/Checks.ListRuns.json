@@ -1,0 +1,77 @@
+{
+  "//": "cut from a recorded list_runs_paged response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured on 2026-10-01 on this product's public instance and on local instances of its current stable and long-term releases: with page sent the route pages, the public instance serves at most 50 rows whatever limit is asked, no Link and no x-total-count is sent, and total_count states the whole listing, so this fixture serves one row of three and the continuation comes from the total; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer codeberg.org gave anonymously, read 2026-10-02",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/repos/example/example/actions/runs",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "total_count": 3,
+        "workflow_runs": [
+          {
+            "id": 1,
+            "title": "Example pull request",
+            "workflow_id": "example.yml",
+            "prettyref": "example-feature",
+            "commit_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+            "html_url": "https://forge.example/example/example/actions/runs/1",
+            "created": "2026-01-01T00:00:00Z",
+            "updated": "2026-01-02T00:00:00Z",
+            "status": "failure",
+            "repository": {
+              "full_name": "example/example"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/version",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "version": "16.0.0+gitea-1.22.0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/swagger.v1.json",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "swagger": "2.0",
+        "basePath": "/api/v1",
+        "info": {
+          "title": "Forgejo API",
+          "version": "16.0.0+gitea-1.22.0"
+        },
+        "paths": {
+          "/repos/{owner}/{repo}/actions/runs/{run_id}/logs": {
+            "get": {
+              "operationId": "repoGetActionRunLogs"
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/settings/api",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "max_response_items": 50
+      }
+    }
+  ]
+}

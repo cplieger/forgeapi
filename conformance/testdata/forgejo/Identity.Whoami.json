@@ -1,0 +1,19 @@
+{
+  "//": "cut from a recorded whoami response beside a recorded phase4d_local response, read 2026-09-18 and 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; read on 2026-10-02 on local instances of its current stable and long-term releases with the instance token: the user route answers the credential's login, its full_name, its address and its profile URL, and carries no scope list and no scope header, as this body does",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/user",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "login": "example-user",
+        "full_name": "Example User",
+        "email": "example-user@forge.example",
+        "html_url": "https://forge.example/example-user"
+      }
+    }
+  ]
+}

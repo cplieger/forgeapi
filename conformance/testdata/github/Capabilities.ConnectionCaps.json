@@ -1,0 +1,31 @@
+{
+  "//": "cut from a recorded ConnectionCaps response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured: this product publishes no per-instance OpenAPI document, so the swagger step of the evidence order is unreachable here rather than merely expensive, and no route below serves one. The version set is this product's own answer to its versions route, read 2026-09-20: the version this family pins beside the older one an unpinned request is answered under, which is what connection setup reads to decide whether this connection sends the pin",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/meta",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Github-Request-Id": "EXAMPLE:REQUEST:ID"
+      },
+      "body": {
+        "verifiable_password_authentication": false,
+        "installed_version": "3.20.0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/versions",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Github-Request-Id": "EXAMPLE:REQUEST:ID"
+      },
+      "body": [
+        "2026-03-10",
+        "2022-11-28"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "//": "cut from a recorded list-my-prs-scope-viewer-bot response beside a recorded list-my-prs-scope-owner-group response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; read as a bot account with a credential on 2026-10-01: a list row carries no head_pipeline, mergeable or auto_merge_enabled key under either scope, its auto-merge flag arrives as merge_when_pipeline_succeeds, and its labels arrive as objects where the label detail parameter is sent",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/merge_requests",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "iid": 1,
+          "project_id": 1,
+          "source_project_id": 1,
+          "target_project_id": 1,
+          "state": "opened",
+          "title": "Example pull request",
+          "description": "Example body.",
+          "author": {
+            "username": "example-user"
+          },
+          "web_url": "https://forge.example/example/example/pull/1",
+          "created_at": "2026-01-01T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "draft": false,
+          "labels": [
+            {
+              "name": "example-label",
+              "color": "#ededed",
+              "description": "Example label."
+            }
+          ],
+          "source_branch": "example-feature",
+          "target_branch": "main",
+          "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+          "merge_status": "can_be_merged",
+          "detailed_merge_status": "mergeable",
+          "merged_at": null,
+          "references": {
+            "full": "example/example!1"
+          },
+          "merge_when_pipeline_succeeds": false
+        }
+      ],
+      "paths": [
+        "/api/v4/groups/example/merge_requests"
+      ]
+    }
+  ]
+}

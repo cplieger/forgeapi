@@ -1,0 +1,20 @@
+{
+  "//": "cut from a recorded GrantCaps response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/user",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "X-OAuth-Scopes": "repo, workflow"
+      },
+      "body": {
+        "login": "example-user",
+        "name": "Example User",
+        "email": "example-user@forge.example",
+        "html_url": "https://forge.example/example-user"
+      }
+    }
+  ]
+}
