@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,6 +49,22 @@ func TestFileStore_writes_its_one_file_private(t *testing.T) {
 	}
 	if !slices.Equal(names, []string{credentialFile}) {
 		t.Errorf("the store's directory holds %v, want only %s", names, credentialFile)
+	}
+}
+
+// The umask is process-wide, so this test must never call t.Parallel.
+func TestFileStore_writes_its_file_private_under_an_open_umask(t *testing.T) {
+	previous := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(previous) })
+	store, dir := openStore(t)
+	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, "https://forge.example", 8*time.Hour, 8*time.Hour))
+
+	info, err := os.Stat(filepath.Join(dir, credentialFile))
+	if err != nil {
+		t.Fatalf("Stat(%s) = error %v, want the credential file", credentialFile, err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("under umask 000, %s is at %v, want 0600", credentialFile, got)
 	}
 }
 

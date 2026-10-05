@@ -24,7 +24,7 @@ var admitted = map[string]string{
 	"github.com/cplieger/jsoncap/v2":    "bounding what an untrusted response costs to decode",
 	"github.com/cplieger/runesafe/v2":   "sanitizing and bounding untrusted upstream text at the emit site",
 	"github.com/cplieger/urlform":       "one refusal at entry: a pasted instance URL whose browser reading differs from net/url's",
-	"github.com/cplieger/atomicfile/v3": "the file-backed credential store, with its private-directory custody and enforced mode",
+	"github.com/cplieger/atomicfile/v4": "the file-backed credential store, with its private-directory custody and enforced mode",
 	"pgregory.net/rapid":                "a property-based testing dependency of the modules above, in the module graph and in no build of this library",
 }
 
