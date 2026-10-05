@@ -1,22 +1,19 @@
-// Command gen renders everything forgeapi publishes about per-product behaviour
+// Package gen renders everything forgeapi publishes about per-product behaviour
 // from the expectation table, and nothing else states those facts.
 //
 // Two outputs. It replaces the per-forge block of every role method's godoc in
-// roles.go, and it writes SUPPORT.md, the operation-by-product support matrix.
-// Run it through go generate from the module root; gen_test.go fails when either
-// output would move, which is the stale-output gate.
+// roles.go, and it renders SUPPORT.md, the operation-by-product support matrix.
+// TestGeneratedFilesAreCurrent owns both files: go generate runs it with -update
+// to write them, and a plain run fails when either would move, which is the
+// stale-output gate.
 //
 // A method's block is the span from the "Per forge:" line to the end of that doc
-// comment, and the span is this command's alone: everything above the marker is
+// comment, and the span is this package's alone: everything above the marker is
 // written by hand and is never touched.
-package main
+package gen
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -43,72 +40,6 @@ var (
 	interfaceLine = regexp.MustCompile(`^type ([A-Z]\w*) interface \{$`)
 	signature     = regexp.MustCompile(`^\t(\w+)\(`)
 )
-
-func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "gen: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-// run reads and writes through an os.Root on the module directory, so no output
-// path can resolve outside the module.
-func run() error {
-	dir, err := moduleRoot()
-	if err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	current, err := root.ReadFile(rolesFile)
-	if err != nil {
-		return err
-	}
-	roles, err := renderRoles(current)
-	if err != nil {
-		return err
-	}
-	if err := write(root, rolesFile, roles); err != nil {
-		return err
-	}
-	return write(root, supportFile, renderSupport())
-}
-
-// write leaves a file whose content already matches untouched, so a generate run
-// over an up-to-date tree changes no timestamp.
-func write(root *os.Root, name string, want []byte) error {
-	got, err := root.ReadFile(name)
-	if err == nil && bytes.Equal(got, want) {
-		return nil
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return root.WriteFile(name, want, 0o600)
-}
-
-// moduleRoot walks up from the working directory to the directory holding go.mod,
-// so the command runs the same under go generate at the root and under go test in
-// this package.
-func moduleRoot() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", errors.New("no go.mod above the working directory")
-		}
-		dir = parent
-	}
-}
 
 // renderRoles replaces every method's generated span in src and returns the file.
 //

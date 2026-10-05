@@ -12,5 +12,5 @@
 // per product, the route, its request price and the capability that can refuse
 // it, then each field the product departs on or that no measurement has read.
 //
-//go:generate go run ./internal/gen
+//go:generate go test -count=1 -run TestGeneratedFilesAreCurrent ./internal/gen -update
 package forgeapi
