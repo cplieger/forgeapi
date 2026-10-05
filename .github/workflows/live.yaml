@@ -11,7 +11,9 @@ name: live
 #
 #   1. Each token belongs to a dedicated machine account, never a person's, which owns
 #      nothing but its sandbox, and carries the narrowest scopes the cases need, writes
-#      included: GitHub classic repo, read:org and workflow; GitLab legacy api.
+#      included: GitHub classic repo, read:org and workflow; a GitHub fine-grained token
+#      on the sandbox repository alone, with Actions, Contents, Issues and Pull requests
+#      read and write and Commit statuses and Metadata read; GitLab legacy api.
 #   2. The jobs are reachable by schedule and by a maintainer's dispatch ONLY. There is
 #      deliberately no pull_request trigger, so a fork cannot reach a secret.
 #   3. A change to this file lands only through a pull request to the default branch,
@@ -56,11 +58,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # One job per hosted product rather than one matrix job, and the repetition is the
-  # point: a job holds its own product's token and nothing else, where a matrix would
-  # have to reach the secrets context dynamically and hand every entry both.
-  github:
-    name: live (GitHub)
+  # One job per hosted product and token rather than one matrix job, and the repetition
+  # is the point: a job holds its own token and nothing else, where a matrix would have
+  # to reach the secrets context dynamically and hand every entry all of them.
+  github-classic:
+    name: live (GitHub, classic token)
     runs-on: ubuntu-26.04
     environment: live
     timeout-minutes: 30
@@ -92,6 +94,47 @@ jobs:
           # would skip and the job would pass having run nothing.
           if [ -z "${FORGEAPI_LIVE_GITHUB_TOKEN}" ]; then
             echo "::error title=live lane::no FORGEAPI_LIVE_GITHUB_TOKEN in the live environment, so no GitHub case can run"
+            exit 1
+          fi
+          go test -count=1 -v -timeout 25m -run 'TestLive' ./conformance/
+
+  # The same cases through a fine-grained token. It runs after the classic job, never
+  # beside it: both write to one sandbox, and each run's opening sweep removes every
+  # object there carrying the lane's mark, the other run's in-flight ones included.
+  github-fine-grained:
+    name: live (GitHub, fine-grained token)
+    needs: github-classic
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-26.04
+    environment: live
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run the live lane
+        env:
+          FORGEAPI_LIVE_GITHUB_URL: https://github.com
+          FORGEAPI_LIVE_GITHUB_REPO: cplieger-bot/forgeapi-sandbox
+          FORGEAPI_LIVE_GITHUB_SANDBOX: cplieger-bot/forgeapi-sandbox
+          FORGEAPI_LIVE_GITHUB_REF: main
+          FORGEAPI_LIVE_GITHUB_PR: "15"
+          FORGEAPI_LIVE_GITHUB_LABEL: forgeapi-a
+          FORGEAPI_LIVE_GITHUB_TOKEN: ${{ secrets.FORGEAPI_LIVE_GITHUB_FG_TOKEN }}
+          # Both GitHub jobs share the run id; the suffix keeps each job's names its own.
+          FORGEAPI_LIVE_RUN: ${{ github.run_id }}-${{ github.run_attempt }}-fg
+        run: |
+          set -euo pipefail
+          if [ -z "${FORGEAPI_LIVE_GITHUB_TOKEN}" ]; then
+            echo "::error title=live lane::no FORGEAPI_LIVE_GITHUB_FG_TOKEN in the live environment, so no fine-grained GitHub case can run"
             exit 1
           fi
           go test -count=1 -v -timeout 25m -run 'TestLive' ./conformance/
@@ -288,7 +331,7 @@ jobs:
   # dispatched run has a maintainer watching it already.
   notify:
     name: notify
-    needs: [github, gitlab, instance]
+    needs: [github-classic, github-fine-grained, gitlab, instance]
     if: always() && github.event_name == 'schedule'
     runs-on: ubuntu-26.04
     timeout-minutes: 5

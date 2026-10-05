@@ -35,7 +35,7 @@ Start no name or title there with `forgeapi-live-` or `forgeapi-ci-live-`, becau
 
 Set `_RUN_WAIT=0` unless the sandbox's CI gives one passing and one failing job on a push to a `forgeapi-ci-*` branch, or the re-run case waits five minutes to skip.
 
-The write cases need a GitHub classic token with `repo`, `read:org` and `workflow`, or a GitLab token with `api`. With `FORGEAPI_LIVE_GITHUB_TOKEN` exported, a GitHub write run is:
+The write cases need a GitLab token with `api`, or a GitHub token of either kind. A classic GitHub token needs `repo`, `read:org` and `workflow`. A fine-grained one needs access to the sandbox repository only. Give it read and write on Actions, Contents, Issues and Pull requests, and read on Commit statuses and Metadata. With `FORGEAPI_LIVE_GITHUB_TOKEN` exported, a GitHub write run is:
 
 ```sh
 FORGEAPI_LIVE_GITHUB_URL=https://github.com \
