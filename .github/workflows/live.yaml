@@ -61,7 +61,7 @@ jobs:
   # have to reach the secrets context dynamically and hand every entry both.
   github:
     name: live (GitHub)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: live
     timeout-minutes: 30
     permissions:
@@ -98,7 +98,7 @@ jobs:
 
   gitlab:
     name: live (GitLab)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: live
     timeout-minutes: 30
     permissions:
@@ -138,7 +138,7 @@ jobs:
   # holds a secret, so a matrix hands nothing anywhere it should not reach.
   instance:
     name: live (${{ matrix.name }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -290,7 +290,7 @@ jobs:
     name: notify
     needs: [github, gitlab, instance]
     if: always() && github.event_name == 'schedule'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       issues: write # the tracker issue and its labels
