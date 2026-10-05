@@ -4,21 +4,20 @@ The [shared rules](https://github.com/cplieger/.github/blob/main/CONTRIBUTING.md
 
 ## Scope
 
-A change that removes, renames or changes the signature of an entry in `api/forgeapi.txt` needs an issue first. Regenerating the file with `UPDATE_GOLDEN=1` turns the surface test green on the next run, and every consumer of that name still breaks.
+A change that removes, renames or changes the signature of an entry in `api/forgeapi.txt` needs an issue first. Regenerating that file with `UPDATE_GOLDEN=1` turns the surface test green on the next run, and every consumer of the name still breaks.
 
 ## Rules
 
-- The `Per forge:` block that ends each role method's doc comment in `roles.go` is rendered from `internal/spec/spec.go`, like `SUPPORT.md`. Write above the marker. `go generate ./...` rewrites everything from the marker to the end of the comment.
-- `internal/spec/spec.go` holds each product's routes, request prices and departures from the normalized contract, generated from measurements kept outside this repository. A pull request cannot change one, so report a wrong one in an issue.
-- Those facts live only in `spec.go` and the `Per forge:` blocks and `SUPPORT.md` it renders. A family package's comment restates one only where that family's behavior is the whole subject, because a second copy can disagree with the table.
-- The JSON files under `conformance/testdata` and `families/testdata` are trimmed cuts of responses recorded from real instances, as each file's `//` key says. Never edit one to make a case pass, or the offline case asserts an answer no forge sent. Report a stale or wrong one in an issue.
-- Never reorder the fields of an exported struct to satisfy `fieldalignment`, because that breaks every unkeyed composite literal of it. Put `//nolint:govet // fieldalignment: <reason>` on the type instead, as `items.go` does.
+- `internal/spec/spec.go` is generated from measurements kept outside this repository, so a pull request cannot change an entry. Report a wrong one in an issue.
+- `SUPPORT.md` and the `Per forge:` block ending each role method's doc comment in `roles.go` are generated from `spec.go`. Write above the marker, because `go generate ./...` rewrites from it to the comment's end.
+- A family package comment states a per-product route, price or departure only where that family's behavior is its whole subject, because a second copy can disagree with `spec.go`.
+- The JSON files under `conformance/testdata` and `families/testdata` are trimmed recordings of real responses. Never edit one to make a case pass, or the offline case asserts an answer no forge sent. Report a stale one in an issue.
+- A new option in `options.go` with a `Default:` line needs a row in `TestRuledDefaultsAreStated`. The golden file omits doc comments, so without that row nothing checks the default.
+- Never reorder the fields of an exported struct to satisfy `fieldalignment`, because that breaks every unkeyed composite literal. Put `//nolint:govet // fieldalignment: <reason>` on the type instead.
 
 ## Checks
 
-The pull request gate runs the conformance suite offline only. `.github/workflows/live.yaml` runs it against real instances weekly, never on a pull request.
-
-After a change to a family's requests or parsing, run the live read cases yourself. A public instance needs no token:
+The pull request gate runs the conformance suite offline only, so after a change to a family's requests or parsing, run the live read cases. A public instance needs no token:
 
 ```sh
 FORGEAPI_LIVE_GITEA_URL=https://gitea.com go test -count=1 -run TestLive ./conformance/
@@ -26,17 +25,17 @@ FORGEAPI_LIVE_GITEA_URL=https://gitea.com go test -count=1 -run TestLive ./confo
 
 Each product-specific variable is `FORGEAPI_LIVE_<PRODUCT>_<NAME>`, with `<PRODUCT>` one of `GITHUB`, `GITLAB`, `GITEA` or `FORGEJO`. `_URL` opts a product in and `_TOKEN` adds the credentialed cases.
 
-Set `_REF` and `_PR` with any `_REPO`, because their defaults belong to the default project.
+With your own `_REPO`, also set `_REF` and `_PR`, whose defaults belong to the default project.
 
-The write cases run only where `_SANDBOX` names the same repository as `_REPO`. Use a repository owned by an account that owns nothing else. On GitLab, keep it under a group, because the owner-scoped cases read a group route.
+The write cases run only where `_SANDBOX` names the same repository as `_REPO`. Use one from an account that owns nothing else. On GitLab, keep it under a group, because the owner-scoped cases read a group route.
 
-That repository needs a `main` branch, a `seed` branch one commit ahead, an open pull request from `seed` into `main` carrying the `_LABEL` label, and an open issue. Start neither title with `forgeapi-live-` or `forgeapi-ci-live-`, because the run sweeps those away.
+That repository needs a `main` branch, a `seed` branch one commit ahead, an open issue, and an open pull request from `seed` into `main` that carries the `_LABEL` label. Set `_PR` to that pull request's number.
 
-Set `_PR` to that pull request. On an instance with no CI runner, set `_RUN_WAIT=0`.
+Start no name or title there with `forgeapi-live-` or `forgeapi-ci-live-`, because the run closes or deletes everything that does.
 
-The write cases need a GitHub classic token with `repo`, `read:org` and `workflow`, or a GitLab token with `api`.
+Set `_RUN_WAIT=0` unless the sandbox's CI gives one passing and one failing job on a push to a `forgeapi-ci-*` branch, or the re-run case waits five minutes to skip.
 
-With `FORGEAPI_LIVE_GITHUB_TOKEN` exported, a GitHub write run is:
+The write cases need a GitHub classic token with `repo`, `read:org` and `workflow`, or a GitLab token with `api`. With `FORGEAPI_LIVE_GITHUB_TOKEN` exported, a GitHub write run is:
 
 ```sh
 FORGEAPI_LIVE_GITHUB_URL=https://github.com \
