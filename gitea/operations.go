@@ -53,6 +53,9 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	}
 	items := make([]forgeapi.Repository, 0, len(rows))
 	for i := range rows {
+		if rows[i].FullName == "" {
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), http.StatusOK)
+		}
 		items = append(items, c.normalizeRepo(&rows[i]))
 	}
 	next := walk.next(len(rows))
@@ -189,6 +192,11 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 			return page, nil
 		}
 		return forgeapi.Page[forgeapi.Issue]{}, err
+	}
+	for i := range rows {
+		if m := rows[i].Repository; m != nil && m.FullName == "" {
+			return forgeapi.Page[forgeapi.Issue]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), http.StatusOK)
+		}
 	}
 	return c.issuePage(&address{}, rows, walk), nil
 }

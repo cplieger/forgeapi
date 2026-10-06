@@ -2,6 +2,8 @@ package gitea
 
 import (
 	"cmp"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"path"
 	"strconv"
@@ -420,6 +422,19 @@ func (c *Client) normalizeMutatedPull(p *wirePull, repo forgeapi.RepoRef) forgea
 // every row of the poller's own call.
 func pullDraft(p *wirePull) bool {
 	return p.Draft || (p.PullRequest != nil && p.PullRequest.Draft)
+}
+
+// UnmarshalJSON refuses a present head or row repository with no full_name: every
+// such row would otherwise share the one reference an empty selector makes.
+func (p *wirePull) UnmarshalJSON(b []byte) error {
+	type plain wirePull
+	if err := json.Unmarshal(b, (*plain)(p)); err != nil {
+		return err
+	}
+	if (p.Head.Repo != nil && p.Head.Repo.FullName == "") || (p.Repository != nil && p.Repository.FullName == "") {
+		return errors.New("pull request names a repository without its full_name")
+	}
+	return nil
 }
 
 // sourceRepo is the repository a head branch lives in, from the head's own
