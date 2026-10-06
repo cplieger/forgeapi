@@ -70,15 +70,15 @@ func TestTheFoldIsTheWorstStatePresent(t *testing.T) {
 }
 
 // A walk reads one status record twice when the history shifts between pages.
-func TestAStatusServedTwiceUnderOneIdentifierCountsOnceAsFirstRead(t *testing.T) {
+func TestAStatusServedTwiceUnderOneIdentifierCountsOnceAsTheLaterRead(t *testing.T) {
 	h := newHarness(t, map[string]string{statusesRoute: "[" + statusRow(7, "build", "running") + "," + statusRow(7, "build", "success") + "]"})
 	checks, err := h.client.CommitStatus(t.Context(), testRef(), testHeadSHA)
 	if err != nil {
 		t.Fatalf("CommitStatus = %v, want the fold", err)
 	}
-	if checks.Total != 1 || checks.Pending != 1 || checks.State != forgeapi.CheckPending {
-		t.Errorf("CommitStatus over id 7 read running then success = %v with %d pending of %d, want %v with 1 pending of 1",
-			checks.State, checks.Pending, checks.Total, forgeapi.CheckPending)
+	if checks.Total != 1 || checks.Passing != 1 || checks.State != forgeapi.CheckPassing {
+		t.Errorf("CommitStatus over id 7 read running then success = %v with %d passing of %d, want %v with 1 passing of 1",
+			checks.State, checks.Passing, checks.Total, forgeapi.CheckPassing)
 	}
 }
 

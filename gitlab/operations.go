@@ -872,7 +872,7 @@ func latestPerContext(rows []restStatus) []restStatus {
 			latest[row.Name] = row
 			continue
 		}
-		if row.ID > held.ID {
+		if row.ID >= held.ID {
 			latest[row.Name] = row
 		}
 	}
