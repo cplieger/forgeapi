@@ -65,7 +65,7 @@ func (c *Conn) checkHop(req *http.Request, via []*http.Request, set *forgeapi.Se
 // checkHopForm is the half of the verdict taken on the hop's own shape: the hop cap,
 // the host, the downgrade, the scheme and the port.
 func (c *Conn) checkHopForm(req *http.Request, via []*http.Request, set *forgeapi.Settings, ports []uint16) error {
-	if len(via) >= forgeapi.MaxRedirectHops {
+	if len(via) > forgeapi.MaxRedirectHops {
 		if c.counters.RedirectHopCapExceeded != nil {
 			c.counters.RedirectHopCapExceeded(c.family)
 		}

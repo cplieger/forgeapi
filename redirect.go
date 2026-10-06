@@ -1,6 +1,7 @@
 package forgeapi
 
-// MaxRedirectHops is how many redirect hops one request may take.
+// MaxRedirectHops is how many redirect hops one request may take. It counts the
+// redirects followed, not including the original request.
 //
 // It is this library's own number and it is not configurable. A non-nil redirect
 // policy REPLACES net/http's default policy, whose only content is a ten-hop
