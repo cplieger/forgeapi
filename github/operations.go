@@ -94,6 +94,9 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	}
 	items := make([]forgeapi.Repository, 0, len(rows))
 	for i := range rows {
+		if rows[i].FullName == "" {
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
+		}
 		items = append(items, c.normalizeRepo(&rows[i]))
 	}
 	next := walk.next(resp.Header)
