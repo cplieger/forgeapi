@@ -300,8 +300,10 @@ type CheckContext struct {
 // page of successes reports success for a commit that is failing and the
 // truncation is not detectable from the body at all.
 type CommitChecks struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, the commit first, and it is API for an unkeyed composite literal
-	// Ref is the commit the checks belong to: the SHA or branch that was asked
-	// for.
+	// Ref is the commit the checks belong to: the SHA the read resolved the
+	// requested ref to, so a branch asked for comes back as its head commit. It
+	// is the ref as asked only where the answer named no commit, which includes
+	// a page bound that admitted no read.
 	Ref string
 	// Contexts are the checks read, in the order upstream returned them.
 	Contexts []CheckContext
