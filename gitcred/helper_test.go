@@ -142,6 +142,9 @@ func checkDeclined(t *testing.T, got served, c *tally, reason string) {
 	if d := c.declined(); !slices.Equal(d, []string{reason}) {
 		t.Errorf("HelperDecline reported %v, want [%s]", d, reason)
 	}
+	if got.err != nil {
+		t.Errorf("Serve(get) declining for %s = error %v, want nil: a decline is not an error", reason, got.err)
+	}
 }
 
 // checkOneLine holds a decline's diagnostic to the one line a user sees.
@@ -168,6 +171,9 @@ func TestGet_answers_an_owned_origin_with_the_familys_username(t *testing.T) {
 			c := &tally{}
 
 			got := serve(t, helper(store, c), "get", attributes("https", "forge.example"))
+			if got.err != nil {
+				t.Errorf("Serve(get) = error %v, want nil on an answered get", got.err)
+			}
 			if got.attrs["username"] != tc.username || got.attrs["password"] != "token-current" {
 				t.Errorf("get = username %q password %q, want username %q password %q",
 					got.attrs["username"], got.attrs["password"], tc.username, "token-current")

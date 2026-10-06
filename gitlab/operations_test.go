@@ -1061,6 +1061,10 @@ func TestANonPositiveNumberIsRefusedBeforeAnyRequest(t *testing.T) {
 			_, err := h.client.CloseIssue(t.Context(), repo, forgeapi.IssueRef{Number: -1})
 			return err
 		},
+		"CloseIssue zero": func() error {
+			_, err := h.client.CloseIssue(t.Context(), repo, forgeapi.IssueRef{})
+			return err
+		},
 		"MergePR": func() error {
 			_, err := h.client.MergePR(t.Context(), repo, forgeapi.PRRef{}, forgeapi.MergeRequest{HeadSHA: testHeadSHA})
 			return err

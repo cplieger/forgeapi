@@ -233,3 +233,52 @@ func TestARunContinuationThisLibraryDidNotMintIsRefused(t *testing.T) {
 		})
 	}
 }
+
+func runPage(total, rows int) string {
+	return `{"total_count":` + strconv.Itoa(total) + `,"workflow_runs":[` +
+		strings.TrimSuffix(strings.Repeat(forgejoRun+",", rows), ",") + `]}`
+}
+
+func TestARunPageIsPartialOnlyWhereTheWalkEndedShortOfItsTotal(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		page  string
+		bound int
+		more  bool
+	}{
+		{name: "an_empty_listing", page: runPage(0, 0), bound: 5},
+		{name: "a_whole_listing_on_one_page", page: runPage(2, 2), bound: 5},
+		{name: "a_page_with_more_behind_it", page: runPage(150, 1), bound: 1, more: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{runsRoute: test.page})
+			page, err := h.client.ListRuns(t.Context(), testRef(), forgeapi.WithPageBound(test.bound))
+			if err != nil {
+				t.Fatalf("ListRuns over %s = %v, want nil", test.page, err)
+			}
+			if page.Partial != nil {
+				t.Errorf("ListRuns over %s = partial %+v, want none", test.page, *page.Partial)
+			}
+			if got := page.Next != ""; got != test.more {
+				t.Errorf("ListRuns over %s = continuation %q, want one %t", test.page, page.Next, test.more)
+			}
+		})
+	}
+}
+
+func TestARunWalkEndingShortOfItsTotalReportsWhatItWasServed(t *testing.T) {
+	h := newHarness(t, map[string]string{runsRoute: runPage(150, 1)})
+	first, err := h.client.ListRuns(t.Context(), testRef(), forgeapi.WithPageBound(1))
+	if err != nil || first.Next == "" {
+		t.Fatalf("Setup: ListRuns over 1 of 150 runs = Next %q, %v, want a continuation", first.Next, err)
+	}
+	h.instance.serve(runsRoute, runPage(150, 0))
+	last, err := h.client.ListRuns(t.Context(), testRef(), forgeapi.WithPageBound(1), forgeapi.WithAfter(first.Next))
+	if err != nil {
+		t.Fatalf("ListRuns(WithAfter(%q)) = %v, want nil", first.Next, err)
+	}
+	want := forgeapi.Partial{Reason: forgeapi.PartialResultWindow, Fetched: 1, OmittedAtLeast: 149}
+	if last.Partial == nil || *last.Partial != want || last.Next != "" {
+		t.Errorf("ListRuns over an empty second page of 150 = partial %+v, Next %q, want %+v and no continuation", last.Partial, last.Next, want)
+	}
+}

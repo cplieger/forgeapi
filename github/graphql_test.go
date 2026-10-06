@@ -1,6 +1,7 @@
 package github
 
 import (
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -453,5 +454,58 @@ func TestADocumentRefusalCarriesNoPartOfTheCredential(t *testing.T) {
 	}
 	if !strings.Contains(fe.Message, "cannot use credential") {
 		t.Errorf("execute(a refused document) = message %q, want the instance's own words", fe.Message)
+	}
+}
+
+func TestADocumentAnsweringErrorsWithItsDataMemberOmittedIsRefused(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		documentRoute: `{"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository"}]}`,
+	})
+	var payload docPayload
+	_, err := h.client.execute(t.Context(), "ReadPR", prRead, map[string]any{}, &payload)
+	var fe *forgeapi.Error
+	if !asForgeError(err, &fe) || fe.Kind != forgeapi.KindUpstream || !strings.Contains(fe.Message, "Could not resolve to a Repository") {
+		t.Errorf("execute(errors with no data member) = %v, want the upstream refusal quoting the envelope's error", err)
+	}
+	if !h.client.isDegraded() {
+		t.Error("the connection is not degraded after a refused document, want it")
+	}
+}
+
+// A credential refusal degrades nothing: the document answers again once the
+// credential does.
+func TestADocumentRefusedByStatusWithNoEnvelopeErrorsIsThatStatusRefusal(t *testing.T) {
+	h := newHarness(t, map[string]string{documentRoute: `{"message":"Bad credentials"}`})
+	h.instance.status(documentRoute, http.StatusUnauthorized)
+	var payload docPayload
+	_, err := h.client.execute(t.Context(), "ReadPR", prRead, map[string]any{}, &payload)
+	var fe *forgeapi.Error
+	if !asForgeError(err, &fe) || fe.Kind != forgeapi.KindUnauthorized || fe.Status != http.StatusUnauthorized {
+		t.Errorf("execute(a 401 with no envelope errors) = %v, want the unauthorized refusal at status 401", err)
+	}
+	if h.client.isDegraded() {
+		t.Error("the connection is degraded after a credential refusal, want it not to be")
+	}
+}
+
+func TestTheDocumentCostReplacesTheCallsRequestCountOnlyWhereTheEndpointReportedOne(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{name: "charged_three", want: 3, body: `{"data":{"rateLimit":{"cost":3,"limit":5000,"remaining":4990},"repository":{"nameWithOwner":"example/example"}}}`},
+		{name: "no_budget_object", want: 1, body: `{"data":{"repository":{"nameWithOwner":"example/example"}}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{documentRoute: test.body})
+			var payload docPayload
+			if _, err := h.client.execute(t.Context(), "ListPRs", prList, map[string]any{}, &payload); err != nil {
+				t.Fatalf("execute = %v, want nil", err)
+			}
+			if got := h.client.BudgetState().LastCost; got != test.want {
+				t.Errorf("BudgetState().LastCost after %s = %d, want %d", test.name, got, test.want)
+			}
+		})
 	}
 }

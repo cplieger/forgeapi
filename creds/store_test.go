@@ -1,10 +1,13 @@
 package creds_test
 
 import (
+	"bytes"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -161,5 +164,49 @@ func TestFileStore_keeps_its_records_for_the_next_store_opened_on_the_directory(
 	}
 	if field := sameRecord(load(t, reopened, "conn"), want); field != "" {
 		t.Errorf("the reopened store's record differs at %s", field)
+	}
+}
+
+// The store hands its logger to the file custody beneath it, so a directory mode
+// repaired at creation is reported there. The umask is process-wide, so this test
+// must never call t.Parallel.
+func TestOpenFileStore_reports_a_repaired_directory_to_its_logger(t *testing.T) {
+	previous := syscall.Umask(0o277)
+	t.Cleanup(func() { syscall.Umask(previous) })
+	var logged bytes.Buffer
+	dir := filepath.Join(t.TempDir(), "credentials")
+
+	if _, err := creds.OpenFileStore(dir, forgeapi.WithLogger(slog.New(slog.NewTextHandler(&logged, nil)))); err != nil {
+		t.Fatalf("OpenFileStore(%q) under umask 277 = error %v, want the store", dir, err)
+	}
+	if line := logged.String(); !strings.Contains(line, "did not keep the requested mode; repaired") {
+		t.Errorf("the store's logger recorded %q, want the directory's repaired mode", line)
+	}
+}
+
+// A write the file's bound refuses is the write's own failure: the save fails, the
+// stored record stays, and nothing reports the write as merely not proved durable.
+func TestFileStore_fails_a_save_its_file_bound_refuses_as_that_failure(t *testing.T) {
+	nonDurable := 0
+	dir := filepath.Join(t.TempDir(), "credentials")
+	store, err := creds.OpenFileStore(dir, forgeapi.WithCounters(forgeapi.Counters{
+		NonDurableCredentialWrite: func(forgeapi.Family) { nonDurable++ },
+	}))
+	if err != nil {
+		t.Fatalf("Setup: OpenFileStore(%q) = error %v", dir, err)
+	}
+	rec := rotating(forgeapi.FamilyGitHub, "https://forge.example", 8*time.Hour, 8*time.Hour)
+	save(t, store, "conn", rec)
+	oversized := rec
+	oversized.Token = strings.Repeat("x", 1<<20)
+
+	if err := store.Save("conn", oversized); err == nil {
+		t.Error("Save(a record over the file's 1 MiB bound) = nil error, want the write refused")
+	}
+	if nonDurable != 0 {
+		t.Errorf("NonDurableCredentialWrite fired %d time(s), want none: the write failed, it was not merely unproved", nonDurable)
+	}
+	if got := load(t, store, "conn"); got.Token != rec.Token {
+		t.Errorf("Load after the refused save = token of %d bytes, want the stored record's", len(got.Token))
 	}
 }

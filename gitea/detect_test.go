@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -94,6 +95,17 @@ func TestTheFamilyIsEstablishedFromAMarkerRatherThanFromAVersionKey(t *testing.T
 			version:  "16.0.0-dev-753-6bcc6da0",
 			document: forgejoDoc,
 			detected: true,
+		},
+		{
+			name:     "a_release_with_a_nine_in_every_component",
+			version:  "9.19.9",
+			document: giteaDoc,
+			detected: true,
+		},
+		{
+			name:     "one_number_is_not_the_release_form",
+			version:  "1",
+			document: giteaDoc,
 		},
 		{
 			name:    "a_release_alone_establishes_nothing",
@@ -217,4 +229,127 @@ func TestListWaitingOnTheResolutionOwner_ends_at_its_own_deadline(t *testing.T) 
 	case <-time.After(5 * time.Second):
 		t.Fatal("ListReleases with a 50ms deadline behind a setup read that has not answered has not returned after 5s, want it to end at its own deadline")
 	}
+}
+
+const settingsRoute = "GET /api/v1" + settingsPath
+
+func TestAConnectionHoldingNoMaximumReadsTheInstancesOwnBeforeItsFirstPage(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		settingsRoute:  `{"max_response_items":7}`,
+		userReposRoute: "[" + repoRow + "]",
+	})
+	h.client.maxItems = 0
+	// A bound on each call, so a resolution owner left held fails the case rather
+	// than hanging it.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for call := 1; call <= 2; call++ {
+		if _, err := h.client.ListRepos(ctx, forgeapi.WithPageBound(100)); err != nil {
+			t.Fatalf("ListRepos call %d = %v, want nil", call, err)
+		}
+		if got := h.instance.query(userReposRoute, keyLimit); got != "7" {
+			t.Fatalf("ListRepos call %d sent limit=%q, want %q: the instance serves at most 7 rows a page", call, got, "7")
+		}
+	}
+	want := []string{settingsRoute, userReposRoute, userReposRoute}
+	if got := h.instance.arrived(); !slices.Equal(got, want) {
+		t.Errorf("two ListRepos calls sent %v, want %v: the maximum is read once per connection", got, want)
+	}
+}
+
+func TestAListRefusesWhereTheInstanceStatesNoMaximumItCanPageBy(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		settings string
+		status   int
+		code     string
+	}{
+		{name: "a_maximum_of_zero", settings: `{"max_response_items":0}`, status: http.StatusOK, code: forgeapi.CodeValidation},
+		{name: "a_body_that_does_not_decode", settings: `{"max_response_items":`, status: http.StatusOK, code: forgeapi.CodeValidation},
+		{name: "a_refused_read", status: http.StatusInternalServerError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			routes := map[string]string{userReposRoute: "[" + repoRow + "]"}
+			if test.settings != "" {
+				routes[settingsRoute] = test.settings
+			}
+			h := newHarness(t, routes)
+			h.client.maxItems = 0
+			_, err := h.client.ListRepos(t.Context())
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) {
+				t.Fatalf("ListRepos over settings %q = %v, want a *forgeapi.Error", test.settings, err)
+			}
+			if fe.Status != test.status {
+				t.Errorf("ListRepos over settings %q = status %d, want %d", test.settings, fe.Status, test.status)
+			}
+			if test.code != "" && fe.Code != test.code {
+				t.Errorf("ListRepos over settings %q = code %q, want %q", test.settings, fe.Code, test.code)
+			}
+			if sent := h.instance.arrived(); slices.Contains(sent, userReposRoute) {
+				t.Errorf("ListRepos over settings %q sent %v, want no list read", test.settings, sent)
+			}
+		})
+	}
+}
+
+const repoRoute = "GET /api/v1/repos/example/example"
+
+func TestRepoAffordancesReadsTheRepositorysOwnRecord(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		"GET /api/v1/version":  `{"version":"1.27.0"}`,
+		"GET /swagger.v1.json": giteaDoc,
+		repoRoute: `{"full_name":"example/example","default_branch":"trunk","has_issues":true,` +
+			`"permissions":{"push":false},"allow_squash_merge":true,"allow_rebase":true}`,
+	})
+	if _, err := h.client.ConnectionCaps(t.Context()); err != nil {
+		t.Fatalf("Setup: ConnectionCaps = %v, want nil", err)
+	}
+	got, err := h.client.RepoAffordances(t.Context(), testRef())
+	if err != nil {
+		t.Fatalf("RepoAffordances = %v, want nil", err)
+	}
+	if want := []string{styleSquash, "rebase"}; !slices.Equal(got.MergeStrategies, want) {
+		t.Errorf("RepoAffordances = strategies %v, want %v", got.MergeStrategies, want)
+	}
+	if got.HasIssues != forgeapi.SupportYes || got.CanPush != forgeapi.SupportNo || got.DefaultBranch != "trunk" {
+		t.Errorf("RepoAffordances = issues %v, push %v, branch %q, want %v, %v, %q",
+			got.HasIssues, got.CanPush, got.DefaultBranch, forgeapi.SupportYes, forgeapi.SupportNo, "trunk")
+	}
+	if detail := got.Ev[forgeapi.CapMergeTrain].Detail; !strings.Contains(detail, "1.27.0") {
+		t.Errorf("RepoAffordances = merge-train evidence %q, want it to name the version the instance reported", detail)
+	}
+}
+
+func TestRepoAffordancesRefusesWhatItCannotAnswerFor(t *testing.T) {
+	t.Run("an_unsafe_reference", func(t *testing.T) {
+		h := newHarness(t, nil)
+		_, err := h.client.RepoAffordances(t.Context(), forgeapi.RepoRef{Family: forgeapi.FamilyGitea, Selector: "../example"})
+		var fe *forgeapi.Error
+		if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeRepoRefInvalid {
+			t.Errorf("RepoAffordances(%q) = %v, want code %q", "../example", err, forgeapi.CodeRepoRefInvalid)
+		}
+		if sent := h.instance.arrived(); len(sent) != 0 {
+			t.Errorf("RepoAffordances(%q) sent %v, want nothing", "../example", sent)
+		}
+	})
+	t.Run("the_instances_refusal", func(t *testing.T) {
+		h := newRefusingHarness(t, http.StatusForbidden)
+		_, err := h.client.RepoAffordances(t.Context(), testRef())
+		var fe *forgeapi.Error
+		if !asForgeError(err, &fe) || fe.Status != http.StatusForbidden {
+			t.Errorf("RepoAffordances against a 403 = %v, want that refusal", err)
+		}
+	})
+	t.Run("a_moved_repository", func(t *testing.T) {
+		m := newMovedServer(t, map[string]reply{
+			"GET /api/v1/repos/" + testSelector:  {location: "/api/v1/repos/" + movedSelector},
+			"GET /api/v1/repos/" + movedSelector: {body: repoRow},
+		})
+		_, err := m.clientAt(t, m.server.URL).RepoAffordances(t.Context(), testRef())
+		fe := staleRefusal(t, "RepoAffordances on a moved repository", err)
+		if fe.Successor == nil || fe.Successor.Selector != movedSelector {
+			t.Errorf("RepoAffordances on a moved repository = successor %v, want %q", fe.Successor, movedSelector)
+		}
+	})
 }

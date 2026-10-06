@@ -1683,6 +1683,11 @@ func TestADocumentThatResolvedNoRepositoryIsSeparatedFromOneWithNoPullRequest(t 
 			body: documentEnvelope(`"repository":{"nameWithOwner":"example/example","pullRequest":null}`),
 			want: forgeapi.CodePRNotFound,
 		},
+		{
+			name: "an_envelope_answering_neither_data_nor_errors_resolves_nothing",
+			body: `{"data":null}`,
+			want: forgeapi.CodeRepoOrPRNotVisible,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := newHarness(t, map[string]string{documentRoute: test.body})

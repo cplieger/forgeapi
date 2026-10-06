@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/gitcred"
 )
 
 // Two connections may share an origin, and git must get the same one on every
@@ -63,5 +65,49 @@ func TestErase_of_an_origin_no_connection_owns_counts_nothing(t *testing.T) {
 	serve(t, helper(store, c), "erase", attributes("https", "elsewhere.example", "username=oauth2", "password=other"))
 	if e := c.erased(); len(e) != 0 {
 		t.Errorf("HelperErase reported %v for an origin no connection owns, want nothing", e)
+	}
+}
+
+// Git's block is read up to 64 KiB, newer versions sending the authentication
+// headers the remote answered.
+func TestServe_reads_an_attribute_block_up_to_its_bound(t *testing.T) {
+	const bound = 64 << 10
+	head := "protocol=https\nhost=forge.example\nwwwauth[]="
+	for name, test := range map[string]struct {
+		size    int
+		refused bool
+	}{
+		"at_the_bound":     {size: bound},
+		"one_byte_past_it": {size: bound + 1, refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, _ := openStore(t)
+			save(t, store, "conn", record(forgeapi.FamilyGitHub, forge))
+			block := head + strings.Repeat("x", test.size-len(head)-2) + "\n\n"
+
+			got := serve(t, helper(store, &tally{}), "get", block)
+			if refused := got.err != nil; refused != test.refused {
+				t.Errorf("Serve(get) over a %d-byte block = error %v, want refused %v", len(block), got.err, test.refused)
+			}
+			if answered := got.attrs["password"] == "token-current"; answered == test.refused {
+				t.Errorf("Serve(get) over a %d-byte block answered %v, want answered %v", len(block), got.attrs, !test.refused)
+			}
+		})
+	}
+}
+
+// The helper reports to the logger it was built with, never to the process default.
+func TestGet_logs_a_decline_to_the_logger_it_was_given(t *testing.T) {
+	store, _ := openStore(t)
+	rec := record(forgeapi.FamilyGitLab, forge)
+	rec.Kind = forgeapi.CredKindUnknown
+	save(t, store, "conn", rec)
+	var logged bytes.Buffer
+	h := gitcred.New(store, forgeapi.WithLogger(slog.New(slog.NewTextHandler(&logged, nil))))
+
+	serve(t, h, "get", attributes("https", "forge.example"))
+	line := logged.String()
+	if !strings.Contains(line, `msg="forgeapi git credential declined"`) || !strings.Contains(line, " reason=reconnect_required") {
+		t.Errorf("the helper's logger recorded %q, want the decline with its reason", line)
 	}
 }

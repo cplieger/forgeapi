@@ -1,7 +1,9 @@
 package transport
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"io"
 	"net/http"
@@ -224,5 +226,91 @@ func TestTheGovernorsWindowLengthIsNotTheClockAllowance(t *testing.T) {
 	}
 	if got := windowLength(time.Minute); got != time.Minute {
 		t.Errorf("windowLength(time.Minute) = %v, want %v", got, time.Minute)
+	}
+}
+
+// Swaps the package's random source, so it must not run beside a test that reads it.
+func TestADiagnosticIDRendersBitsFromTheRandomSource(t *testing.T) {
+	source := rand.Reader
+	t.Cleanup(func() { rand.Reader = source })
+	rand.Reader = bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})
+	if got, want := DiagID(), "AAAQEAYEAUDAO"; got != want {
+		t.Errorf("DiagID() over the bytes 0 to 7 = %q, want %q", got, want)
+	}
+}
+
+type fakeClock struct {
+	now time.Time
+	mu  sync.Mutex
+}
+
+func newFakeClock() *fakeClock { return &fakeClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)} }
+
+func (c *fakeClock) read() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+func foldConn(t *testing.T, clock *fakeClock, reads int) *Conn {
+	t.Helper()
+	opts := testOptions()
+	opts.Clock = clock.read
+	return openConnWith(t, forgeapi.Connection{WebBaseURL: "http://forge.example"}, opts,
+		forgeapi.WithStatusReadsPerInterval(reads),
+		forgeapi.WithStatusTimePerInterval(time.Minute),
+	)
+}
+
+func TestAFoldedReadPastTheCountCapWaitsForTheNextInterval(t *testing.T) {
+	clock := newFakeClock()
+	c := foldConn(t, clock, 2)
+	for read := 1; read <= 2; read++ {
+		if reason, ok := c.AdmitFold("ListPRs"); !ok {
+			t.Fatalf("folded read %d of 2 = (%v, false), want it admitted", read, reason)
+		}
+	}
+	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
+		t.Fatalf("folded read 3 of 2 = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
+	}
+	clock.advance(time.Minute)
+	if reason, ok := c.AdmitFold("ListPRs"); !ok {
+		t.Errorf("a folded read one minute into a one-minute interval = (%v, false), want it admitted: that minute began the next interval", reason)
+	}
+}
+
+func TestAFoldedReadIsNotSentOnceTheIntervalsClockIsSpent(t *testing.T) {
+	c := foldConn(t, newFakeClock(), 10)
+	if reason, ok := c.AdmitFold("ListPRs"); !ok {
+		t.Fatalf("the first folded read = (%v, false), want it admitted", reason)
+	}
+	c.SpendFold(time.Minute)
+	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
+		t.Errorf("a folded read after one that took the whole minute = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
+	}
+}
+
+func TestAFoldedReadIsAdmittedOnlyWhereItsMeasuredCostFitsTheIntervalLeft(t *testing.T) {
+	clock := newFakeClock()
+	c := foldConn(t, clock, 10)
+	for read := 1; read <= 2; read++ {
+		if reason, ok := c.AdmitFold("ListPRs"); !ok {
+			t.Fatalf("folded read %d = (%v, false), want it admitted", read, reason)
+		}
+		c.SpendFold(10 * time.Second)
+	}
+	clock.advance(50 * time.Second)
+	if reason, ok := c.AdmitFold("ListPRs"); !ok {
+		t.Errorf("a folded read costing 10s with 10s of the interval left = (%v, false), want it admitted: it fits exactly", reason)
+	}
+	clock.advance(time.Second)
+	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
+		t.Errorf("a folded read costing 10s with 9s of the interval left = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
 	}
 }

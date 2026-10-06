@@ -3,6 +3,7 @@ package transport
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/cplieger/forgeapi"
@@ -32,22 +33,24 @@ func TestAStatusARequestReadsAsAnAnswerReachesTheCallerWithItsBody(t *testing.T)
 	}
 }
 
-// TestAStatusARequestDoesNotNameIsStillARefusal is the control: the same 409 on a request
-// naming no answer is mapped and refused, as every non-2xx is.
 func TestAStatusARequestDoesNotNameIsStillARefusal(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusConflict)
-	}))
-	defer srv.Close()
-	c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL})
-	_, err := c.Do(t.Context(), &Request{
-		Op: "MergePR", Method: http.MethodPut, Path: "/merge", Answers: []int{http.StatusAccepted},
-	})
-	var fe *forgeapi.Error
-	if !asError(err, &fe) {
-		t.Fatalf("Do of a 409 the request does not name = %v, want a *forgeapi.Error", err)
-	}
-	if fe.Status != http.StatusConflict {
-		t.Errorf("Do of a 409 the request does not name = status %d, want %d", fe.Status, http.StatusConflict)
+	for _, status := range []int{http.StatusMultipleChoices, http.StatusConflict} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+			}))
+			defer srv.Close()
+			c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL})
+			_, err := c.Do(t.Context(), &Request{
+				Op: "MergePR", Method: http.MethodPut, Path: "/merge", Answers: []int{http.StatusAccepted},
+			})
+			var fe *forgeapi.Error
+			if !asError(err, &fe) {
+				t.Fatalf("Do of a %d the request does not name = %v, want a *forgeapi.Error", status, err)
+			}
+			if fe.Status != status {
+				t.Errorf("Do of a %d the request does not name = status %d, want %d", status, fe.Status, status)
+			}
+		})
 	}
 }

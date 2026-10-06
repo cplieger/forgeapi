@@ -60,6 +60,94 @@ func TestDecodeRepoRef_refuses_an_over_cap_id_before_decoding_it(t *testing.T) {
 	}
 }
 
+func TestRepoRefEncode_folds_ascii_upper_case_alone(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		selector string
+		folded   string
+	}{
+		{name: "letter_bounds", selector: "AZ/az", folded: "az/az"},
+		{name: "bytes_beside_the_upper_range", selector: "@[/`{", folded: "@[/`{"},
+		{name: "non_ascii", selector: "Ünï/Code", folded: "Ünï/code"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			want := forgeapi.RepoIDPrefix + hex.EncodeToString([]byte(test.folded))
+			if got := (forgeapi.RepoRef{Selector: test.selector}).Encode(); got != want {
+				t.Errorf("RepoRef{Selector: %q}.Encode() = %q, want %q", test.selector, got, want)
+			}
+		})
+	}
+}
+
+func TestValidateRef_accepts_a_ref_in_the_path_class(t *testing.T) {
+	for name, ref := range map[string]string{
+		"lower_bounds":    "az",
+		"upper_bounds":    "AZ",
+		"digit_bounds":    "09",
+		"punctuation":     "-_.+~",
+		"branch_path":     "feature/x-1.2",
+		"sha":             "0123456789abcdef0123456789abcdef01234567",
+		"at_the_byte_cap": strings.Repeat("a", 512),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := forgeapi.ValidateRef(ref); err != nil {
+				t.Errorf("ValidateRef(%q) = %v, want nil", ref, err)
+			}
+		})
+	}
+}
+
+func TestValidateRef_refuses_a_ref_outside_the_path_form(t *testing.T) {
+	for name, ref := range map[string]string{
+		"empty":            "",
+		"over_the_cap":     strings.Repeat("a", 513),
+		"backtick":         "a`b",
+		"open_brace":       "a{b",
+		"at_sign":          "a@b",
+		"open_bracket":     "a[b",
+		"colon":            "a:b",
+		"space":            "a b",
+		"percent_escape":   "a%2Fb",
+		"backslash":        `a\b`,
+		"query":            "a?b",
+		"nul":              "a\x00b",
+		"high_byte":        "a\xffb",
+		"dot_dot_segment":  "../../../user",
+		"empty_segment":    "a//b",
+		"trailing_slash":   "main/",
+		"leading_slash":    "/main",
+		"lone_dot_segment": "a/./b",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if problem := localRefusal(forgeapi.ValidateRef(ref), forgeapi.CodeRefInvalid); problem != nil {
+				t.Errorf("ValidateRef(%q): %v", ref, problem)
+			}
+		})
+	}
+}
+
+// A value outside the members renders as the zero member rather than as a number.
+func TestFamily_String_renders_the_wire_spelling(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		want   string
+		family forgeapi.Family
+	}{
+		{name: "zero", family: forgeapi.FamilyUnknown, want: "unknown"},
+		{name: "github", family: forgeapi.FamilyGitHub, want: "github"},
+		{name: "gitlab", family: forgeapi.FamilyGitLab, want: "gitlab"},
+		{name: "last_member", family: forgeapi.FamilyGitea, want: "gitea"},
+		{name: "past_the_last_member", family: forgeapi.FamilyGitea + 1, want: "unknown"},
+		{name: "negative", family: -1, want: "unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.family.String(); got != test.want {
+				t.Errorf("Family(%d).String() = %q, want %q", int(test.family), got, test.want)
+			}
+		})
+	}
+}
+
 // The canonical spelling decodes, and the reference it answers carries that spelling
 // as its ID and the lowercased selector, so ID equals Encode on every reference.
 func TestDecodeRepoRef_answers_the_canonical_encoding_as_its_id(t *testing.T) {
