@@ -171,10 +171,10 @@ func TestFileStore_keeps_its_records_for_the_next_store_opened_on_the_directory(
 // repaired at creation is reported there. The umask is process-wide, so this test
 // must never call t.Parallel.
 func TestOpenFileStore_reports_a_repaired_directory_to_its_logger(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "credentials")
 	previous := syscall.Umask(0o277)
 	t.Cleanup(func() { syscall.Umask(previous) })
 	var logged bytes.Buffer
-	dir := filepath.Join(t.TempDir(), "credentials")
 
 	if _, err := creds.OpenFileStore(dir, forgeapi.WithLogger(slog.New(slog.NewTextHandler(&logged, nil)))); err != nil {
 		t.Fatalf("OpenFileStore(%q) under umask 277 = error %v, want the store", dir, err)
