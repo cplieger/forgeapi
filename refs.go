@@ -119,7 +119,8 @@ func DecodeRepoRef(id string, family Family) (RepoRef, error) {
 // ValidateSelector refuses a decoded selector that is not safe to interpolate
 // into that family's API path: a byte cap, an allowed character class, no
 // empty, "." or ".." segment, no leading or trailing separator, and no
-// separator beyond the family's own.
+// separator beyond the family's own. A GitHub or Gitea selector is an owner and
+// a name, so it carries exactly one separator.
 //
 // A failure is [CodeRepoRefInvalid], the same code [DecodeRepoRef] answers,
 // because it is the same refusal reached without the decode.
@@ -138,6 +139,9 @@ func ValidateSelector(family Family, selector string) error {
 	}
 	if strings.Count(selector, "/") > want {
 		return localError(CodeRepoRefInvalid, "repository selector carries a separator this family's paths do not take")
+	}
+	if family != FamilyGitLab && !strings.Contains(selector, "/") {
+		return localError(CodeRepoRefInvalid, "repository selector names no owner")
 	}
 	return nil
 }

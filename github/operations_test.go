@@ -1775,3 +1775,19 @@ func TestEveryOperationRefusesAReferenceItCannotInterpolate(t *testing.T) {
 		t.Errorf("the refused references sent %d request(s), want 0", got)
 	}
 }
+
+func TestARepositoryListingRowWithNoFullNameFailsTheCall(t *testing.T) {
+	h := newHarness(t, map[string]string{reposRoute: `[{"full_name":"example/example"},{"name":"example","owner":{"login":"example"}}]`})
+	page, err := h.client.ListRepos(t.Context())
+	var fe *forgeapi.Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("ListRepos over a row with no full_name = %d row(s), %v, want a *forgeapi.Error", len(page.Items), err)
+	}
+	if fe.Code != forgeapi.CodeValidation || fe.Kind != forgeapi.KindUpstream || fe.Retryable {
+		t.Errorf("ListRepos over a row with no full_name = code %q kind %v retryable %v, want code %q kind %v retryable false",
+			fe.Code, fe.Kind, fe.Retryable, forgeapi.CodeValidation, forgeapi.KindUpstream)
+	}
+	if len(page.Items) != 0 {
+		t.Errorf("ListRepos over a row with no full_name answered %d row(s), want none", len(page.Items))
+	}
+}

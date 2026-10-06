@@ -173,3 +173,31 @@ func TestDecodeRepoRef_answers_the_canonical_encoding_as_its_id(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateSelector_takes_an_owner_and_a_name_on_github_and_gitea(t *testing.T) {
+	for _, family := range []forgeapi.Family{forgeapi.FamilyGitHub, forgeapi.FamilyGitea} {
+		for _, test := range []struct {
+			name     string
+			selector string
+			valid    bool
+		}{
+			{name: "owner_and_name", selector: "owner/name", valid: true},
+			{name: "name_only", selector: "foo"},
+			{name: "empty", selector: ""},
+		} {
+			t.Run(family.String()+"_"+test.name, func(t *testing.T) {
+				err := forgeapi.ValidateSelector(family, test.selector)
+				if test.valid {
+					if err != nil {
+						t.Errorf("ValidateSelector(%v, %q) = %v, want nil", family, test.selector, err)
+					}
+					return
+				}
+				var fe *forgeapi.Error
+				if !errors.As(err, &fe) || fe.Code != forgeapi.CodeRepoRefInvalid {
+					t.Errorf("ValidateSelector(%v, %q) = %v, want code %q", family, test.selector, err, forgeapi.CodeRepoRefInvalid)
+				}
+			})
+		}
+	}
+}

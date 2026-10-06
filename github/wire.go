@@ -1119,7 +1119,7 @@ func normalizeRelease(r *restRelease) forgeapi.Release {
 // normalizeRepo is the repository normalizer.
 func (c *Client) normalizeRepo(r *restRepo) forgeapi.Repository {
 	return forgeapi.Repository{
-		Ref:         repoRef(selectorOf(r)),
+		Ref:         repoRef(r.FullName),
 		Description: r.Description,
 		WebURL:      r.WebURL,
 		CloneURL:    r.CloneURL,
@@ -1129,19 +1129,6 @@ func (c *Client) normalizeRepo(r *restRepo) forgeapi.Repository {
 		Archived:    r.Archived,
 		Fork:        r.Fork,
 	}
-}
-
-// selectorOf is one repository record's canonical selector, its own full name where
-// it carries one and the owner and name pair otherwise, because that pair is what
-// every route of this product takes.
-func selectorOf(r *restRepo) string {
-	if r.FullName != "" {
-		return r.FullName
-	}
-	if r.Owner == nil {
-		return r.Name
-	}
-	return r.Owner.Login + "/" + r.Name
 }
 
 // normalizeAffordances reads one repository's affordances off its own record.
