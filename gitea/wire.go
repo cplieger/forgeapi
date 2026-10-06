@@ -381,9 +381,6 @@ func normalizeLabels(in []wireLabel) []forgeapi.Label {
 // there is no document to fold it into this call, so the fold is a read of its own
 // and the caller decides whether to pay for it.
 func (c *Client) normalizePull(p *wirePull, repo forgeapi.RepoRef) forgeapi.PullRequest {
-	if repo.Selector == "" {
-		repo = pullRepo(p)
-	}
 	return forgeapi.PullRequest{
 		Ref:          forgeapi.PRRef{Number: p.Number, Sigil: "#"},
 		Repo:         repo,
@@ -416,27 +413,13 @@ func (c *Client) normalizeMutatedPull(p *wirePull, repo forgeapi.RepoRef) forgea
 }
 
 // pullDraft reads the row's draft flag, whose two arms are the two ROUTES' own
-// shapes exactly as pullRepo's are: a pull-request row carries the flag at its top
+// shapes: a pull-request row carries the flag at its top
 // level, and a cross-repository row is an Issue, which carries it on the
 // pull-request object both documents declare it on. Either arm is a bool with no
 // unknown member, so a flag read in the wrong place answers a confident false on
 // every row of the poller's own call.
 func pullDraft(p *wirePull) bool {
 	return p.Draft || (p.PullRequest != nil && p.PullRequest.Draft)
-}
-
-// pullRepo recovers the row's own repository, which a cross-repository read needs
-// because its rows span repositories and each has to carry the addressing a
-// consumer acts on.
-//
-// Its two arms are the two ROUTES' own shapes: a pull-request row carries the base
-// branch's full repository record, and a cross-repository row carries the
-// repository meta shape instead, whose name is all either of them needs here.
-func pullRepo(p *wirePull) forgeapi.RepoRef {
-	if p.Base.Repo != nil && p.Base.Repo.FullName != "" {
-		return repoRef(p.Base.Repo.FullName)
-	}
-	return metaRepo(p.Repository)
 }
 
 // sourceRepo is the repository a head branch lives in, from the head's own
