@@ -508,3 +508,51 @@ func asError(err error, out **forgeapi.Error) bool {
 	*out = fe
 	return true
 }
+
+func TestAChainOfFiveHopsIsFollowedAndASixthIsRefused(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		hops int
+	}{
+		{name: "five_hops", hops: 5},
+		{name: "six_hops", hops: 6},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			saw := &record{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				saw.see(r, "")
+				if saw.count() <= test.hops {
+					http.Redirect(w, r, "/api/v1/user", http.StatusFound)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if _, err := io.WriteString(w, `{}`); err != nil {
+					t.Errorf("Setup: writing the answer: %v", err)
+				}
+			}))
+			defer srv.Close()
+			spy := newCounterSpy()
+			c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL}, forgeapi.WithCounters(spy.counters()))
+			_, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"})
+			if test.hops == 5 {
+				if err != nil {
+					t.Fatalf("a chain of 5 hops = %v, want nil", err)
+				}
+				if saw.count() != 6 {
+					t.Errorf("a chain of 5 hops reached the instance %d time(s), want 6", saw.count())
+				}
+				return
+			}
+			var fe *forgeapi.Error
+			if !asError(err, &fe) || fe.Code != forgeapi.CodeRedirectHopCap {
+				t.Fatalf("a chain of 6 hops = %v, want code %q", err, forgeapi.CodeRedirectHopCap)
+			}
+			if saw.count() != 6 {
+				t.Errorf("a chain of 6 hops reached the instance %d time(s), want 6", saw.count())
+			}
+			if spy.times("RedirectHopCapExceeded") != 1 {
+				t.Errorf("a chain of 6 hops fired RedirectHopCapExceeded %d time(s), want 1", spy.times("RedirectHopCapExceeded"))
+			}
+		})
+	}
+}
