@@ -579,6 +579,16 @@ func TestTheErrorMappingReadsTheHeadersAndTheOperation(t *testing.T) {
 			wantKind: forgeapi.KindUpstream, wantCode: forgeapi.CodeValidation,
 		},
 		{
+			name: "a_gone_issues_list_is_the_issues_feature_switched_off", op: opListIssues,
+			status: http.StatusGone, header: nil,
+			wantKind: forgeapi.KindNotFound, wantCode: forgeapi.CodeCapabilityUnsupported,
+		},
+		{
+			name: "a_gone_elsewhere_names_no_cause", op: "ReadPR",
+			status: http.StatusGone, header: nil,
+			wantKind: forgeapi.KindNotFound, wantCode: "",
+		},
+		{
 			name: "too_many_requests_is_the_throttle_it_says_it_is", op: "ListPRs",
 			status: http.StatusTooManyRequests, header: nil,
 			wantKind: forgeapi.KindRateLimited, wantCode: "",

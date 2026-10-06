@@ -283,3 +283,43 @@ func TestAWriteWhoseRefusedHopNamesTheRepositoryItAddressedCarriesNoSuccessor(t 
 		t.Errorf("CloseIssue redirected to its own repository sent %v, want the one write", got)
 	}
 }
+
+// Re-issuing a refused write is the caller's call, so it is not sent again.
+func TestAWriteWhoseRefusedHopNamesAnotherRepositoryCarriesItAsTheSuccessor(t *testing.T) {
+	issue := "/issues/1"
+	m := newMovedServer(t, map[string]reply{
+		"PATCH /api/v1/repos/" + testSelector + issue: {location: "/api/v1/repos/" + movedSelector + issue},
+	})
+	client := m.clientAt(t, m.server.URL)
+
+	_, err := client.CloseIssue(t.Context(), testRef(), forgeapi.IssueRef{Number: 1})
+
+	fe := staleRefusal(t, "CloseIssue on a moved repository", err)
+	if fe.Successor == nil || fe.Successor.Selector != movedSelector {
+		t.Errorf("CloseIssue on a moved repository = successor %v, want %q", fe.Successor, movedSelector)
+	}
+	if got := m.arrived(); len(got) != 1 {
+		t.Errorf("CloseIssue on a moved repository sent %v, want the one write", got)
+	}
+}
+
+func TestAStaleRefusalNamesTheRemedyItsRedirectAllows(t *testing.T) {
+	labels := "/api/v1/repos/" + testSelector + "/labels"
+	for _, test := range []struct {
+		name     string
+		location string
+		relist   bool
+	}{
+		{name: "a_successor_named", location: "/api/v1/repos/" + movedSelector + "/labels"},
+		{name: "no_repository_named", location: "/elsewhere", relist: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := newMovedServer(t, map[string]reply{"GET " + labels: {location: test.location}})
+			_, err := m.clientAt(t, m.server.URL).ListLabels(t.Context(), testRef())
+			fe := staleRefusal(t, "ListLabels redirected to "+test.location, err)
+			if got := strings.Contains(fe.Message, "listing the repositories again"); got != test.relist {
+				t.Errorf("ListLabels redirected to %s = message %q, want relisting named %t", test.location, fe.Message, test.relist)
+			}
+		})
+	}
+}

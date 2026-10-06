@@ -263,3 +263,54 @@ func TestSource_writes_no_mark_for_a_refresh_token_past_its_own_expiry(t *testin
 	}
 	checkMarkStored(t, dir, markUnmarked)
 }
+
+// A mark the store could not take when the refresh ended stays owed, and the next
+// call whose write succeeds writes it to the record.
+func TestSource_writes_a_mark_the_store_could_not_take_on_the_next_call(t *testing.T) {
+	store, dir := openStore(t)
+	ep := newEndpoint(t, func(n int, _ exchange) (int, string) {
+		if n == 1 {
+			if err := os.Chmod(dir, 0o750); err != nil {
+				t.Errorf("Setup: widening the store's directory: %v", err)
+			}
+		}
+		return http.StatusOK, `{"error":"bad_refresh_token"}`
+	})
+	restore := func() {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			t.Errorf("Setup: narrowing the store's directory: %v", err)
+		}
+	}
+	t.Cleanup(restore)
+	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
+	src := source(t, store, "conn", ep)
+	if _, err := src.Token(t.Context()); codeOf(err) != forgeapi.CodeReconnectRequired {
+		t.Fatalf("Setup: Token() over a terminal answer = error %v, want code %q", err, forgeapi.CodeReconnectRequired)
+	}
+	restore()
+
+	if _, err := src.Token(t.Context()); codeOf(err) != forgeapi.CodeReconnectRequired {
+		t.Errorf("Token() once writes succeed = error %v, want code %q", err, forgeapi.CodeReconnectRequired)
+	}
+	checkMarkStored(t, dir, markReconnectRequired)
+}
+
+// Once written, a mark is settled: a record saved after it, even an identical copy of
+// the one it marked, is never marked by this process.
+func TestSource_never_marks_a_record_saved_after_its_mark_was_written(t *testing.T) {
+	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, `{"error":"bad_refresh_token"}` })
+	store, dir := openStore(t)
+	rec := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute)
+	save(t, store, "conn", rec)
+	src := source(t, store, "conn", ep)
+	if _, err := src.Token(t.Context()); codeOf(err) != forgeapi.CodeReconnectRequired {
+		t.Fatalf("Setup: Token() over a terminal answer = error %v, want code %q", err, forgeapi.CodeReconnectRequired)
+	}
+	checkMarkStored(t, dir, markReconnectRequired)
+
+	save(t, store, "conn", rec)
+	if _, err := src.Token(t.Context()); codeOf(err) != forgeapi.CodeReconnectRequired {
+		t.Errorf("Token() over a re-saved copy of the marked record = error %v, want code %q", err, forgeapi.CodeReconnectRequired)
+	}
+	checkMarkStored(t, dir, markUnmarked)
+}

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -9,9 +10,11 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/forgeapi"
@@ -38,9 +41,21 @@ func (s *counterSpy) times(name string) int {
 	return s.fired[name]
 }
 
+func (s *counterSpy) timesAny(prefix string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for name, fired := range s.fired {
+		if strings.HasPrefix(name, prefix) {
+			n += fired
+		}
+	}
+	return n
+}
+
 func (s *counterSpy) counters() forgeapi.Counters {
 	return forgeapi.Counters{
-		Retried:                func(forgeapi.Family, string) { s.fire("Retried") },
+		Retried:                func(_ forgeapi.Family, op string) { s.fire("Retried:" + op) },
 		RateLimited:            func(forgeapi.Family) { s.fire("RateLimited") },
 		AddressRefusal:         func(_ forgeapi.Family, kind string) { s.fire("AddressRefusal:" + kind) },
 		RedirectHopCapExceeded: func(forgeapi.Family) { s.fire("RedirectHopCapExceeded") },
@@ -103,6 +118,11 @@ func settingsFor(opts ...forgeapi.Option) *forgeapi.Settings {
 // the two per-connection statements a loopback instance needs.
 func openTestConn(t *testing.T, conn forgeapi.Connection, extra ...forgeapi.Option) *Conn {
 	t.Helper()
+	return openConnWith(t, conn, testOptions(), extra...)
+}
+
+func openConnWith(t *testing.T, conn forgeapi.Connection, family Options, extra ...forgeapi.Option) *Conn {
+	t.Helper()
 	opts := append([]forgeapi.Option{
 		forgeapi.WithWireTransport(&http.Transport{}),
 		forgeapi.WithCredentialSource(stubCredential{}),
@@ -110,12 +130,25 @@ func openTestConn(t *testing.T, conn forgeapi.Connection, extra ...forgeapi.Opti
 		forgeapi.WithPrivateAddresses(true),
 		forgeapi.WithLogger(discardLogger()),
 	}, extra...)
-	c, err := Open(&conn, settingsFor(opts...), testOptions())
+	c, err := Open(&conn, settingsFor(opts...), family)
 	if err != nil {
 		t.Fatalf("Setup: Open(%q): %v", conn.WebBaseURL, err)
 	}
 	t.Cleanup(c.Close)
 	return c
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func jsonAnswer(r *http.Request, status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    r,
+	}
 }
 
 // TestTheEnvironmentsProxyVariablesAreNeverRead holds the statement that makes a
@@ -341,6 +374,30 @@ func TestMutationPacingIsBoundedByTheOperationDeadline(t *testing.T) {
 	}
 }
 
+func TestASecondMutationWaitsOutOnlyWhatIsLeftOfTheInterval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		wire := roundTripFunc(func(r *http.Request) (*http.Response, error) { return jsonAnswer(r, http.StatusOK, `{}`), nil })
+		c := openTestConn(t, forgeapi.Connection{WebBaseURL: "http://forge.example"},
+			forgeapi.WithWireTransport(wire),
+			forgeapi.WithMutations(true),
+			forgeapi.WithMutationInterval(time.Minute),
+			forgeapi.WithOperationTimeout(time.Hour),
+		)
+		mutation := &Request{Op: "CreateIssue", Method: http.MethodPost, Path: "/x", Body: map[string]any{"a": 1}}
+		if _, err := c.Do(t.Context(), mutation); err != nil {
+			t.Fatalf("the first mutation = %v, want nil", err)
+		}
+		time.Sleep(20 * time.Second)
+		started := time.Now()
+		if _, err := c.Do(t.Context(), mutation); err != nil {
+			t.Fatalf("the second mutation = %v, want nil", err)
+		}
+		if waited := time.Since(started); waited != 40*time.Second {
+			t.Errorf("a mutation 20s after the last one under a one-minute interval waited %v, want 40s", waited)
+		}
+	})
+}
+
 // TestARetriedRequestIsCountedAndRecorded holds the retry seam, which is the only
 // place this library learns that an attempt was repeated: the counter names the
 // operation, and the per-request record carries the attempt the request reached.
@@ -371,8 +428,8 @@ func TestARetriedRequestIsCountedAndRecorded(t *testing.T) {
 	if got := attempts.Load(); got != 2 {
 		t.Errorf("the instance saw %d attempt(s), want 2", got)
 	}
-	if fired := spy.times("Retried"); fired != 1 {
-		t.Errorf("the retry fired the Retried counter %d time(s), want 1", fired)
+	if fired := spy.times("Retried:Whoami"); fired != 1 {
+		t.Errorf("the retry fired the Retried counter for Whoami %d time(s), want 1: the counter names the operation the repeated attempt belongs to", fired)
 	}
 }
 
@@ -499,6 +556,46 @@ func TestTheHeaderDenylistIsRefusedAtConnectTime(t *testing.T) {
 	}
 }
 
+// RFC 9110 section 5.5: a field value is visible bytes, spaces and tabs; any other
+// control byte splits a header or smuggles a second one.
+func TestAHeaderValueIsRefusedOnlyForAControlByte(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		value   string
+		refused bool
+	}{
+		{name: "a_space", value: "gateway literal"},
+		{name: "a_tab", value: "gateway\tliteral"},
+		{name: "the_last_visible_byte", value: "gateway~"},
+		{name: "a_carriage_return", value: "gateway\rliteral", refused: true},
+		{name: "a_line_feed", value: "gateway\nliteral", refused: true},
+		{name: "a_nul", value: "gateway\x00literal", refused: true},
+		{name: "the_last_control_byte_below_space", value: "gateway\x1fliteral", refused: true},
+		{name: "a_delete", value: "gateway\x7fliteral", refused: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conn := forgeapi.Connection{
+				WebBaseURL: "https://forge.example.com",
+				Headers:    []forgeapi.Header{{Name: "X-Gateway-Secret", Value: test.value}},
+			}
+			_, err := Open(&conn, settingsFor(
+				forgeapi.WithCredentialSource(stubCredential{}),
+				forgeapi.WithLogger(discardLogger()),
+			), testOptions())
+			if !test.refused {
+				if err != nil {
+					t.Errorf("Open with header value %q = %v, want it accepted", test.value, err)
+				}
+				return
+			}
+			var fe *forgeapi.Error
+			if !asError(err, &fe) || fe.Code != forgeapi.CodeConnectionInvalid {
+				t.Errorf("Open with header value %q = %v, want code %q", test.value, err, forgeapi.CodeConnectionInvalid)
+			}
+		})
+	}
+}
+
 // TestAZeroConcurrencyLimitIsRefusedAtConstruction holds the two budget knobs whose
 // zero is refused rather than installed, against the doc comments that publish that.
 //
@@ -540,6 +637,73 @@ func TestAZeroConcurrencyLimitIsRefusedAtConstruction(t *testing.T) {
 	}
 }
 
+// Every dial lands on serve over an in-memory pipe; call it inside a synctest bubble,
+// where the pipe's waits advance the bubble's clock.
+func openPipedConn(t *testing.T, web string, serve func(net.Conn), extra ...forgeapi.Option) *Conn {
+	t.Helper()
+	opts := append([]forgeapi.Option{
+		forgeapi.WithCredentialSource(stubCredential{}),
+		forgeapi.WithPlaintextHTTP(true),
+		forgeapi.WithLogger(discardLogger()),
+	}, extra...)
+	conn := forgeapi.Connection{WebBaseURL: web}
+	c, err := Open(&conn, settingsFor(opts...), testOptions())
+	if err != nil {
+		t.Fatalf("Setup: Open(%q): %v", web, err)
+	}
+	c.wire.DialContext = func(context.Context, string, string) (net.Conn, error) {
+		client, server := net.Pipe()
+		go serve(server)
+		return client, nil
+	}
+	t.Cleanup(c.Close)
+	return c
+}
+
+func drain(server net.Conn) {
+	defer server.Close()
+	_, _ = io.Copy(io.Discard, server)
+}
+
+func TestAnInstanceStallingOnePhaseFailsTheRequestAtThatPhasesBound(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		web   string
+		serve func(net.Conn)
+		want  time.Duration
+	}{
+		{name: "a_handshake_never_answered", web: "https://forge.example", serve: drain, want: 10 * time.Second},
+		{
+			name: "a_request_never_answered",
+			web:  "http://forge.example",
+			serve: func(server net.Conn) {
+				defer server.Close()
+				if _, err := http.ReadRequest(bufio.NewReader(server)); err != nil {
+					return
+				}
+				_, _ = io.Copy(io.Discard, server)
+			},
+			want: 15 * time.Second,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c := openPipedConn(t, test.web, test.serve,
+					forgeapi.WithRetries(0),
+					forgeapi.WithOperationTimeout(time.Hour),
+				)
+				started := time.Now()
+				if _, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err == nil {
+					t.Fatalf("Do against a stalled instance = nil error, want the phase's failure")
+				}
+				if waited := time.Since(started); waited != test.want {
+					t.Errorf("Do against a stalled instance failed after %v, want %v under a one-hour operation deadline", waited, test.want)
+				}
+			})
+		})
+	}
+}
+
 // A redirect's location is upstream input, so only an address on the API root's own
 // origin and beneath its own path names a route on the connection: another host,
 // scheme or port is another instance, and a path beside the root is not this
@@ -568,6 +732,31 @@ func TestUnderAPI_names_a_route_only_beneath_the_API_root_on_its_own_origin(t *t
 			got, ok := c.UnderAPI(test.address)
 			if got != test.want || ok != test.ok {
 				t.Errorf("UnderAPI(%q) on %q = (%q, %v), want (%q, %v)", test.address, c.APIBase(), got, ok, test.want, test.ok)
+			}
+		})
+	}
+}
+
+func TestParseOriginAndPath_answers_only_an_origin_and_a_path(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+		ok   bool
+	}{
+		{name: "an_origin_and_a_path", raw: "https://forge.example:8443/first", ok: true},
+		{name: "userinfo", raw: "https://user@forge.example/first"},
+		{name: "a_query", raw: "https://forge.example/first?tab=1"},
+		{name: "an_empty_query", raw: "https://forge.example/first?"},
+		{name: "an_empty_fragment", raw: "https://forge.example/first#"},
+		{name: "unparseable", raw: "https://[::1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			u, ok := ParseOriginAndPath(test.raw)
+			if ok != test.ok {
+				t.Fatalf("ParseOriginAndPath(%q) = ok %v, want %v", test.raw, ok, test.ok)
+			}
+			if ok && u.String() != test.raw {
+				t.Errorf("ParseOriginAndPath(%q) = %q, want the base unchanged", test.raw, u)
 			}
 		})
 	}

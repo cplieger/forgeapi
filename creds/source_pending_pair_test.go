@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -211,5 +212,26 @@ func TestSource_a_call_waiting_behind_a_failed_rotation_write_stores_the_pair(t 
 	if rec.Token != "token-new" || rec.RefreshToken != "refresh-new" || rec.Usability != markUnmarked {
 		t.Errorf("the stored record = (%q, %q, %s), want (%q, %q, unmarked)",
 			rec.Token, rec.RefreshToken, markNames[rec.Usability], "token-new", "refresh-new")
+	}
+}
+
+// Storing the held pair is the refresh reaching a valid token, so it is counted as
+// one, after the failed write's own outcome.
+func TestSource_counts_the_held_pair_it_stores_as_a_valid_outcome(t *testing.T) {
+	store, dir := openStore(t)
+	ep, restore := failingWrite(t, dir, githubRotated)
+	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
+	o := &outcomes{}
+	src := source(t, store, "conn", ep, forgeapi.WithCounters(o.counters()))
+	if _, err := src.Token(t.Context()); err == nil {
+		t.Fatal("Setup: Token() with the rotated pair unstorable = nil error, want the store's failure")
+	}
+	restore()
+
+	if token, err := src.Token(t.Context()); err != nil || token != "token-new" {
+		t.Fatalf("Token() once writes succeed = (%q, %v), want (%q, nil)", token, err, "token-new")
+	}
+	if got, want := o.list(), []string{"github refresh_due", "github valid"}; !slices.Equal(got, want) {
+		t.Errorf("RefreshOutcome reported %q, want %q", got, want)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -249,18 +250,21 @@ func TestEveryRedirectRefusalCarriesItsOwnCode(t *testing.T) {
 		name     string
 		location func(*http.Request) string
 		code     string
+		counter  string
 	}{
 		{
 			name:     "a_chain_over_the_hop_cap",
 			location: func(r *http.Request) string { return "http://" + r.Host + "/api/v1/user" },
 			code:     forgeapi.CodeRedirectHopCap,
+			counter:  "RedirectHopCapExceeded",
 		},
 		{
 			name: "a_hop_outside_the_port_allowlist",
 			location: func(r *http.Request) string {
 				return "http://" + net.JoinHostPort(hostOnly(r.Host), "9") + "/api/v1/user"
 			},
-			code: forgeapi.CodeRedirectPortRefused,
+			code:    forgeapi.CodeRedirectPortRefused,
+			counter: "RedirectPortRefused",
 		},
 		{
 			name:     "a_hop_with_no_host",
@@ -292,6 +296,9 @@ func TestEveryRedirectRefusalCarriesItsOwnCode(t *testing.T) {
 			if fe.Op != "Whoami" {
 				t.Errorf("the refusal = op %q, want %q: the operation is filled in by the request that made it", fe.Op, "Whoami")
 			}
+			if test.counter != "" && spy.times(test.counter) != 1 {
+				t.Errorf("the refusal fired %s %d time(s), want 1: a containment refusal is counted where it is reached", test.counter, spy.times(test.counter))
+			}
 		})
 	}
 }
@@ -321,6 +328,133 @@ func TestADowngradeIsRefusedWhateverThePlaintextStatement(t *testing.T) {
 	}
 	if fe.Code != forgeapi.CodePlaintextRefused {
 		t.Errorf("the refusal = code %q, want %q", fe.Code, forgeapi.CodePlaintextRefused)
+	}
+}
+
+func TestAFollowedHopIsRecordedWithWhereTheExchangeEnded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/repos/example/old" {
+			http.Redirect(w, r, "/api/v1/repos/example/new", http.StatusMovedPermanently)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	defer srv.Close()
+	c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL})
+	for _, test := range []struct {
+		name       string
+		path       string
+		redirected bool
+		ended      string
+	}{
+		{name: "a_moved_repository", path: "/repos/example/old", redirected: true, ended: srv.URL + "/api/v1/repos/example/new"},
+		{name: "a_repository_in_place", path: "/repos/example/new", ended: srv.URL + "/api/v1/repos/example/new"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resp, err := c.Do(t.Context(), &Request{Op: "ReadRepo", Method: http.MethodGet, Path: test.path})
+			if err != nil {
+				t.Fatalf("Do(GET %s) = %v, want nil", test.path, err)
+			}
+			if resp.Redirected != test.redirected {
+				t.Errorf("Do(GET %s) = Redirected %v, want %v", test.path, resp.Redirected, test.redirected)
+			}
+			if resp.Ended != test.ended {
+				t.Errorf("Do(GET %s) = Ended %q, want %q", test.path, resp.Ended, test.ended)
+			}
+		})
+	}
+}
+
+func TestAMutationIsFollowedAcrossAMethodPreservingHopOnItsOwnOrigin(t *testing.T) {
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			saw := &record{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/repos/example/old/issues" {
+					http.Redirect(w, r, "/api/v1/repos/example/new/issues", status)
+					return
+				}
+				saw.see(r, readBody(t, r))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				if _, err := io.WriteString(w, `{}`); err != nil {
+					t.Errorf("Setup: writing the answer: %v", err)
+				}
+			}))
+			defer srv.Close()
+			c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL}, forgeapi.WithMutations(true))
+			resp, err := c.Do(t.Context(), &Request{
+				Op: "CreateIssue", Method: http.MethodPost,
+				Path: "/repos/example/old/issues", Body: map[string]any{"title": "t"},
+			})
+			if err != nil {
+				t.Fatalf("a mutation across a same-origin %d = %v, want nil", status, err)
+			}
+			if resp.Status != http.StatusCreated {
+				t.Errorf("a mutation across a same-origin %d = status %d, want %d", status, resp.Status, http.StatusCreated)
+			}
+			if _, _, body := saw.last(); body != `{"title":"t"}` {
+				t.Errorf("the hop's destination saw body %q, want the mutation's own", body)
+			}
+		})
+	}
+}
+
+func hopUnderTheDefaultPosture(t *testing.T, spy *counterSpy, location string) (reached []string, err error) {
+	t.Helper()
+	var mu sync.Mutex
+	wire := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		mu.Lock()
+		reached = append(reached, r.URL.Host)
+		mu.Unlock()
+		if r.URL.Host == "forge.example.com" {
+			resp := jsonAnswer(r, http.StatusFound, "")
+			resp.Header.Set("Location", location)
+			return resp, nil
+		}
+		return jsonAnswer(r, http.StatusOK, `{}`), nil
+	})
+	c, err := Open(&forgeapi.Connection{WebBaseURL: "https://forge.example.com"}, settingsFor(
+		forgeapi.WithWireTransport(wire),
+		forgeapi.WithCredentialSource(stubCredential{}),
+		forgeapi.WithCounters(spy.counters()),
+		forgeapi.WithLogger(discardLogger()),
+	), testOptions())
+	if err != nil {
+		t.Fatalf("Setup: Open: %v", err)
+	}
+	t.Cleanup(c.Close)
+	_, err = c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"})
+	mu.Lock()
+	defer mu.Unlock()
+	return slices.Clone(reached), err
+}
+
+func TestAHopToAPrivateAddressIsRefusedUnderTheDefaultPosture(t *testing.T) {
+	spy := newCounterSpy()
+	reached, err := hopUnderTheDefaultPosture(t, spy, "https://127.0.0.1/api/v1/user")
+	var fe *forgeapi.Error
+	if !asError(err, &fe) || fe.Code != forgeapi.CodePrivateAddressRefused {
+		t.Fatalf("a read across a hop to a loopback literal = %v, want code %q", err, forgeapi.CodePrivateAddressRefused)
+	}
+	if !slices.Equal(reached, []string{"forge.example.com"}) {
+		t.Errorf("a read across a refused hop reached %v, want nothing past the named instance", reached)
+	}
+	if fired := spy.timesAny("AddressRefusal:"); fired != 1 {
+		t.Errorf("the refused hop fired AddressRefusal %d time(s), want 1", fired)
+	}
+}
+
+func TestAHopToAnotherPublicHostIsFollowedUnderTheDefaultPosture(t *testing.T) {
+	reached, err := hopUnderTheDefaultPosture(t, newCounterSpy(), "https://mirror.example.com/api/v1/user")
+	if err != nil {
+		t.Fatalf("a read across a hop to another public host = %v, want nil", err)
+	}
+	if !slices.Equal(reached, []string{"forge.example.com", "mirror.example.com"}) {
+		t.Errorf("a read across a hop to another public host reached %v, want the hop followed", reached)
 	}
 }
 

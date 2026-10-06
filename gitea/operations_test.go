@@ -203,6 +203,9 @@ func TestACreationWithNoLabelsCostsOneRequest(t *testing.T) {
 	if got, want := h.instance.count(), 1; got != want {
 		t.Errorf("CreateIssue with no labels sent %d request(s), want %d", got, want)
 	}
+	if labels, ok := sentBody(t, h, "POST /api/v1/repos/example/example/issues")["labels"]; ok {
+		t.Errorf("CreateIssue with no labels sent labels %v, want no labels field", labels)
+	}
 }
 
 // TestACreationRefusesALabelTheWholeListItReadDoesNotCarry holds the resolution's

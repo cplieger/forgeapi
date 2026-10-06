@@ -201,6 +201,31 @@ func TestTheDocumentsCostIsPublishedAsTheProductsOwnFigure(t *testing.T) {
 	}
 }
 
+func TestADocumentThatReportsNoCostPublishesTheRequestItTook(t *testing.T) {
+	unpriced := strings.Replace(docRead, `"queryComplexity": {"score": 46, "limit": 200},`, "", 1)
+	h := newHarness(t, map[string]string{documentRoute: unpriced})
+	if _, err := h.client.ReadPR(t.Context(), testRef(), testPR()); err != nil {
+		t.Fatalf("ReadPR = %v, want the merge request", err)
+	}
+	if cost := h.client.BudgetState().LastCost; cost != 1 {
+		t.Errorf("ReadPR over a document reporting no complexity published a last cost of %d, want 1, the one request it took", cost)
+	}
+}
+
+func TestAnAnswerCarryingNoErrorsIsNotPartial(t *testing.T) {
+	h := newHarness(t, map[string]string{documentRoute: docList})
+	page, err := h.client.ListPRs(t.Context(), testRef())
+	if err != nil {
+		t.Fatalf("ListPRs = %v, want the page", err)
+	}
+	if page.Partial != nil {
+		t.Errorf("ListPRs over an envelope with no errors = partial %+v, want none", page.Partial)
+	}
+	if got := h.spy.times("PartialResult:" + forgeapi.PartialGraphQLPartial.String()); got != 0 {
+		t.Errorf("ListPRs over an envelope with no errors counted %d partial result(s), want 0", got)
+	}
+}
+
 // TestAnEnvelopeCarryingErrorsAndNoDataIsAFailure holds the classification rule for the
 // three shapes of that answer, all of which arrive at HTTP 200: nothing about the status
 // classifies them, so an implementation reading the status alone reports a success and
@@ -550,8 +575,13 @@ func TestTheMergeStateReadIsOneRequestOnBothOfItsArms(t *testing.T) {
 func TestACredentialFailureDoesNotDegradeTheConnection(t *testing.T) {
 	h := newHarness(t, map[string]string{documentRoute: `{"message":"401 Unauthorized"}`})
 	h.instance.status(documentRoute, http.StatusUnauthorized)
-	if _, err := h.client.ReadPR(t.Context(), testRef(), testPR()); err == nil {
-		t.Fatal("ReadPR against a 401 = nil, want the refusal")
+	_, err := h.client.ReadPR(t.Context(), testRef(), testPR())
+	var fe *forgeapi.Error
+	if !asForgeError(err, &fe) {
+		t.Fatalf("ReadPR against a 401 = %v, want a *forgeapi.Error", err)
+	}
+	if fe.Kind != forgeapi.KindUnauthorized {
+		t.Errorf("ReadPR against a 401 whose body carries no envelope errors = kind %v, want %v: the status is the refusal", fe.Kind, forgeapi.KindUnauthorized)
 	}
 	if h.client.isDegraded() {
 		t.Error("a credential failure degraded the connection, so a client whose token is fixed keeps paying a REST fallback for a document that works")
@@ -582,6 +612,7 @@ func TestTheAbsenceSplitComesFromTheEnvelopeRatherThanTheStatus(t *testing.T) {
 	}{
 		{name: "a_null_project_names_the_project", body: docNullProject, code: forgeapi.CodeRepoOrPRNotVisible},
 		{name: "a_null_merge_request_names_the_merge_request", body: docNullMergeRequest, code: forgeapi.CodePRNotFound},
+		{name: "a_null_data_member_names_the_project", body: `{"data": null}`, code: forgeapi.CodeRepoOrPRNotVisible},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := newHarness(t, map[string]string{documentRoute: test.body})
