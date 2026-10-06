@@ -1,6 +1,7 @@
 package gitea
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -1448,5 +1449,59 @@ func TestTheCrossRepositoryListSpendsOneRequestPerPageWhateverARowCarries(t *tes
 	}
 	if got := h.instance.count(); got != 1 {
 		t.Errorf("ListMyPRs over a row carrying a head sent %d request(s) %v, want 1", got, h.instance.arrived())
+	}
+}
+
+func TestARepositoryListingRowWithNoFullNameFailsTheCall(t *testing.T) {
+	h := newHarness(t, map[string]string{userReposRoute: `[` + repoRow + `,{"name":"example","owner":{"login":"example"}}]`})
+	page, err := h.client.ListRepos(t.Context())
+	var fe *forgeapi.Error
+	if !errors.As(err, &fe) {
+		t.Fatalf("ListRepos over a row with no full_name = %d row(s), %v, want a *forgeapi.Error", len(page.Items), err)
+	}
+	if fe.Code != forgeapi.CodeValidation || fe.Kind != forgeapi.KindUpstream || fe.Retryable {
+		t.Errorf("ListRepos over a row with no full_name = code %q kind %v retryable %v, want code %q kind %v retryable false",
+			fe.Code, fe.Kind, fe.Retryable, forgeapi.CodeValidation, forgeapi.KindUpstream)
+	}
+	if len(page.Items) != 0 {
+		t.Errorf("ListRepos over a row with no full_name answered %d row(s), want none", len(page.Items))
+	}
+}
+
+func TestARowNamingARepositoryWithNoFullNameFailsTheCall(t *testing.T) {
+	unnamedHead := strings.Replace(pullRow(1), `"sha":"`+testHeadSHA+`"`, `"sha":"`+testHeadSHA+`","repo":{"name":"fork"}`, 1)
+	unnamedMeta := strings.Replace(searchRow(false), `"full_name":"example/example"`, `"full_name":""`, 1)
+	for _, test := range []struct {
+		name, route, body string
+		call              func(*Client) error
+	}{
+		{name: "ListPRs_head", route: pullsRoute, body: "[" + unnamedHead + "]", call: func(c *Client) error {
+			_, err := c.ListPRs(t.Context(), testRef())
+			return err
+		}},
+		{name: "ReadPR_head", route: pullRoute, body: unnamedHead, call: func(c *Client) error {
+			_, err := c.ReadPR(t.Context(), testRef(), forgeapi.PRRef{Number: 1})
+			return err
+		}},
+		{name: "ListMyPRs_repository", route: "GET /api/v1/repos/issues/search", body: "[" + unnamedMeta + "]", call: func(c *Client) error {
+			_, err := c.ListMyPRs(t.Context())
+			return err
+		}},
+		{name: "ListMyIssues_repository", route: "GET /api/v1/repos/issues/search", body: "[" + unnamedMeta + "]", call: func(c *Client) error {
+			_, err := c.ListMyIssues(t.Context())
+			return err
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.call(newHarness(t, map[string]string{test.route: test.body}).client)
+			var fe *forgeapi.Error
+			if !errors.As(err, &fe) {
+				t.Fatalf("%s over %s = %v, want a *forgeapi.Error", test.name, test.body, err)
+			}
+			if fe.Code != forgeapi.CodeValidation || fe.Kind != forgeapi.KindUpstream || fe.Retryable {
+				t.Errorf("%s = code %q kind %v retryable %v, want code %q kind %v retryable false",
+					test.name, fe.Code, fe.Kind, fe.Retryable, forgeapi.CodeValidation, forgeapi.KindUpstream)
+			}
+		})
 	}
 }
