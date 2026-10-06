@@ -189,15 +189,22 @@ func validatePathValue(value, code string) error {
 // unreserved ASCII plus the separator, the dot and the three punctuation bytes
 // forge names use.
 func isPathByte(b byte) bool {
-	switch {
-	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
-		return true
+	return pathBytes[b]
+}
+
+var pathBytes = byteClass("-_./+~")
+
+func byteClass(extra string) [256]bool {
+	var class [256]bool
+	for _, span := range [...][2]byte{{'a', 'z'}, {'A', 'Z'}, {'0', '9'}} {
+		for b := span[0]; b <= span[1]; b++ {
+			class[b] = true
+		}
 	}
-	switch b {
-	case '-', '_', '.', '/', '+', '~':
-		return true
+	for i := range len(extra) {
+		class[extra[i]] = true
 	}
-	return false
+	return class
 }
 
 // lowerASCII lowercases ASCII and leaves every other byte alone, which is the

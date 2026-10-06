@@ -41,16 +41,10 @@ func ValidateCursor(c Cursor) error {
 // opaque by contract, so validating it by parsing would be interpreting a value
 // this type says nobody interprets.
 func isCursorByte(b byte) bool {
-	switch {
-	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
-		return true
-	}
-	switch b {
-	case '-', '_', '.', '=', ':':
-		return true
-	}
-	return false
+	return cursorBytes[b]
 }
+
+var cursorBytes = byteClass("-_.=:")
 
 // PartialReason is why a result is incomplete.
 type PartialReason int

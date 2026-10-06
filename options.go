@@ -627,12 +627,10 @@ func ownerInForm(owner string) bool {
 
 // ownerByte is the byte class an owner segment is made of.
 func ownerByte(b byte) bool {
-	switch {
-	case 'a' <= b && b <= 'z', 'A' <= b && b <= 'Z', '0' <= b && b <= '9':
-		return true
-	}
-	return b == '-' || b == '_' || b == '.'
+	return ownerBytes[b]
 }
+
+var ownerBytes = byteClass("-_.")
 
 // WithPageBound asks for n items per page. A page-numbered continuation
 // resumes only at the bound it was minted at, as [WithAfter] states, so such a
