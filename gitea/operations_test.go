@@ -1429,3 +1429,24 @@ func TestManuallyMergedIsNotAStrategy(t *testing.T) {
 		t.Errorf("MergePR with strategy %q sent %d request(s), want 0: the refusal precedes any request", "manually-merged", n)
 	}
 }
+
+func TestTheCrossRepositoryListSpendsOneRequestPerPageWhateverARowCarries(t *testing.T) {
+	row := strings.Replace(searchRow(false), `"pull_request":`, `"head":{"ref":"example-feature","sha":"`+testHeadSHA+`"},"pull_request":`, 1)
+	h := newHarness(t, map[string]string{
+		"GET /api/v1/repos/issues/search": "[" + row + "]",
+		statusPath:                        statusOK,
+	})
+	page, err := h.client.ListMyPRs(t.Context())
+	if err != nil {
+		t.Fatalf("ListMyPRs = %v, want nil", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("ListMyPRs returned %d row(s), want 1", len(page.Items))
+	}
+	if got := page.Items[0].Action; got.Checks != forgeapi.CheckUnknown || got.ChecksTotal != 0 {
+		t.Errorf("ListMyPRs over a row carrying a head = %v over %d, want %v over 0", got.Checks, got.ChecksTotal, forgeapi.CheckUnknown)
+	}
+	if got := h.instance.count(); got != 1 {
+		t.Errorf("ListMyPRs over a row carrying a head sent %d request(s) %v, want 1", got, h.instance.arrived())
+	}
+}

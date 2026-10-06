@@ -159,7 +159,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		}
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	return c.pullPage(ctx, op, &address{}, rows, walk)
+	return c.myPullPage(rows, walk), nil
 }
 
 // issueSearch is the cross-repository route both scoped lists read, the issue
@@ -193,9 +193,9 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 	return c.issuePage(&address{}, rows, walk), nil
 }
 
-// pullPage is the list shape both pull-request lists share: normalize each row,
-// fold each row's checks under the bounded rule, carry the continuation from the
-// limit the page was sent at, and name the successor the call's reads met.
+// pullPage is the per-repository list's shape: normalize each row, fold each row's
+// checks under the bounded rule, carry the continuation from the limit the page was
+// sent at, and name the successor the call's reads met.
 func (c *Client) pullPage(ctx context.Context, op string, addr *address, rows []wirePull, walk pageWalk) (forgeapi.Page[forgeapi.PullRequest], error) {
 	items := make([]forgeapi.PullRequest, 0, len(rows))
 	for i := range rows {
@@ -211,6 +211,19 @@ func (c *Client) pullPage(ctx context.Context, op string, addr *address, rows []
 		Partial:   c.pagePartial(len(rows), next, walk.page),
 		Successor: addr.successor,
 	}, nil
+}
+
+func (c *Client) myPullPage(rows []wirePull, walk pageWalk) forgeapi.Page[forgeapi.PullRequest] {
+	items := make([]forgeapi.PullRequest, 0, len(rows))
+	for i := range rows {
+		items = append(items, c.normalizePull(&rows[i], metaRepo(rows[i].Repository)))
+	}
+	next := walk.next(len(rows))
+	return forgeapi.Page[forgeapi.PullRequest]{
+		Items:   items,
+		Next:    next,
+		Partial: c.pagePartial(len(rows), next, walk.page),
+	}
 }
 
 // foldRows fills the rows' folded verdicts in ROTATION order.
@@ -258,7 +271,7 @@ func (c *Client) foldRows(ctx context.Context, op string, addr *address, items [
 func (c *Client) markThrottled(items []forgeapi.PullRequest, start, from int) {
 	for n := from; n < len(items); n++ {
 		at := (start + n) % len(items)
-		if items[at].HeadSHA == "" || items[at].Repo.Selector == "" {
+		if items[at].HeadSHA == "" {
 			continue
 		}
 		items[at].Partial = c.partial(forgeapi.PartialRateLimited, 0)
@@ -267,7 +280,7 @@ func (c *Client) markThrottled(items []forgeapi.PullRequest, start, from int) {
 
 // listKey names the list a fold position was taken in, which is the operation plus
 // the repository it addressed: the per-repository list is a different order per
-// repository, and the cross-repository list is one per connection and names none.
+// repository.
 func listKey(op string, repo forgeapi.RepoRef) string { return op + " " + repo.Selector }
 
 // rotationStart is the index this interval resumes at: the row after the one the
@@ -318,22 +331,17 @@ func foldKey(item *forgeapi.PullRequest) forgeapi.RotationCursor {
 // caller rather than turned into a marker here, because which reason an upstream
 // failure earns is the list's decision and only one of them has a marker at all.
 //
-// The fold addresses the list's repository, the successor where the list moved; a
-// cross-repository row is folded at its own.
+// The fold addresses the list's repository, the successor where the list moved.
 func (c *Client) foldOntoRow(ctx context.Context, op string, list *address, item *forgeapi.PullRequest) (bool, error) {
-	if item.HeadSHA == "" || item.Repo.Selector == "" {
+	if item.HeadSHA == "" {
 		return false, nil
 	}
 	if reason, ok := c.core.AdmitFold(op); !ok {
 		item.Partial = c.partial(reason, 0)
 		return false, nil
 	}
-	addr := list
-	if addr.named.Selector == "" {
-		addr = &address{named: item.Repo}
-	}
 	started := time.Now()
-	checks, err := c.foldStatus(ctx, op, addr, item.HeadSHA, 1)
+	checks, err := c.foldStatus(ctx, op, list, item.HeadSHA, 1)
 	c.core.SpendFold(time.Since(started))
 	c.core.Rotate(foldKey(item))
 	if err != nil {
