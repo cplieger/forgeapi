@@ -99,7 +99,6 @@ type (
 
 	docComplexity struct {
 		Score int `json:"score"`
-		Limit int `json:"limit"`
 	}
 
 	// docPayload is the decoded `data` of either document. One type serves both
@@ -160,9 +159,7 @@ type (
 		ForkedFrom        *restProjectRef  `json:"forked_from_project"`
 	}
 
-	restProjectRef struct {
-		PathWithNamespace string `json:"path_with_namespace"`
-	}
+	restProjectRef struct{}
 
 	restLabel struct {
 		Name        string `json:"name"`
@@ -221,8 +218,7 @@ type (
 		// alike. The ANSWER keeps the name the merge's request parameter
 		// deprecated, and the document's autoMergeEnabled has no REST twin, so
 		// this is the key a REST record states it under.
-		MergeWhenPipelineSucceeds *bool  `json:"merge_when_pipeline_succeeds"`
-		AutoMergeStrategy         string `json:"auto_merge_strategy"`
+		MergeWhenPipelineSucceeds *bool `json:"merge_when_pipeline_succeeds"`
 	}
 
 	restIssue struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
@@ -264,9 +260,7 @@ type (
 	}
 
 	restMetadata struct {
-		Version    string `json:"version"`
-		Revision   string `json:"revision"`
-		Enterprise bool   `json:"enterprise"`
+		Version string `json:"version"`
 	}
 )
 
@@ -789,7 +783,7 @@ func normalizeLabels(in []restLabel) []forgeapi.Label {
 }
 
 // normalizeRepo is the repository normalizer.
-func (c *Client) normalizeRepo(r *restProject) forgeapi.Repository {
+func normalizeRepo(r *restProject) forgeapi.Repository {
 	return forgeapi.Repository{
 		Ref:         repoRef(r.PathWithNamespace),
 		Description: r.Description,

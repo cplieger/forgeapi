@@ -65,7 +65,7 @@ const headerSunset = "Sunset"
 // before any request: a derived identifier is consumer-controlled input on its way
 // into a URL, and this family's selector is an owner and a name, so one separator is
 // the bound.
-func (c *Client) checkRepo(repo forgeapi.RepoRef) error {
+func checkRepo(repo forgeapi.RepoRef) error {
 	return forgeapi.ValidateSelector(forgeapi.FamilyGitHub, repo.Selector)
 }
 

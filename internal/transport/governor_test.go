@@ -35,7 +35,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		defer srv.Close()
 		c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL})
 		for call := 1; call <= 3; call++ {
-			ctx := c.Call(t.Context(), "Whoami")
+			ctx := Call(t.Context(), "Whoami")
 			if _, err := c.Do(ctx, &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err != nil {
 				t.Fatalf("call %d = %v, want nil", call, err)
 			}
@@ -61,7 +61,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		}))
 		defer srv.Close()
 		c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL}, forgeapi.WithRetries(2))
-		ctx := c.Call(t.Context(), "Whoami")
+		ctx := Call(t.Context(), "Whoami")
 		if _, err := c.Do(ctx, &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err != nil {
 			t.Fatalf("a read whose first attempt answered 502 = %v, want nil after the retry", err)
 		}
@@ -81,7 +81,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		var wg sync.WaitGroup
 		for range 2 {
 			wg.Go(func() {
-				ctx := c.Call(t.Context(), "Whoami")
+				ctx := Call(t.Context(), "Whoami")
 				if _, err := c.Do(ctx, &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err != nil {
 					t.Errorf("a concurrent call = %v, want nil", err)
 				}
@@ -101,7 +101,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		}))
 		defer srv.Close()
 		c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL})
-		ctx := c.Call(t.Context(), "ListPRs")
+		ctx := Call(t.Context(), "ListPRs")
 		for range 3 {
 			if _, err := c.Do(ctx, &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"}); err != nil {
 				t.Fatalf("a request of the call = %v, want nil", err)
@@ -120,7 +120,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		// call is its own context and not the governor: the two arms are separate
 		// cases and each has to be reached by the thing it names.
 		c := answeringConn(t, "Whoami", "9999")
-		done, cancel := context.WithCancel(c.Call(t.Context(), "Whoami"))
+		done, cancel := context.WithCancel(Call(t.Context(), "Whoami"))
 		cancel()
 		if _, err := c.Do(done, &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); !errors.Is(err, context.Canceled) {
 			t.Fatalf("a read on a cancelled context = %v, want the context sentinel: this call is stopped by its own context rather than by the governor", err)
@@ -134,7 +134,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		if got := c.BudgetState().LastCost; got != 1 {
 			t.Fatalf("Setup: LastCost = %d, want 1: the first call is what reads the remaining signal", got)
 		}
-		ctx := c.Call(t.Context(), "ListPRs")
+		ctx := Call(t.Context(), "ListPRs")
 		if _, err := c.Do(ctx, &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"}); !IsDeferred(err) {
 			t.Fatalf("a read past the mutation reserve = %v, want the deferral", err)
 		}
@@ -153,7 +153,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 // cause must not surface as an empty slot between the operation and the message.
 func TestTheDeferralRendersWithNoGapWhereACauseWouldBe(t *testing.T) {
 	c := answeringConn(t, "ListPRs", "1", forgeapi.WithMutationReserve(1))
-	ctx := c.Call(t.Context(), "ListPRs")
+	ctx := Call(t.Context(), "ListPRs")
 	_, err := c.Do(ctx, &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"})
 	var fe *forgeapi.Error
 	if !asError(err, &fe) {
@@ -183,7 +183,7 @@ func answeringConn(t *testing.T, op, remaining string, extra ...forgeapi.Option)
 	}))
 	t.Cleanup(srv.Close)
 	c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL}, extra...)
-	ctx := c.Call(t.Context(), op)
+	ctx := Call(t.Context(), op)
 	if _, err := c.Do(ctx, &Request{Op: op, Method: http.MethodGet, Path: "/user"}); err != nil {
 		t.Fatalf("Setup: the first call = %v, want nil", err)
 	}
@@ -234,8 +234,8 @@ func TestADiagnosticIDRendersBitsFromTheRandomSource(t *testing.T) {
 	source := rand.Reader
 	t.Cleanup(func() { rand.Reader = source })
 	rand.Reader = bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})
-	if got, want := DiagID(), "AAAQEAYEAUDAO"; got != want {
-		t.Errorf("DiagID() over the bytes 0 to 7 = %q, want %q", got, want)
+	if got, want := diagID(), "AAAQEAYEAUDAO"; got != want {
+		t.Errorf("diagID() over the bytes 0 to 7 = %q, want %q", got, want)
 	}
 }
 

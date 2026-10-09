@@ -44,7 +44,7 @@ const headerMeta = "X-Gitlab-Meta"
 // error mapping below this point is one family's.
 func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, error) {
 	const op = "ConnectionCaps"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	if caps := c.cachedCaps(); caps != nil {
 		return *caps, nil
 	}
@@ -180,8 +180,8 @@ func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error) {
 // source for values the record did not supply.
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error) {
 	const op = "RepoAffordances"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.RepoAffordances{}, err
 	}
 	var record restProject

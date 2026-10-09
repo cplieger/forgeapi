@@ -243,14 +243,12 @@ type declaredEnums struct {
 
 // declaredProduct is one document's declarations, and declaredEnum is one field's.
 type declaredProduct struct {
-	Version string       `json:"version"`
-	Status  declaredEnum `json:"commit_status_state"`
-	State   declaredEnum `json:"issue_and_pull_request_state"`
+	Status declaredEnum `json:"commit_status_state"`
+	State  declaredEnum `json:"issue_and_pull_request_state"`
 }
 
 type declaredEnum struct {
 	DeclaredBy string   `json:"declared_by"`
-	Prose      string   `json:"prose"`
 	Enum       []string `json:"enum"`
 }
 

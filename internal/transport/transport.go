@@ -73,7 +73,7 @@ const (
 	schemeHTTP  = "http"
 )
 
-// Mapper is how a family states its own error mapping. Mapping is by family plus
+// errorMapper is how a family states its own error mapping. Mapping is by family plus
 // operation plus status plus selected headers, never by status alone, so the
 // family that knows those cells supplies the function and this package owns
 // everything around it.
@@ -81,13 +81,13 @@ const (
 // bodyError is the body's machine-readable error member, RFC 6750's `error`,
 // empty where the body carries none. It is a code the instance states, so a
 // family may map on it; the body's prose never reaches a mapper.
-type Mapper func(op string, status int, header http.Header, bodyError string) (forgeapi.ErrorKind, string)
+type errorMapper func(op string, status int, header http.Header, bodyError string) (forgeapi.ErrorKind, string)
 
-// Signal is how a family reads its product's budget signal off a response. It
+// budgetSignal is how a family reads its product's budget signal off a response. It
 // returns the remaining units, the reset instant and whether the response carried
 // a signal at all; a family whose product sends none returns false and the
 // governor then reports the neutral value.
-type Signal func(header http.Header) (remaining int, reset time.Time, ok bool)
+type budgetSignal func(header http.Header) (remaining int, reset time.Time, ok bool)
 
 // Conn is one connection's request core: one wire transport, two clients over it,
 // and its governor.
@@ -100,8 +100,8 @@ type Signal func(header http.Header) (remaining int, reset time.Time, ok bool)
 type Conn struct { //nolint:govet // fieldalignment: the field order is this type's own reading order, the logger and the credential first, and no value of it is allocated per request
 	logger     *slog.Logger
 	credential forgeapi.CredentialSource
-	mapper     Mapper
-	signal     Signal
+	mapper     errorMapper
+	signal     budgetSignal
 	apiBase    *url.URL
 	web        *url.URL
 	wire       *http.Transport
@@ -132,8 +132,8 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 // it, so a consumer cannot substitute a clock for the pacing this governor exists
 // to do.
 type Options struct {
-	Mapper        Mapper
-	Signal        Signal
+	Mapper        errorMapper
+	Signal        budgetSignal
 	DeriveAPIBase func(web *url.URL) string
 	Clock         func() time.Time
 	Family        forgeapi.Family
@@ -291,22 +291,22 @@ func withRecord(ctx context.Context, op string) context.Context {
 //
 // A request issued outside a Call is priced as a call of its own, so an operation
 // that forgets to open one under-reports rather than accumulating without bound.
-func (c *Conn) Call(ctx context.Context, op string) context.Context {
+func Call(ctx context.Context, op string) context.Context {
 	return context.WithValue(withPrice(ctx), opKey{}, op)
 }
 
 // writeKey marks a call that belongs to a mutating operation.
 type writeKey struct{}
 
-// CallWrite is [Conn.Call] for a mutating operation whose call also reads: every read
+// CallWrite is [Call] for a mutating operation whose call also reads: every read
 // it makes is part of its write, so a read-only client refuses it with
 // [forgeapi.CodeMutationsDisabled] before anything is sent, and the mutation reserve,
 // held back for a write and its follow-up reads, admits it.
-func (c *Conn) CallWrite(ctx context.Context, op string) context.Context {
-	return context.WithValue(c.Call(ctx, op), writeKey{}, true)
+func CallWrite(ctx context.Context, op string) context.Context {
+	return context.WithValue(Call(ctx, op), writeKey{}, true)
 }
 
-// writes reports whether ctx belongs to a call [Conn.CallWrite] opened.
+// writes reports whether ctx belongs to a call [CallWrite] opened.
 func writes(ctx context.Context) bool {
 	marked, _ := ctx.Value(writeKey{}).(bool)
 	return marked
@@ -658,9 +658,6 @@ func dialablePorts(web *url.URL, proxy string, set *forgeapi.Settings) []uint16 
 // BudgetState is the governor's state for this connection, read-only and never
 // written from outside.
 func (c *Conn) BudgetState() forgeapi.BudgetState { return c.gov.state() }
-
-// Family is the family this connection serves.
-func (c *Conn) Family() forgeapi.Family { return c.family }
 
 // Logger is the injected logger, for the family's own lines.
 func (c *Conn) Logger() *slog.Logger { return c.logger }
@@ -1162,7 +1159,7 @@ func Decode(body []byte, v any) error {
 func (c *Conn) fail(op, code string, kind forgeapi.ErrorKind, status int, message string) *forgeapi.Error {
 	return &forgeapi.Error{
 		Op: op, Code: code, Family: c.family, Status: status, Kind: kind,
-		Message: message, DiagID: DiagID(),
+		Message: message, DiagID: diagID(),
 	}
 }
 
@@ -1228,7 +1225,7 @@ func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capabi
 		Family:     c.family,
 		Kind:       forgeapi.KindForbidden,
 		Message:    message,
-		DiagID:     DiagID(),
+		DiagID:     diagID(),
 		Capability: capability,
 		Evidence:   ev,
 	}
@@ -1301,7 +1298,7 @@ func (c *Conn) transportError(ctx context.Context, req *Request, err error, star
 			own.Op = req.Op
 		}
 		if own.DiagID == "" {
-			own.DiagID = DiagID()
+			own.DiagID = diagID()
 		}
 		c.log(ctx, req, exchange(req), own.Status, own.Code, own.DiagID, own.Kind, nil, started, err)
 		return own

@@ -213,7 +213,7 @@ var operations = []operation{
 			g := got.(forgeapi.Page[forgeapi.Repository])
 			row := first(g.Items)
 			a := row.Affordances
-			return append(affordanceChecks("Items[].Affordances.", p, a), []check{
+			return append(affordanceChecks("Items[].Affordances.", a), []check{
 				eq("Items[].Ref", row.Ref, repoRef(p)),
 				eq("Items[].Description", row.Description, repoDesc),
 				eq("Items[].WebURL", row.WebURL, repoWebURL),
@@ -595,7 +595,7 @@ var operations = []operation{
 			return r.RepoAffordances(ctx, s.repo)
 		},
 		expect: func(p spec.Product, got any) []check {
-			return affordanceChecks("", p, got.(forgeapi.RepoAffordances))
+			return affordanceChecks("", got.(forgeapi.RepoAffordances))
 		},
 	},
 	{
@@ -779,7 +779,7 @@ func issueChecks(prefix string, p spec.Product, g forgeapi.Issue, state forgeapi
 
 // affordanceChecks is the normalized repository affordances, one statement serving
 // the accessor and the listing row that carries the same record.
-func affordanceChecks(prefix string, p spec.Product, g forgeapi.RepoAffordances) []check {
+func affordanceChecks(prefix string, g forgeapi.RepoAffordances) []check {
 	return []check{
 		// Presence is the whole claim here: the members are the family's own
 		// spellings of what the repository allows, which

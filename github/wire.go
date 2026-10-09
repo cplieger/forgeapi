@@ -58,8 +58,7 @@ type (
 	}
 
 	docLabels struct {
-		Nodes      []docLabel `json:"nodes"`
-		TotalCount int        `json:"totalCount"`
+		Nodes []docLabel `json:"nodes"`
 	}
 
 	// docStateCount is one member of the per-state count arrays the rollup's
@@ -88,18 +87,14 @@ type (
 		DetailsURL  string `json:"detailsUrl"`
 	}
 
-	docContexts struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the query it decodes
-		TotalCount                 int             `json:"totalCount"`
-		CheckRunCount              int             `json:"checkRunCount"`
-		StatusContextCount         int             `json:"statusContextCount"`
+	docContexts struct {
 		CheckRunCountsByState      []docStateCount `json:"checkRunCountsByState"`
 		StatusContextCountsByState []docStateCount `json:"statusContextCountsByState"`
 		PageInfo                   docPageInfo     `json:"pageInfo"`
 		Nodes                      []docContext    `json:"nodes"`
 	}
 
-	docRollup struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
-		State    string       `json:"state"`
+	docRollup struct {
 		Contexts *docContexts `json:"contexts"`
 	}
 
@@ -116,10 +111,7 @@ type (
 		Nodes []docCommitNode `json:"nodes"`
 	}
 
-	docAutoMerge struct {
-		EnabledAt   *time.Time `json:"enabledAt"`
-		MergeMethod string     `json:"mergeMethod"`
-	}
+	docAutoMerge struct{}
 
 	// armData is the arm document's payload: null where the arm was refused, and the
 	// pull request's auto-merge request where it was armed.
@@ -166,18 +158,16 @@ type (
 		NameWithOwner string `json:"nameWithOwner"`
 	}
 
-	docPullConnection struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
-		TotalCount int              `json:"totalCount"`
-		PageInfo   docPageInfo      `json:"pageInfo"`
-		Nodes      []docPullRequest `json:"nodes"`
+	docPullConnection struct {
+		PageInfo docPageInfo      `json:"pageInfo"`
+		Nodes    []docPullRequest `json:"nodes"`
 	}
 
 	docRepository struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the query it decodes
-		NameWithOwner    string             `json:"nameWithOwner"`
-		ViewerPermission string             `json:"viewerPermission"`
-		PullRequests     *docPullConnection `json:"pullRequests"`
-		PullRequest      *docPullRequest    `json:"pullRequest"`
-		Object           *docCommit         `json:"object"`
+		NameWithOwner string             `json:"nameWithOwner"`
+		PullRequests  *docPullConnection `json:"pullRequests"`
+		PullRequest   *docPullRequest    `json:"pullRequest"`
+		Object        *docCommit         `json:"object"`
 	}
 
 	// docSearch is one page of the pull-request search. Its nodes are a list of
@@ -225,13 +215,8 @@ type (
 		Nodes      []*docSearchIssue `json:"nodes"`
 	}
 
-	docRateLimit struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the query it decodes
-		Cost      int       `json:"cost"`
-		Limit     int       `json:"limit"`
-		NodeCount int       `json:"nodeCount"`
-		Remaining int       `json:"remaining"`
-		ResetAt   time.Time `json:"resetAt"`
-		Used      int       `json:"used"`
+	docRateLimit struct {
+		Cost int `json:"cost"`
 	}
 
 	// docPayload is the decoded `data` of every pull-request and commit document this
@@ -295,20 +280,12 @@ type (
 		WebURL string `json:"html_url"`
 	}
 
-	restOwner struct {
-		Login string `json:"login"`
-	}
-
 	restPermissions struct {
-		Admin bool `json:"admin"`
-		Push  bool `json:"push"`
-		Pull  bool `json:"pull"`
+		Push bool `json:"push"`
 	}
 
 	restRepo struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
 		FullName      string           `json:"full_name"`
-		Name          string           `json:"name"`
-		Owner         *restOwner       `json:"owner"`
 		Description   string           `json:"description"`
 		WebURL        string           `json:"html_url"`
 		CloneURL      string           `json:"clone_url"`
@@ -346,9 +323,7 @@ type (
 		FullName string `json:"full_name"`
 	}
 
-	restAutoMerge struct {
-		MergeMethod string `json:"merge_method"`
-	}
+	restAutoMerge struct{}
 
 	restPull struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
 		Number         int            `json:"number"`
@@ -383,9 +358,7 @@ type (
 		// PullRequest is the key that makes a row of the issues route a PULL
 		// REQUEST. It is read to DROP that row, because this route's population is
 		// issues and pull requests both and the operation publishes issues.
-		PullRequest *struct {
-			URL string `json:"url"`
-		} `json:"pull_request"`
+		PullRequest *struct{} `json:"pull_request"`
 	}
 
 	restRelease struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
@@ -396,7 +369,6 @@ type (
 		PublishedAt *time.Time `json:"published_at"`
 		Draft       bool       `json:"draft"`
 		Prerelease  bool       `json:"prerelease"`
-		Target      string     `json:"target_commitish"`
 	}
 
 	restStatus struct {
@@ -406,15 +378,13 @@ type (
 		State       string `json:"state"`
 	}
 
-	// restCombined is the combined-status endpoint's answer. Its `state` is NOT
-	// read as the verdict: measured on an Actions-only repository, that endpoint
+	// restCombined is the combined-status endpoint's answer. Its `state` is not
+	// decoded: measured on an Actions-only repository, that endpoint
 	// answers an empty statuses array byte-identically to a commit with no CI at
 	// all, so folding its state reports a green nothing earned.
-	restCombined struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
-		State      string       `json:"state"`
-		SHA        string       `json:"sha"`
-		TotalCount int          `json:"total_count"`
-		Statuses   []restStatus `json:"statuses"`
+	restCombined struct {
+		SHA      string       `json:"sha"`
+		Statuses []restStatus `json:"statuses"`
 	}
 
 	restCheckRun struct {
@@ -422,12 +392,10 @@ type (
 		Status     string `json:"status"`
 		Conclusion string `json:"conclusion"`
 		DetailsURL string `json:"details_url"`
-		HeadSHA    string `json:"head_sha"`
 	}
 
-	restCheckRuns struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
-		TotalCount int            `json:"total_count"`
-		CheckRuns  []restCheckRun `json:"check_runs"`
+	restCheckRuns struct {
+		CheckRuns []restCheckRun `json:"check_runs"`
 	}
 
 	restWorkflowRun struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
@@ -442,17 +410,15 @@ type (
 		UpdatedAt  time.Time `json:"updated_at"`
 	}
 
-	restWorkflowRuns struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
-		TotalCount int               `json:"total_count"`
-		Runs       []restWorkflowRun `json:"workflow_runs"`
+	restWorkflowRuns struct {
+		Runs []restWorkflowRun `json:"workflow_runs"`
 	}
 
 	// restMeta is the metadata endpoint's answer. The version member is what an
 	// APPLIANCE reports and dotcom omits, which is how the connection read tells
 	// the family's two products apart.
-	restMeta struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
+	restMeta struct {
 		InstalledVersion string `json:"installed_version"`
-		PasswordAuth     *bool  `json:"verifiable_password_authentication"`
 	}
 
 	// restMergeAnswer is the asynchronous merge's answer: its status names where
@@ -1117,7 +1083,7 @@ func normalizeRelease(r *restRelease) forgeapi.Release {
 }
 
 // normalizeRepo is the repository normalizer.
-func (c *Client) normalizeRepo(r *restRepo) forgeapi.Repository {
+func normalizeRepo(r *restRepo) forgeapi.Repository {
 	return forgeapi.Repository{
 		Ref:         repoRef(r.FullName),
 		Description: r.Description,

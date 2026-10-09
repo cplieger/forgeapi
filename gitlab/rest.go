@@ -62,7 +62,7 @@ func projectRoute(repo forgeapi.RepoRef, rest string) string {
 // path, before any request: a derived identifier is consumer-controlled input on
 // its way into a URL. The separator bound is this family's own, because its
 // selector is a nested namespace path rather than an owner-and-name pair.
-func (c *Client) checkRepo(repo forgeapi.RepoRef) error {
+func checkRepo(repo forgeapi.RepoRef) error {
 	return forgeapi.ValidateSelector(forgeapi.FamilyGitLab, repo.Selector)
 }
 

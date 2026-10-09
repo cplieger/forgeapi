@@ -39,21 +39,16 @@ type (
 	}
 
 	wirePermissions struct {
-		Admin bool `json:"admin"`
-		Push  bool `json:"push"`
-		Pull  bool `json:"pull"`
+		Push bool `json:"push"`
 	}
 
 	wireRepo struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
 		FullName      string           `json:"full_name"`
-		Name          string           `json:"name"`
-		Owner         wireUser         `json:"owner"`
 		Description   string           `json:"description"`
 		WebURL        string           `json:"html_url"`
 		CloneURL      string           `json:"clone_url"`
 		UpdatedAt     time.Time        `json:"updated_at"`
 		DefaultBranch string           `json:"default_branch"`
-		MergeStyle    string           `json:"default_merge_style"`
 		Permissions   *wirePermissions `json:"permissions"`
 		HasIssues     *bool            `json:"has_issues"`
 		Private       bool             `json:"private"`
@@ -70,16 +65,11 @@ type (
 		AllowFastForward    bool `json:"allow_fast_forward_only_merge"`
 	}
 
-	// wireRepoMeta is the repository a CROSS-REPOSITORY row carries, which is the
-	// document's RepositoryMeta rather than its Repository: the owner is a login
-	// STRING there where a repository record carries a user object, so one struct
-	// cannot serve both and a shared one decodes neither. Both products declare it
-	// identically, and it is the reason a row of the issue-search route is read
-	// through its own type.
+	// wireRepoMeta is the repository a CROSS-REPOSITORY row carries, the
+	// document's RepositoryMeta rather than its Repository, of which the row reads
+	// the full name alone.
 	wireRepoMeta struct {
 		FullName string `json:"full_name"`
-		Name     string `json:"name"`
-		Owner    string `json:"owner"`
 	}
 
 	// wirePullMeta is the pull-request object a CROSS-REPOSITORY row carries, the
@@ -98,23 +88,22 @@ type (
 	}
 
 	wirePull struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
-		Number       int           `json:"number"`
-		State        string        `json:"state"`
-		Title        string        `json:"title"`
-		Body         string        `json:"body"`
-		User         wireUser      `json:"user"`
-		WebURL       string        `json:"html_url"`
-		CreatedAt    time.Time     `json:"created_at"`
-		UpdatedAt    time.Time     `json:"updated_at"`
-		Labels       []wireLabel   `json:"labels"`
-		Head         wireBranch    `json:"head"`
-		Base         wireBranch    `json:"base"`
-		Draft        bool          `json:"draft"`
-		Merged       bool          `json:"merged"`
-		Mergeable    *bool         `json:"mergeable"`
-		Repository   *wireRepoMeta `json:"repository"`
-		PullRequest  *wirePullMeta `json:"pull_request"`
-		MergedCommit string        `json:"merge_commit_sha"`
+		Number      int           `json:"number"`
+		State       string        `json:"state"`
+		Title       string        `json:"title"`
+		Body        string        `json:"body"`
+		User        wireUser      `json:"user"`
+		WebURL      string        `json:"html_url"`
+		CreatedAt   time.Time     `json:"created_at"`
+		UpdatedAt   time.Time     `json:"updated_at"`
+		Labels      []wireLabel   `json:"labels"`
+		Head        wireBranch    `json:"head"`
+		Base        wireBranch    `json:"base"`
+		Draft       bool          `json:"draft"`
+		Merged      bool          `json:"merged"`
+		Mergeable   *bool         `json:"mergeable"`
+		Repository  *wireRepoMeta `json:"repository"`
+		PullRequest *wirePullMeta `json:"pull_request"`
 	}
 
 	wireIssue struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
@@ -131,12 +120,11 @@ type (
 	}
 
 	wireRelease struct {
+		PublishedAt time.Time `json:"published_at"`
 		TagName     string    `json:"tag_name"`
 		Name        string    `json:"name"`
 		Body        string    `json:"body"`
 		WebURL      string    `json:"html_url"`
-		PublishedAt time.Time `json:"published_at"`
-		Target      string    `json:"target_commitish"`
 		Draft       bool      `json:"draft"`
 		Prerelease  bool      `json:"prerelease"`
 	}
@@ -149,12 +137,9 @@ type (
 		State       string `json:"state"`
 	}
 
-	wireCombined struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
-		SHA        string       `json:"sha"`
-		State      string       `json:"state"`
-		TotalCount int          `json:"total_count"`
-		CommitURL  string       `json:"commit_url"`
-		Statuses   []wireStatus `json:"statuses"`
+	wireCombined struct {
+		SHA      string       `json:"sha"`
+		Statuses []wireStatus `json:"statuses"`
 	}
 
 	wireVersion struct {
@@ -397,7 +382,7 @@ func (c *Client) normalizePull(p *wirePull, repo forgeapi.RepoRef) forgeapi.Pull
 		Labels:       normalizeLabels(p.Labels),
 		CreatedAt:    p.CreatedAt,
 		UpdatedAt:    p.UpdatedAt,
-		Action:       c.normalizeAction(p),
+		Action:       normalizeAction(p),
 		State:        c.pullState(p),
 		Draft:        pullDraft(p),
 	}
@@ -513,7 +498,7 @@ func (c *Client) unmapped(field, value string) {
 // no train, so the queue state is none and the position unknown; and the record
 // carries a mergeable flag and a draft flag without a reason, so the block reason
 // is unknown rather than one of the seven causes invented from the pair.
-func (c *Client) normalizeAction(p *wirePull) forgeapi.ActionState {
+func normalizeAction(p *wirePull) forgeapi.ActionState {
 	return forgeapi.ActionState{
 		Mergeable:      support(p.Mergeable),
 		Checks:         forgeapi.CheckUnknown,

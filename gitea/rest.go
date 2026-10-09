@@ -50,7 +50,7 @@ const (
 // checkRepo refuses a reference that is not safe to interpolate into a request
 // path, before any request: a derived identifier is consumer-controlled input on
 // its way into a URL.
-func (c *Client) checkRepo(repo forgeapi.RepoRef) error {
+func checkRepo(repo forgeapi.RepoRef) error {
 	return forgeapi.ValidateSelector(forgeapi.FamilyGitea, repo.Selector)
 }
 

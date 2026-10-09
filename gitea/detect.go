@@ -52,10 +52,8 @@ const (
 // Everything else in the document is skipped, which is what keeps a near-megabyte
 // read bounded.
 type swaggerDoc struct {
-	Paths map[string]map[string]struct {
-		OperationID string `json:"operationId"`
-	} `json:"paths"`
-	Info struct {
+	Paths map[string]map[string]struct{} `json:"paths"`
+	Info  struct {
 		Title string `json:"title"`
 	} `json:"info"`
 }
@@ -63,7 +61,7 @@ type swaggerDoc struct {
 // ConnectionCaps implements [forgeapi.Capabilities].
 func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, error) {
 	const op = "ConnectionCaps"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	if caps := c.cachedCaps(); caps != nil {
 		return *caps, nil
 	}
@@ -443,8 +441,8 @@ func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error) {
 // answers [forgeapi.CodeRepoRefStale] carrying it.
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error) {
 	const op = "RepoAffordances"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.RepoAffordances{}, err
 	}
 	addr := &address{named: repo}

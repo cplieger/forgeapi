@@ -126,7 +126,7 @@ func answeringStatus(t *testing.T, status int) string {
 
 func refusalOf(t *testing.T, c *Conn) error {
 	t.Helper()
-	ctx := c.Call(t.Context(), "ListPRs")
+	ctx := Call(t.Context(), "ListPRs")
 	_, err := c.Do(ctx, &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"})
 	if err == nil {
 		t.Fatal("Setup: the read = nil, want a refusal")

@@ -206,7 +206,10 @@ func TestTheCombinedStatusStateIsNeverTheVerdict(t *testing.T) {
 		"rest_combined_status_on_a_commit_with_no_ci",
 	} {
 		t.Run(row, func(t *testing.T) {
-			var combined restCombined
+			var combined struct {
+				State    string       `json:"state"`
+				Statuses []restStatus `json:"statuses"`
+			}
 			recorded.row(t, row, &combined)
 			if len(combined.Statuses) != 0 {
 				t.Fatalf("the recorded %s carries %d status row(s), want none: this case is about the empty answer", row, len(combined.Statuses))
@@ -228,7 +231,6 @@ func TestTheCombinedStatusStateIsNeverTheVerdict(t *testing.T) {
 // against what the product declares rather than against what this file remembers.
 type enumerations struct {
 	Provenance string `json:"//"`
-	Source     string `json:"source"`
 	Enums      map[string]struct {
 		DeclaredBy string `json:"declared_by"`
 		Enum       []struct {

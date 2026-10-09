@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -81,23 +82,11 @@ func testSignal(header http.Header) (int, time.Time, bool) {
 	if header.Get("X-Remaining") == "" {
 		return 0, time.Time{}, false
 	}
-	remaining := 0
-	if _, err := fmtSscan(header.Get("X-Remaining"), &remaining); err != nil {
+	remaining, err := strconv.Atoi(header.Get("X-Remaining"))
+	if err != nil {
 		return 0, time.Time{}, false
 	}
 	return remaining, time.Now().Add(time.Minute), true
-}
-
-func fmtSscan(s string, out *int) (int, error) {
-	n := 0
-	for i := range len(s) {
-		if s[i] < '0' || s[i] > '9' {
-			return 0, errors.New("not a number")
-		}
-		n = n*10 + int(s[i]-'0')
-	}
-	*out = n
-	return 1, nil
 }
 
 func testOptions() Options {

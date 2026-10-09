@@ -31,21 +31,6 @@ const searchPrefix = "s"
 // results, and the bound keeps a forged count from overflowing the walk's sum.
 const maxSearchServed = 1 << 30
 
-// documentCost is the cost every document this family ships is asserted against, as a
-// CEILING at a stated page size rather than as an equality: a document whose cost
-// drops upstream keeps passing, and a caller raising the page size does not turn a
-// measurement into a failure.
-//
-// Measured on api.github.com: at a page of twenty both pull-request documents and the
-// cross-repository search charged one, and at a page of a hundred the list document
-// and the search charged three, which is where this ceiling comes from. The node
-// count tracks what a document REQUESTS rather than what came back, so it is not a
-// cost: the list document charged three at 2,300 requested nodes and at 10,300.
-const documentCost = 3
-
-// documentPageSize is the page size that ceiling is stated at.
-const documentPageSize = 100
-
 // foldPageSize is the contexts page a COMPLETE fold asks for, which is this
 // product's own maximum for that connection: the read that returns the check names
 // wants them, and a smaller page spends more requests for the same list.
@@ -60,10 +45,9 @@ const foldPageSize = 100
 // NAMES, and the row's own partial marker says so.
 const listFoldPageSize = 1
 
-// rateLimitSelection is the budget object every document selects, which is how this
-// product reports what a document cost and what the credential has left on the
-// document surface. The two surfaces are separate windows, so this is the document
-// window's own figure.
+// rateLimitSelection is the budget object every query document selects, which is how
+// this product reports what a document cost. What the credential has left and when
+// its window renews arrive in the response's rate-limit headers, as on REST.
 const rateLimitSelection = `
   rateLimit { cost limit nodeCount remaining resetAt used }`
 
@@ -310,10 +294,6 @@ var enableAutoMerge = document{
 	mutation: true,
 }
 
-// documents is every document this family ships, which is what the document
-// assertions iterate.
-var documents = []document{prList, prRead, prMine, issueMine, commitRollup, enableAutoMerge}
-
 // envelope is the GraphQL response envelope, decoded whenever the body is JSON
 // whatever the status: an unknown field, an unresolvable selection and a partial
 // result all arrive at HTTP 200, so the status alone classifies none of them.
@@ -333,14 +313,12 @@ func (e *envelope) carriesData() bool {
 	return len(e.Data) > 0 && string(e.Data) != "null"
 }
 
-// docError is one envelope error. Its path is a HETEROGENEOUS array of strings and
-// integers on this product, measured, which is why it is held as raw JSON rather than
-// as a typed list: nothing here reads it, and a typed list of either element type
-// would fail to decode the other.
+// docError is one envelope error. Its path is not decoded: on this product it is a
+// HETEROGENEOUS array of strings and integers, measured, so a typed list of either
+// element type would fail to decode the other and take the envelope with it.
 type docError struct {
-	Message string          `json:"message"`
-	Type    string          `json:"type"`
-	Path    json.RawMessage `json:"path"`
+	Message string `json:"message"`
+	Type    string `json:"type"`
 }
 
 // docData is the decoded `data` of one document, which reports what the endpoint
