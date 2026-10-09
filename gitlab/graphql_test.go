@@ -9,6 +9,22 @@ import (
 	"github.com/cplieger/forgeapi"
 )
 
+// documentCeiling is the complexity figure both documents are asserted against, as
+// a CEILING at a stated page size rather than as an equality: a document whose cost
+// drops upstream keeps passing, and a caller raising the page size does not turn a
+// measurement into a failure. It is the limit this product's own endpoint reports
+// beside the score. Measured on gitlab.com at a page of a hundred, the list
+// document scored 94 and the read document 46.
+const documentCeiling = 200
+
+// documentPageSize is the page size the ceiling above is stated at, which is also
+// the largest first page this product's own connection accepts.
+const documentPageSize = 100
+
+// documents is every document this family ships, which is what the document
+// assertions iterate.
+var documents = []document{prList, prRead}
+
 // The document answers this file drives. Each is the envelope this product's endpoint
 // actually sends for one shape, and the two error bodies are the two shapes measured
 // on gitlab.com: an unknown field answers 200 with an extensions code, and a

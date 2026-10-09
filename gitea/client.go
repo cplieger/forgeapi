@@ -33,7 +33,6 @@ type Client struct {
 	resolve       chan struct{}
 	version       string
 	namedBy       string
-	settings      forgeapi.Settings
 	versionStatus int
 	// maxItems is the instance's stated max_response_items, zero while the
 	// connection holds none.
@@ -88,7 +87,7 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 	if err != nil {
 		return nil, err
 	}
-	return &Client{core: core, settings: settings, resolve: make(chan struct{}, 1)}, nil
+	return &Client{core: core, resolve: make(chan struct{}, 1)}, nil
 }
 
 // deriveAPIBase is this family's API root under the web base, used where the

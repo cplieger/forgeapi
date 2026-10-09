@@ -11,13 +11,31 @@ import (
 	"github.com/cplieger/forgeapi"
 )
 
+// documentCost is the cost every document this family ships is asserted against, as a
+// CEILING at a stated page size rather than as an equality: a document whose cost
+// drops upstream keeps passing, and a caller raising the page size does not turn a
+// measurement into a failure.
+//
+// Measured on api.github.com: at a page of twenty both pull-request documents and the
+// cross-repository search charged one, and at a page of a hundred the list document
+// and the search charged three, which is where this ceiling comes from. The node
+// count tracks what a document REQUESTS rather than what came back, so it is not a
+// cost: the list document charged three at 2,300 requested nodes and at 10,300.
+const documentCost = 3
+
+// documentPageSize is the page size that ceiling is stated at.
+const documentPageSize = 100
+
+// documents is every document this family ships, which is what the document
+// assertions iterate.
+var documents = []document{prList, prRead, prMine, issueMine, commitRollup, enableAutoMerge}
+
 // TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn holds every document to
 // the selection their prices and their normalizers both rest on.
 //
-// The budget object is the one every document must carry, because that is where this
-// product reports what the document cost and what the window has left, and a document
-// that stopped selecting it would leave the governor reading the REST window's figure
-// for a call that drew on the other one.
+// The budget object is the one every query document must carry, because that is where
+// this product reports what the document cost, and a document that stopped selecting
+// it would leave the last call's cost at the request count rather than the billed one.
 //
 // A mutation is the exception the schema makes (ADR-0103): the Mutation root has no
 // rate-limit field, which the endpoint answers as an undefined field, so the arm

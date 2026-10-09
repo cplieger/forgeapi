@@ -22,18 +22,6 @@ const documentPath = "/api/graphql"
 // [forgeapi.ValidateCursor] admits, so it crosses the surface base64url encoded.
 const documentPrefix = "g"
 
-// documentCeiling is the complexity figure both documents are asserted against, as
-// a CEILING at a stated page size rather than as an equality: a document whose cost
-// drops upstream keeps passing, and a caller raising the page size does not turn a
-// measurement into a failure. It is the limit this product's own endpoint reports
-// beside the score. Measured on gitlab.com at a page of a hundred, the list
-// document scored 94 and the read document 46.
-const documentCeiling = 200
-
-// documentPageSize is the page size the ceiling above is stated at, which is also
-// the largest first page this product's own connection accepts.
-const documentPageSize = 100
-
 // mergeRequestFields is the node selection both documents share, all a normalized
 // pull request needs from this product. `diffHeadSha` is the head a merge and a
 // re-run pin to; `headPipeline.sha` is a merged-results SHA, not the branch's.
@@ -117,10 +105,6 @@ var prRead = document{
 }
 `,
 }
-
-// documents is every document this family ships, which is what the document
-// assertions iterate.
-var documents = []document{prList, prRead}
 
 // docAcceptance is the ONE bounded question a connection asks its instance at setup:
 // does this schema carry every field the two documents above select. Its answer is

@@ -44,7 +44,7 @@ const (
 // email is the PUBLIC profile one and is null where the profile carries none.
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 	const op = "Whoami"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	user, scopes, err := c.readUser(ctx, op)
 	if err != nil {
 		return forgeapi.Account{}, err
@@ -76,7 +76,7 @@ func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 // them pays [Client.RepoAffordances].
 func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error) {
 	const op = "ListRepos"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	query, walk, err := c.listing(op, forgeapi.RepoRef{}, fixedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Repository]{}, err
@@ -97,7 +97,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		if rows[i].FullName == "" {
 			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
 		}
-		items = append(items, c.normalizeRepo(&rows[i]))
+		items = append(items, normalizeRepo(&rows[i]))
 	}
 	next := walk.next(resp.Header)
 	return forgeapi.Page[forgeapi.Repository]{
@@ -140,8 +140,8 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 // a REST arm take it from their next call.
 func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = "ListPRs"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	owner, name, err := ownerName(repo)
@@ -183,7 +183,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	if rows == nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK)
 	}
-	canonical, successor := c.documentRepo(payload.Repository, repo)
+	canonical, successor := documentRepo(payload.Repository, repo)
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
 		items = append(items, c.rowWithFold(&rows.Nodes[i], canonical))
@@ -214,7 +214,7 @@ func (c *Client) rowWithFold(node *docPullRequest, repo forgeapi.RepoRef) forgea
 // a renamed repository silently at HTTP 200, so there is no redirect to record, and the
 // canonical name the document answers IS the successor's own selector, which is the one
 // place on this product where a successor costs no further read.
-func (c *Client) documentRepo(repo *docRepository, asked forgeapi.RepoRef) (canonical forgeapi.RepoRef, successor *forgeapi.RepoRef) {
+func documentRepo(repo *docRepository, asked forgeapi.RepoRef) (canonical forgeapi.RepoRef, successor *forgeapi.RepoRef) {
 	if repo.NameWithOwner == "" || repo.NameWithOwner == asked.Selector {
 		return asked, nil
 	}
@@ -239,7 +239,7 @@ func (c *Client) documentRepo(repo *docRepository, asked forgeapi.RepoRef) (cano
 // wherever the search's own total states more than the walk was served.
 func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = "ListMyPRs"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	set, err := listOptions(op, scopedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -373,7 +373,7 @@ func documentNext(call transport.PageCall, info docPageInfo) forgeapi.Cursor {
 // measured.
 func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error) {
 	const op = "ListMyIssues"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	set, err := listOptions(op, scopedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
@@ -441,7 +441,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 // union because there the status is all there is.
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
 	const op = "ReadPR"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	read, err := c.readPull(ctx, op, repo, pr, true)
 	if err != nil {
 		return forgeapi.PullRequest{}, err
@@ -473,7 +473,7 @@ type pullRead struct {
 // the contexts connection's pages costs a request each, so the operation that publishes
 // no checks does not pay for them.
 func (c *Client) readPull(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, fold bool) (pullRead, error) {
-	if err := c.checkRepo(repo); err != nil {
+	if err := checkRepo(repo); err != nil {
 		return pullRead{}, err
 	}
 	if pr.Number <= 0 {
@@ -506,7 +506,7 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	if err != nil {
 		return pullRead{}, err
 	}
-	canonical, _ := c.documentRepo(payload.Repository, repo)
+	canonical, _ := documentRepo(payload.Repository, repo)
 	item := c.normalizeDocPull(node, canonical)
 	folded := c.foldRollup(rollupOf(node))
 	if follow {
@@ -664,8 +664,8 @@ func (c *Client) degradedRead(ctx context.Context, op string, repo forgeapi.Repo
 //nolint:gocritic // hugeParam: the record is the published signature's own parameter
 func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewPullRequest) (forgeapi.PullRequest, error) {
 	const op = "CreatePR"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
 	body := map[string]any{
@@ -719,8 +719,8 @@ func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeap
 // Measured on both of them: the response is the same forty-six-key object the creation
 // answers, so what differs per operation is the values rather than the field set.
 func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, state string) (forgeapi.PullRequest, error) {
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
 	if pr.Number <= 0 {
@@ -769,8 +769,8 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 //nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own workflow run, which the head SHA pins
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
-	ctx = c.core.CallWrite(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return err
 	}
 	if headSHA != "" {
@@ -841,8 +841,8 @@ func (c *Client) readRuns(ctx context.Context, op string, repo forgeapi.RepoRef,
 // re-run verb's, since every repository answers the route.
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error) {
 	const op = "ListRuns"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
 	query, walk, err := c.listing(op, repo, fixedList, opts)
@@ -913,8 +913,8 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 // [forgeapi.CodeAlreadyEnqueued] rather than a refusal.
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error) {
 	const op = opMergePR
-	ctx = c.core.CallWrite(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
 	if pr.Number <= 0 {
@@ -1103,7 +1103,7 @@ func (c *Client) mergeOutcome(answer *restMergeAnswer) forgeapi.MergeOutcomeStat
 // back to the document is TWO requests where the arm that answers publishes one.
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error) {
 	const op = "MergeStatus"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	read, err := c.readPull(ctx, op, repo, pr, false)
 	if err != nil {
 		return forgeapi.MergeStatus{}, err
@@ -1138,8 +1138,8 @@ func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forg
 // buying those two inside the same call.
 func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref string) (forgeapi.CommitChecks, error) {
 	const op = "CommitStatus"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.CommitChecks{}, err
 	}
 	if err := forgeapi.ValidateRef(ref); err != nil {
@@ -1280,8 +1280,8 @@ func (c *Client) degradedStatus(ctx context.Context, op string, repo forgeapi.Re
 // requests among them would make a consumer's issue count wrong for free.
 func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error) {
 	const op = opListIssues
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
 	query, walk, err := c.listing(op, repo, statefulList, opts)
@@ -1329,8 +1329,8 @@ func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...
 // its own population.
 func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewIssue) (forgeapi.Issue, error) {
 	const op = "CreateIssue"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	body := map[string]any{keyTitle: req.Title, keyBody: req.Body}
@@ -1348,8 +1348,8 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 // on a plain close, measured, so the request sends the state alone.
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
 	const op = "CloseIssue"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	if issue.Number <= 0 {
@@ -1366,8 +1366,8 @@ func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue fo
 // ListReleases implements [forgeapi.Releases].
 func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Release], error) {
 	const op = "ListReleases"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
 	query, walk, err := c.listing(op, repo, fixedList, opts)
@@ -1405,8 +1405,8 @@ func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts .
 // instant at all, which the answer reports as the zero time.
 func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewRelease) (forgeapi.Release, error) {
 	const op = "CreateRelease"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Release{}, err
 	}
 	body := map[string]any{
@@ -1429,8 +1429,8 @@ func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req f
 // ListLabels implements [forgeapi.Labels].
 func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Label], error) {
 	const op = "ListLabels"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
 	query, walk, err := c.listing(op, repo, fixedList, opts)

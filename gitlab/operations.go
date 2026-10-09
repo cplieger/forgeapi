@@ -39,7 +39,7 @@ const keyLabelDetails = "with_labels_details"
 // would answer a different question from the one this field asks.
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 	const op = "Whoami"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	var user restUser
 	if _, err := c.readJSON(ctx, op, "/user", nil, &user); err != nil {
 		return forgeapi.Account{}, err
@@ -62,7 +62,7 @@ func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 // same operation from the credential's own repositories for the same reason.
 func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error) {
 	const op = "ListRepos"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	set, err := listing(op, fixedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Repository]{}, err
@@ -85,7 +85,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	}
 	items := make([]forgeapi.Repository, 0, len(rows))
 	for i := range rows {
-		items = append(items, c.normalizeRepo(&rows[i]))
+		items = append(items, normalizeRepo(&rows[i]))
 	}
 	next := walk.next(header)
 	return forgeapi.Page[forgeapi.Repository]{
@@ -127,8 +127,8 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 // [forgeapi.PullRequest.HeadSHA], which reads the diff head instead.
 func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = "ListPRs"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	set, err := listing(op, statefulList, opts)
@@ -171,7 +171,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	}
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
-		items = append(items, c.normalizeDocPull(&rows.Nodes[i], c.documentRepo(payload.Project, repo)))
+		items = append(items, c.normalizeDocPull(&rows.Nodes[i], documentRepo(payload.Project, repo)))
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items}
 	if rows.PageInfo.HasNextPage {
@@ -202,7 +202,7 @@ func nullableString(s string) any {
 // not published on this arm, because a repository-addressed list of this product
 // answers no successor for the caller to re-point to; the difference reaches the
 // caller as the row's own reference.
-func (c *Client) documentRepo(project *docProject, asked forgeapi.RepoRef) forgeapi.RepoRef {
+func documentRepo(project *docProject, asked forgeapi.RepoRef) forgeapi.RepoRef {
 	if project.FullPath == "" || project.FullPath == asked.Selector {
 		return asked
 	}
@@ -276,7 +276,7 @@ func (c *Client) degradedPullPage(ctx context.Context, op string, repo forgeapi.
 // answer.
 func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = opListMyPRs
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	set, err := listing(op, scopedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -387,7 +387,7 @@ func (c *Client) projectByID(ctx context.Context, op string, id int64) (forgeapi
 // than this call's.
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
 	const op = "ReadPR"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	read, err := c.readMergeRequest(ctx, op, repo, pr)
 	if err != nil {
 		return forgeapi.PullRequest{}, err
@@ -410,7 +410,7 @@ type mergeRequestRead struct {
 // readMergeRequest is the single-merge-request read two operations share: the document
 // where this connection's documents work, and the REST read where they do not.
 func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef) (mergeRequestRead, error) {
-	if err := c.checkRepo(repo); err != nil {
+	if err := checkRepo(repo); err != nil {
 		return mergeRequestRead{}, err
 	}
 	if pr.Number <= 0 {
@@ -439,7 +439,7 @@ func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.
 			"the document resolved the project and no merge request with that number")
 	}
 	return mergeRequestRead{
-		item:   c.normalizeDocPull(node, c.documentRepo(payload.Project, repo)),
+		item:   c.normalizeDocPull(node, documentRepo(payload.Project, repo)),
 		merged: c.mergedSupport("merge request state (document)", node.State, node.MergedAt),
 	}, nil
 }
@@ -471,8 +471,8 @@ func (c *Client) degradedRead(ctx context.Context, op string, repo forgeapi.Repo
 //nolint:gocritic // hugeParam: the record is the published signature's own parameter
 func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewPullRequest) (forgeapi.PullRequest, error) {
 	const op = "CreatePR"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
 	title := req.Title
@@ -509,8 +509,8 @@ func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeap
 // a state EVENT rather than the target state, which is why the two transitions send
 // different words from the ones the state enumeration spells.
 func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, event string) (forgeapi.PullRequest, error) {
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
 	if pr.Number <= 0 {
@@ -550,8 +550,8 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 //nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own pipeline, which the head SHA pins
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
-	ctx = c.core.CallWrite(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return err
 	}
 	if headSHA != "" {
@@ -621,8 +621,8 @@ func (c *Client) readPipelines(ctx context.Context, op string, repo forgeapi.Rep
 // carries the route.
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error) {
 	const op = "ListRuns"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
 	set, err := listing(op, fixedList, opts)
@@ -679,8 +679,8 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 // family cannot read is reported as an unknown outcome rather than as a merge.
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error) {
 	const op = opMergePR
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
 	if pr.Number <= 0 {
@@ -758,7 +758,7 @@ func (c *Client) mergeOutcome(r *restMergeRequest) forgeapi.MergeOutcomeState {
 // a train at all is a repository affordance, read by [Client.RepoAffordances].
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error) {
 	const op = "MergeStatus"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	read, err := c.readMergeRequest(ctx, op, repo, pr)
 	if err != nil {
 		return forgeapi.MergeStatus{}, err
@@ -785,8 +785,8 @@ func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forg
 // contexts keep the order upstream first mentioned them in.
 func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref string) (forgeapi.CommitChecks, error) {
 	const op = "CommitStatus"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.CommitChecks{}, err
 	}
 	if err := forgeapi.ValidateRef(ref); err != nil {
@@ -929,8 +929,8 @@ func count(out *forgeapi.CommitChecks) {
 // carries a colour and a description a consumer renders.
 func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error) {
 	const op = opListIssues
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
 	set, err := listing(op, statefulList, opts)
@@ -958,7 +958,7 @@ func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...
 // rows span projects and the numeric project id beside it is not a canonical selector.
 func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error) {
 	const op = opListMyIssues
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	set, err := listing(op, scopedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
@@ -1003,8 +1003,8 @@ func (c *Client) readIssuePage(ctx context.Context, op, route string, query url.
 // takes label NAMES, so nothing has to resolve them to identifiers first.
 func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewIssue) (forgeapi.Issue, error) {
 	const op = "CreateIssue"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	body := map[string]any{"title": req.Title, keyDescription: req.Body}
@@ -1021,8 +1021,8 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 // CloseIssue implements [forgeapi.Issues].
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
 	const op = "CloseIssue"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	if issue.Number <= 0 {
@@ -1039,8 +1039,8 @@ func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue fo
 // ListReleases implements [forgeapi.Releases].
 func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Release], error) {
 	const op = "ListReleases"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
 	set, err := listing(op, fixedList, opts)
@@ -1082,8 +1082,8 @@ func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts .
 // publishes.
 func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewRelease) (forgeapi.Release, error) {
 	const op = "CreateRelease"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Release{}, err
 	}
 	body := map[string]any{
@@ -1104,8 +1104,8 @@ func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req f
 // ListLabels implements [forgeapi.Labels].
 func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Label], error) {
 	const op = "ListLabels"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
 	set, err := listing(op, fixedList, opts)

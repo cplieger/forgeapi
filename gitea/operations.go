@@ -19,7 +19,7 @@ const keyBody = "body"
 // Whoami implements [forgeapi.Identity].
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 	const op = "Whoami"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	var user wireUser
 	if err := c.readJSON(ctx, op, "/user", nil, &user); err != nil {
 		return forgeapi.Account{}, err
@@ -36,7 +36,7 @@ func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 // ListRepos implements [forgeapi.Repos].
 func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error) {
 	const op = "ListRepos"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	set, query, walk, err := c.listing(op, forgeapi.RepoRef{}, fixedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Repository]{}, err
@@ -90,8 +90,8 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 // row a consumer opens is [Client.ReadPR] or [Client.CommitStatus].
 func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = "ListPRs"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	set, query, walk, err := c.listing(op, repo, statefulList, opts)
@@ -146,7 +146,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 // refuses on a poller's hot path.
 func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = "ListMyPRs"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	set, query, walk, err := c.listing(op, forgeapi.RepoRef{}, scopedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -177,7 +177,7 @@ const issueSearch = "/repos/issues/search"
 // meta shape the search route answers, which is what the row is addressed by.
 func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error) {
 	const op = "ListMyIssues"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	set, query, walk, err := c.listing(op, forgeapi.RepoRef{}, scopedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
@@ -391,7 +391,7 @@ func (c *Client) foldOntoRow(ctx context.Context, op string, list *address, item
 // [forgeapi.CodeRepoRefStale] carrying it, at the first read and its hop.
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
 	const op = "ReadPR"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	addr := &address{named: repo}
 	record, err := c.readPull(ctx, op, addr, pr)
 	if err != nil {
@@ -424,7 +424,7 @@ func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.
 
 // readPull is the pull-request record read, which two operations share.
 func (c *Client) readPull(ctx context.Context, op string, addr *address, pr forgeapi.PRRef) (*wirePull, error) {
-	if err := c.checkRepo(addr.named); err != nil {
+	if err := checkRepo(addr.named); err != nil {
 		return nil, err
 	}
 	if pr.Number <= 0 {
@@ -442,8 +442,8 @@ func (c *Client) readPull(ctx context.Context, op string, addr *address, pr forg
 //nolint:gocritic // hugeParam: the record is the published signature's own parameter
 func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewPullRequest) (forgeapi.PullRequest, error) {
 	const op = "CreatePR"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
 	body := map[string]any{
@@ -482,7 +482,7 @@ func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeap
 
 // setPullState is the one mutation both lifecycle transitions make.
 func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, state string) (forgeapi.PullRequest, error) {
-	if err := c.checkRepo(repo); err != nil {
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
 	if pr.Number <= 0 {
@@ -520,8 +520,8 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 //nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own run, which the head SHA pins
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
-	ctx = c.core.CallWrite(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return err
 	}
 	if headSHA != "" {
@@ -608,8 +608,8 @@ func (c *Client) readRuns(ctx context.Context, op string, addr *address, query u
 // [forgeapi.PartialResultWindow] with what the walk was served.
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error) {
 	const op = "ListRuns"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
 	set, err := listOptions(op, runList, opts)
@@ -687,8 +687,8 @@ func (c *Client) readRunPage(ctx context.Context, op string, addr *address, walk
 // merge style and for a pull request not yet mergeable alike.
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error) {
 	const op = "MergePR"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
 	if pr.Number <= 0 {
@@ -762,7 +762,7 @@ func mergeStyle(req forgeapi.MergeRequest) (string, error) {
 // lets a caller written against another family read this one unchanged.
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error) {
 	const op = "MergeStatus"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	addr := &address{named: repo}
 	record, err := c.readPull(ctx, op, addr, pr)
 	if err != nil {
@@ -799,8 +799,8 @@ func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forg
 // stored and handed to [forgeapi.WithRotationCursor].
 func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref string) (forgeapi.CommitChecks, error) {
 	const op = "CommitStatus"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.CommitChecks{}, err
 	}
 	if err := forgeapi.ValidateRef(ref); err != nil {
@@ -932,8 +932,8 @@ func count(out *forgeapi.CommitChecks) {
 // would normalize as issues and a consumer would act on as issues.
 func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error) {
 	const op = "ListIssues"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
 	set, query, walk, err := c.listing(op, repo, statefulList, opts)
@@ -976,8 +976,8 @@ func (c *Client) issuePage(addr *address, rows []wireIssue, walk pageWalk) forge
 // CreateIssue implements [forgeapi.Issues].
 func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewIssue) (forgeapi.Issue, error) {
 	const op = "CreateIssue"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	body := map[string]any{"title": req.Title, keyBody: req.Body}
@@ -1078,8 +1078,8 @@ func (c *Client) unresolvedLabel(ctx context.Context, op, name string, rows, lim
 // CloseIssue implements [forgeapi.Issues].
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
 	const op = "CloseIssue"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	if issue.Number <= 0 {
@@ -1096,8 +1096,8 @@ func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue fo
 // ListReleases implements [forgeapi.Releases].
 func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Release], error) {
 	const op = "ListReleases"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
 	set, query, walk, err := c.listing(op, repo, fixedList, opts)
@@ -1131,8 +1131,8 @@ func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts .
 // CreateRelease implements [forgeapi.Releases].
 func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewRelease) (forgeapi.Release, error) {
 	const op = "CreateRelease"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Release{}, err
 	}
 	body := map[string]any{
@@ -1153,8 +1153,8 @@ func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req f
 // ListLabels implements [forgeapi.Labels].
 func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Label], error) {
 	const op = "ListLabels"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
 	set, query, walk, err := c.listing(op, repo, fixedList, opts)

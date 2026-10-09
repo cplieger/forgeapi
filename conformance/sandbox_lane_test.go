@@ -153,14 +153,14 @@ func sandboxLane(p spec.Product) (*lane, bool) {
 	return newLane(p, base, token, s.repo.Selector), true
 }
 
-// name is a branch, tag or release name this run owns, for one purpose.
-func (l *lane) name(kind string) string { return laneMark + laneRun() + "-" + kind }
+// laneName is a branch, tag or release name this run owns, for one purpose.
+func laneName(kind string) string { return laneMark + laneRun() + "-" + kind }
 
-// ciName is a branch name this run owns on which the sandbox's own CI runs.
-func (l *lane) ciName(kind string) string { return laneCIMark + laneRun() + "-" + kind }
+// laneCIName is a branch name this run owns on which the sandbox's own CI runs.
+func laneCIName(kind string) string { return laneCIMark + laneRun() + "-" + kind }
 
-// titlePrefix is the text every title this run gives starts with.
-func (l *lane) titlePrefix() string { return laneMark + laneRun() + " " }
+// laneTitlePrefix is the text every title this run gives starts with.
+func laneTitlePrefix() string { return laneMark + laneRun() + " " }
 
 // repoPath is the sandbox repository's own route on this product with rest after it.
 func (l *lane) repoPath(rest string) string {
@@ -310,7 +310,7 @@ func (l *lane) createBranchWithCommit(ctx context.Context, name string) (string,
 	}
 	path := "forgeapi-live/" + name + ".md"
 	content := "Written by the forgeapi live lane, run " + laneRun() + ".\n"
-	message := l.titlePrefix() + "commit for " + name
+	message := laneTitlePrefix() + "commit for " + name
 	switch l.product {
 	case spec.GitHub:
 		return l.githubCommit(ctx, trunk, name, path, content, message)

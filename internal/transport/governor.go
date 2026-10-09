@@ -86,7 +86,7 @@ func (g *governor) state() forgeapi.BudgetState {
 }
 
 // observe reads the product's budget signal off one response.
-func (g *governor) observe(header http.Header, signal Signal) {
+func (g *governor) observe(header http.Header, signal budgetSignal) {
 	if signal == nil {
 		return
 	}
@@ -193,11 +193,11 @@ func (g *governor) rotate(cursor forgeapi.RotationCursor) {
 	g.cursor = cursor
 }
 
-// DiagID mints the diagnostic id one failed operation carries: 64 random bits
+// diagID mints the diagnostic id one failed operation carries: 64 random bits
 // rendered as base32, in the user-visible error and in every log line for that
 // operation, retained only in the log. It is not a session id, not stable across
 // retries and never a lookup key for state.
-func DiagID() string {
+func diagID() string {
 	var raw [8]byte
 	if _, err := io.ReadFull(rand.Reader, raw[:]); err != nil {
 		binary.BigEndian.PutUint64(raw[:], uint64(time.Now().UnixNano()))

@@ -41,7 +41,7 @@ const versionsPath = "/versions"
 // error mapping below this point is one family's.
 func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, error) {
 	const op = "ConnectionCaps"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	if caps := c.cachedCaps(); caps != nil {
 		return *caps, nil
 	}
@@ -161,7 +161,7 @@ func (c *Client) cachedCaps() *forgeapi.ConnectionCaps {
 // which is why the detail says what was read rather than inferring from it.
 func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error) {
 	const op = "GrantCaps"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	if grant := c.cachedGrant(); grant != nil {
 		return *grant, nil
 	}
@@ -255,8 +255,8 @@ func scopesOf(header http.Header) []string {
 // caller that needs the strategies pays this read.
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error) {
 	const op = "RepoAffordances"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.RepoAffordances{}, err
 	}
 	var record restRepo
