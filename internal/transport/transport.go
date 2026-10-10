@@ -36,7 +36,7 @@ import (
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/httpx/v5"
 	"github.com/cplieger/jsoncap/v2"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"github.com/cplieger/ssrf/v4"
 	"github.com/cplieger/urlform"
 )
