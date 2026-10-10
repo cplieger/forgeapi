@@ -256,8 +256,9 @@ var operations = []operation{
 		},
 	},
 	{
-		method: "PullRequests.ListPRs",
-		zero:   forgeapi.Page[forgeapi.PullRequest]{},
+		method:    "PullRequests.ListPRs",
+		zero:      forgeapi.Page[forgeapi.PullRequest]{},
+		errorArms: []string{rowChecksUnderFineGrained},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -278,7 +279,7 @@ var operations = []operation{
 	{
 		method:    "PullRequests.ListMyPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
-		errorArms: []string{ownerUnresolved, scopeInsufficient, archivedRowsForOwner},
+		errorArms: []string{rowChecksUnderFineGrained, ownerUnresolved, scopeInsufficient, archivedRowsForOwner},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -297,9 +298,10 @@ var operations = []operation{
 		},
 	},
 	{
-		method:  "PullRequests.ReadPR",
-		zero:    forgeapi.PullRequest{},
-		readsPR: true,
+		method:    "PullRequests.ReadPR",
+		zero:      forgeapi.PullRequest{},
+		errorArms: []string{checksUnderFineGrained},
+		readsPR:   true,
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -433,8 +435,9 @@ var operations = []operation{
 		},
 	},
 	{
-		method: "Checks.CommitStatus",
-		zero:   forgeapi.CommitChecks{},
+		method:    "Checks.CommitStatus",
+		zero:      forgeapi.CommitChecks{},
+		errorArms: []string{commitStateUnderFineGrained},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.Checks)
 			if !ok {

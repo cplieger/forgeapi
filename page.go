@@ -96,13 +96,19 @@ const (
 	// it as a list holding more rows than the route serves, never as a complete one;
 	// docs/pagination.md names the lists that produce it.
 	PartialResultWindow
+	// PartialForbidden means the product refused part of an item to this
+	// credential and answered the rest of it. It rides the item's own marker,
+	// never a page's, so the list beside it is whole; the per-forge block of
+	// each operation that produces it names the field. A consumer renders that
+	// part as not readable with this credential, which a retry does not change.
+	PartialForbidden
 )
 
 // String returns the member's wire spelling: "unknown", "budget",
-// "rate_limited", "graphql_partial", "pagination_cap", "labels_not_applied"
-// or "result_window".
+// "rate_limited", "graphql_partial", "pagination_cap", "labels_not_applied",
+// "result_window" or "forbidden".
 func (p PartialReason) String() string {
-	return nameOf([]string{nameUnknown, "budget", "rate_limited", "graphql_partial", "pagination_cap", "labels_not_applied", "result_window"}, p)
+	return nameOf([]string{nameUnknown, "budget", "rate_limited", "graphql_partial", "pagination_cap", "labels_not_applied", "result_window", "forbidden"}, p)
 }
 
 var _ fmt.Stringer = PartialReason(0)

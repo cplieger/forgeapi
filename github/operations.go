@@ -242,15 +242,48 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK)
 	}
 	canonical, successor := documentRepo(payload.Repository, repo)
+	at := result.placed(pullListPath, true, func(i int) bool { return i < len(rows.Nodes) })
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
-		items = append(items, c.rowWithFold(&rows.Nodes[i], canonical))
+		item := c.rowWithFold(&rows.Nodes[i], canonical)
+		if at.refused[i] {
+			c.refuseChecks(&item)
+		}
+		items = append(items, item)
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items, Next: documentNext(call, rows.PageInfo), Successor: successor}
-	if result.Partial {
+	if at.unplaced() {
 		page.Partial = c.partial(forgeapi.PartialGraphQLPartial, len(items))
 	}
 	return page, nil
+}
+
+// refuseChecks is a row whose check rollup the product refused to the credential: no
+// verdict and no count, beside the row's own forbidden marker.
+func (c *Client) refuseChecks(item *forgeapi.PullRequest) {
+	clearChecks(item)
+	item.Partial = c.partial(forgeapi.PartialForbidden, 0)
+}
+
+func clearChecks(item *forgeapi.PullRequest) {
+	a := &item.Action
+	a.Checks = forgeapi.CheckUnknown
+	a.ChecksPassing, a.ChecksFailing, a.ChecksPending, a.ChecksNeutral, a.ChecksUnknown, a.ChecksTotal = 0, 0, 0, 0, 0, 0
+}
+
+// markRead puts on a single read's pull request what its errors left out. A refused
+// rollup is the forbidden marker only where nothing else is missing, since a consumer
+// reads that marker as the rest of the row whole.
+func (c *Client) markRead(item *forgeapi.PullRequest, at *placement) {
+	if at.refused[0] || at.rollup {
+		clearChecks(item)
+	}
+	switch {
+	case at.unplaced():
+		item.Partial = c.partial(forgeapi.PartialGraphQLPartial, 0)
+	case at.refused[0]:
+		item.Partial = c.partial(forgeapi.PartialForbidden, 0)
+	}
 }
 
 // rowWithFold is one list row, with the bounded fold's own marker where the row's
@@ -324,15 +357,26 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK)
 	}
 	rows := payload.Search
-	nodes, err := c.searchRows(ctx, op, rows.Nodes, (*docSearchPull).typename, typePullRequest, rows.IssueCount, result.Partial)
+	at := result.placed(searchPath, true, func(i int) bool {
+		return i < len(rows.Nodes) && rows.Nodes[i] != nil && rows.Nodes[i].Typename == typePullRequest
+	})
+	refused := make(map[*docSearchPull]bool, len(at.refused))
+	for i := range at.refused {
+		refused[rows.Nodes[i]] = true
+	}
+	nodes, err := c.searchRows(ctx, op, rows.Nodes, (*docSearchPull).typename, typePullRequest, rows.IssueCount, at.unplaced())
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	items := make([]forgeapi.PullRequest, 0, len(nodes))
 	for _, node := range nodes {
-		items = append(items, c.rowWithFold(&node.docPullRequest, rowRepo(node.Repository)))
+		item := c.rowWithFold(&node.docPullRequest, rowRepo(node.Repository))
+		if refused[node] {
+			c.refuseChecks(&item)
+		}
+		items = append(items, item)
 	}
-	return c.searchPage(items, rows.PageInfo, searchWalk{call: call, served: served}, rows.IssueCount, result.Partial), nil
+	return c.searchPage(items, rows.PageInfo, searchWalk{call: call, served: served}, rows.IssueCount, at.unplaced()), nil
 }
 
 // The union member type names the two search documents select their rows by.
@@ -557,7 +601,8 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	}
 	vars := map[string]any{varOwner: owner, varName: name, "number": pr.Number, "checksAfter": nil}
 	var payload docPayload
-	if _, execErr := c.execute(ctx, op, prRead, vars, &payload); execErr != nil {
+	result, execErr := c.execute(ctx, op, prRead, vars, &payload)
+	if execErr != nil {
 		return pullRead{}, execErr
 	}
 	node, err := c.pullNode(ctx, op, &payload)
@@ -567,16 +612,28 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	canonical, _ := documentRepo(payload.Repository, repo)
 	item := c.normalizeDocPull(node, canonical)
 	folded := c.foldRollup(rollupOf(node))
+	at := result.placed(pullPath, false, nil)
 	if follow {
-		followed, followErr := c.followContexts(ctx, op, vars, &folded)
+		followed, followErr := c.followContexts(ctx, op, vars, &folded, &at)
 		if followErr != nil {
 			return pullRead{}, followErr
 		}
 		folded = followed
 	}
 	c.applyFold(&item, &folded)
+	c.markRead(&item, &at)
 	return pullRead{item: item, merged: supportOf(node.Merged)}, nil
 }
+
+// The paths the pull-request and commit documents answer their rows or their node at.
+var (
+	pullListPath = []string{repositoryField, "pullRequests", "nodes"}
+	searchPath   = []string{"search", "nodes"}
+	pullPath     = []string{repositoryField, "pullRequest"}
+	commitPath   = []string{repositoryField, "object"}
+)
+
+const repositoryField = "repository"
 
 // pullNode is the pull request one document read resolved, with the two absence
 // answers the envelope separates: a null repository is invisible, and a resolved
@@ -603,18 +660,20 @@ func (c *Client) pullNode(ctx context.Context, op string, payload *docPayload) (
 // published range covers. A fold still short at the bound keeps its exact verdict and
 // carries the pagination marker, because on this product the counts describe the whole
 // collection and what is short is the names.
-func (c *Client) followContexts(ctx context.Context, op string, vars map[string]any, held *fold) (fold, error) {
+func (c *Client) followContexts(ctx context.Context, op string, vars map[string]any, held *fold, at *placement) (fold, error) {
 	out := *held
-	for pages := 1; out.truncated && pages < c.core.Budget().StatusPages; pages++ {
+	for pages := 1; out.truncated && at.whole() && pages < c.core.Budget().StatusPages; pages++ {
 		if out.cursor == "" {
 			break
 		}
 		next := maps.Clone(vars)
 		next["checksAfter"] = out.cursor
 		var payload docPayload
-		if _, err := c.execute(ctx, op, prRead, next, &payload); err != nil {
+		result, err := c.execute(ctx, op, prRead, next, &payload)
+		if err != nil {
 			return out, err
 		}
+		at.add(result.placed(pullPath, false, nil))
 		node, err := c.pullNode(ctx, op, &payload)
 		if err != nil {
 			return out, err
@@ -1260,7 +1319,8 @@ func (c *Client) documentStatus(ctx context.Context, op string, repo forgeapi.Re
 	}
 	vars := map[string]any{varOwner: owner, varName: name, "ref": ref, "checksAfter": nil}
 	var payload docPayload
-	if _, execErr := c.execute(ctx, op, commitRollup, vars, &payload); execErr != nil {
+	result, execErr := c.execute(ctx, op, commitRollup, vars, &payload)
+	if execErr != nil {
 		return forgeapi.CommitChecks{}, execErr
 	}
 	if payload.Repository == nil {
@@ -1275,27 +1335,39 @@ func (c *Client) documentStatus(ctx context.Context, op string, repo forgeapi.Re
 			"the document resolved the repository and no commit at that reference")
 	}
 	folded := c.foldRollup(commit.StatusCheckRollup)
-	folded, err = c.followCommitContexts(ctx, op, vars, &folded)
+	at := result.placed(commitPath, false, nil)
+	folded, err = c.followCommitContexts(ctx, op, vars, &folded, &at)
 	if err != nil {
 		return forgeapi.CommitChecks{}, err
 	}
-	return c.checksOf(ref, commit.OID, &folded), nil
+	if at.whole() {
+		return c.checksOf(ref, commit.OID, &folded), nil
+	}
+	// Any error beside the data leaves the fold over part of the evidence.
+	out := c.checksOf(ref, commit.OID, &fold{state: forgeapi.CheckUnknown})
+	out.Partial = c.partial(forgeapi.PartialGraphQLPartial, 0)
+	if !at.unplaced() {
+		out.Partial = c.partial(forgeapi.PartialForbidden, 0)
+	}
+	return out, nil
 }
 
 // followCommitContexts completes the commit fold the same way the pull-request read
 // completes its own, and under the same bound.
-func (c *Client) followCommitContexts(ctx context.Context, op string, vars map[string]any, held *fold) (fold, error) {
+func (c *Client) followCommitContexts(ctx context.Context, op string, vars map[string]any, held *fold, at *placement) (fold, error) {
 	out := *held
-	for pages := 1; out.truncated && pages < c.core.Budget().StatusPages; pages++ {
+	for pages := 1; out.truncated && at.whole() && pages < c.core.Budget().StatusPages; pages++ {
 		if out.cursor == "" {
 			break
 		}
 		next := maps.Clone(vars)
 		next["checksAfter"] = out.cursor
 		var payload docPayload
-		if _, err := c.execute(ctx, op, commitRollup, next, &payload); err != nil {
+		result, err := c.execute(ctx, op, commitRollup, next, &payload)
+		if err != nil {
 			return out, err
 		}
+		at.add(result.placed(commitPath, false, nil))
 		if payload.Repository == nil || payload.Repository.Object == nil {
 			return out, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK)
 		}

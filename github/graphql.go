@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -397,9 +398,94 @@ type docResult struct {
 	// RootFailure is the quoted message of a non-NOT_FOUND error on the document's
 	// absence root, empty where none arrived: the root's null is then that failure.
 	RootFailure string
-	Cost        int
-	Status      int
-	Partial     bool
+	// errors are the envelope errors of a partial answer, which a caller places
+	// against the rows they fell in (see [docResult.placed]).
+	errors  []docError
+	Cost    int
+	Status  int
+	Partial bool
+}
+
+// forbiddenType is the discriminator this product sends for a field the credential
+// may not read, measured on a check rollup's contexts under a fine-grained token.
+const forbiddenType = "FORBIDDEN"
+
+// placement is where a partial answer's envelope errors fell, against the node at the
+// path a caller names.
+type placement struct {
+	// refused holds the row indices whose check rollup the product refused to the
+	// credential; on a read of one node the only index is zero.
+	refused map[int]bool
+	// rollup reports another error under the node's check rollup.
+	rollup bool
+	// other reports an error anywhere else, which leaves unnamed what it nulled.
+	other bool
+}
+
+// placed sorts the answer's errors against the node at prefix. rows says a row index
+// follows prefix, and present says whether that row was answered: an error inside a
+// row nothing answered is the page's, since the row itself is what it nulled.
+func (r *docResult) placed(prefix []string, rows bool, present func(int) bool) placement {
+	var out placement
+	for i := range r.errors {
+		row, rollup, ok := r.errors[i].under(prefix, rows)
+		switch {
+		case !ok || (rows && !present(row)):
+			out.other = true
+		case rollup && r.errors[i].Type == forbiddenType:
+			if out.refused == nil {
+				out.refused = map[int]bool{}
+			}
+			out.refused[row] = true
+		case rollup:
+			out.rollup = true
+		default:
+			out.other = true
+		}
+	}
+	return out
+}
+
+// unplaced reports an error no row's own marker names, which leaves its page or its
+// read partial.
+func (p *placement) unplaced() bool { return p.rollup || p.other }
+
+// whole reports a placement of no error at all.
+func (p *placement) whole() bool { return len(p.refused) == 0 && !p.unplaced() }
+
+// add folds a further page's placement into p.
+func (p *placement) add(q placement) {
+	for i := range q.refused {
+		if p.refused == nil {
+			p.refused = map[int]bool{}
+		}
+		p.refused[i] = true
+	}
+	p.rollup = p.rollup || q.rollup
+	p.other = p.other || q.other
+}
+
+// under reports whether this error's path lies inside the node at prefix, which row of
+// it where rows is set, and whether the path reaches into the node's check rollup.
+func (e *docError) under(prefix []string, rows bool) (row int, rollup, ok bool) {
+	var path []any
+	if json.Unmarshal(e.Path, &path) != nil || len(path) <= len(prefix) {
+		return 0, false, false
+	}
+	for i, want := range prefix {
+		if got, isString := path[i].(string); !isString || got != want {
+			return 0, false, false
+		}
+	}
+	rest := path[len(prefix):]
+	if rows {
+		index, isNumber := rest[0].(float64)
+		if !isNumber || index < 0 || index != float64(int(index)) {
+			return 0, false, false
+		}
+		row, rest = int(index), rest[1:]
+	}
+	return row, slices.Contains(rest, any("statusCheckRollup")), true
 }
 
 // execute sends one document and decodes its data into out.
@@ -462,6 +548,7 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	if result.Partial {
 		c.countEnvelope(env.Errors)
 		result.Refusal = resp.Quote(env.Errors[0].Message)
+		result.errors = env.Errors
 	}
 	if rootFailure != nil {
 		result.RootFailure = resp.Quote(rootFailure.Message)

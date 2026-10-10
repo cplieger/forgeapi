@@ -10,6 +10,8 @@ A page can hold fewer rows than `WithPageBound` asked for and still carry `Next`
 
 A partial page names its `PartialReason`. `PartialResultWindow` is the one reason that arrives without `Next`. It means the forge stopped serving rows while its own total states more, so the call cannot reach the rest. On GitHub, `ListMyPRs` and `ListMyIssues` read a search that ends a walk this way, and so does `ListRuns` under `WithSince`. On Gitea and Forgejo, `ListRuns` ends a walk this way when a page serves no row while the stated total says more. A page whose GraphQL document also answered errors carries `PartialGraphQLPartial` instead, because its own rows are in question.
 
+A row can carry its own `Partial` on a page that has none. On GitHub, a fine-grained token cannot read check runs, so on a private repository the forge refuses a pull request's checks and answers the rest of the row. That row carries `PartialForbidden` with its checks unknown, and the page stays whole. Any other error beside the rows still marks the page.
+
 `WithSince` reads its bound at whole seconds, because GitHub, Gitea and Forgejo stamp a run's creation at whole seconds. On Gitea and Forgejo the run route has no time filter, so a bounded walk drops the older rows from each page. Both answer runs newest id first and stamp a run's creation when it is inserted, so the walk ends, complete, at the first page whose every run was created more than a minute before the bound. The minute absorbs a host clock stepped back between two runs.
 
 ## Continuations
