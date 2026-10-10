@@ -152,8 +152,9 @@ type PullRequest struct { //nolint:govet // fieldalignment: field order is the r
 	// [PartialRateLimited] where a read the row needed was deferred or throttled, the
 	// Gitea family's folded status or GitLab's fork lookup, [PullRequest.SourceRepo]
 	// then the zero reference on GitLab;
-	// and [PartialLabelsNotApplied] on the pull request a creation answers beside its
-	// error where the labels it named were not applied.
+	// [PartialLabelsNotApplied] on a creation's pull request where its labels were not
+	// applied; [PartialForbidden] where the credential may not read the checks, then
+	// [CheckUnknown] with no count; and on a single read [PartialGraphQLPartial].
 	Partial *Partial
 	// State is open, closed or merged.
 	State PRState
@@ -311,7 +312,8 @@ type CommitChecks struct { //nolint:govet // fieldalignment: field order is the 
 	// same per-product terms as [PullRequest.Partial]: where the response carried
 	// counts over the whole collection, State and the counts stay exact and what
 	// is short is the context NAMES, and where it did not, State is CheckUnknown
-	// rather than a verdict over part of the evidence.
+	// rather than a verdict over part of the evidence. [PartialForbidden] and
+	// [PartialGraphQLPartial] carry State CheckUnknown with no count.
 	Partial *Partial
 	// Successor is non-nil when the repository this read addressed had moved and
 	// the read followed the redirect to it, on the same terms as

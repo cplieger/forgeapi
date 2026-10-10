@@ -404,6 +404,7 @@ type Partial struct {
 	OmittedAtLeast int
 }
 const PartialBudget PartialReason = iota + 1
+const PartialForbidden PartialReason = iota + 7
 const PartialGraphQLPartial PartialReason = iota + 3
 const PartialLabelsNotApplied PartialReason = iota + 5
 const PartialPaginationCap PartialReason = iota + 4

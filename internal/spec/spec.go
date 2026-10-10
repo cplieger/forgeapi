@@ -367,6 +367,13 @@ var Table = []Entry{
 		Exercises: "the PRList document, asking for at most 50 rows a page whatever the page bound asks, since a larger page of its rows answered 502 on every attempt on a large repository",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "Items[].Action.Checks, under a fine-grained token",
+				Kind:  CannotSupply,
+				Says:  "CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup",
+			},
+		},
 	},
 	{
 		Method:    "PullRequests.ListPRs",
@@ -483,6 +490,11 @@ var Table = []Entry{
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Items[].Action.Checks, under a fine-grained token",
+				Kind:  CannotSupply,
+				Says:  "CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on this document",
+			},
 			{
 				Field: "Next",
 				Kind:  DiffersInShape,
@@ -718,6 +730,13 @@ var Table = []Entry{
 		Exercises: "the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address",
 		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "Action.Checks, under a fine-grained token",
+				Kind:  CannotSupply,
+				Says:  "CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup",
+			},
+		},
 	},
 	{
 		Method:    "PullRequests.ReadPR",
@@ -1642,6 +1661,13 @@ var Table = []Entry{
 		Exercises: "the CommitRollup document, the one source on this product that tells a commit with no CI from a commit whose checks all passed, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers",
 		Requests:  Requests{Min: 1, Max: 5},
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "State, under a fine-grained token",
+				Kind:  CannotSupply,
+				Says:  "CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup",
+			},
+		},
 	},
 	{
 		Method:    "Checks.CommitStatus",

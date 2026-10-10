@@ -133,6 +133,10 @@ type PullRequests interface {
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus one per row
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus one per row
 	//
+	// GitHub departs from the normalized contract:
+	//
+	//	Items[].Action.Checks, under a fine-grained token  cannot supply  CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup
+	//
 	// GitLab departs from the normalized contract:
 	//
 	//	Items[].Ref                                  differs in spelling  iid, sigil "!"
@@ -170,8 +174,9 @@ type PullRequests interface {
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Next                     differs in shape  a continuation while hasNextPage holds, as on a viewer's first page of 20 rows over issueCount 23; past the search connection's 1,000th result, where it answers hasNextPage false while issueCount states 2673, and a page asked for after it answers no rows and a null end cursor, so a walk ends there with no continuation and carries result_window
-	//	error, owner unresolved  cannot supply     empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open
+	//	Items[].Action.Checks, under a fine-grained token  cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on this document
+	//	Next                                               differs in shape  a continuation while hasNextPage holds, as on a viewer's first page of 20 rows over issueCount 23; past the search connection's 1,000th result, where it answers hasNextPage false while issueCount states 2673, and a page asked for after it answers no rows and a null end cursor, so a walk ends there with no continuation and carries result_window
+	//	error, owner unresolved                            cannot supply     empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open
 	//
 	// GitLab departs from the normalized contract:
 	//
@@ -254,6 +259,10 @@ type PullRequests interface {
 	//	GitLab   the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused, 1 request; needs read_merge_state
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 2 to 4 requests
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 2 to 4 requests
+	//
+	// GitHub departs from the normalized contract:
+	//
+	//	Action.Checks, under a fine-grained token  cannot supply  CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup
 	//
 	// GitLab departs from the normalized contract:
 	//
@@ -604,6 +613,10 @@ type Checks interface {
 	//	GitLab   GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, 1 to 3 requests
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 4 requests
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 4 requests
+	//
+	// GitHub departs from the normalized contract:
+	//
+	//	State, under a fine-grained token  cannot supply  CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup
 	//
 	// GitLab departs from the normalized contract:
 	//
