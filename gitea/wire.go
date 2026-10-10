@@ -159,20 +159,26 @@ type (
 	// status key. Each pair below is one fact under two spellings, and only one
 	// member of it arrives from either product.
 	wireRun struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
-		ID         int64     `json:"id"`
-		HeadSHA    string    `json:"head_sha"`
-		CommitSHA  string    `json:"commit_sha"`
-		Status     string    `json:"status"`
-		Conclusion string    `json:"conclusion"`
-		Path       string    `json:"path"`
-		WorkflowID string    `json:"workflow_id"`
-		HeadBranch string    `json:"head_branch"`
-		PrettyRef  string    `json:"prettyref"`
-		WebURL     string    `json:"html_url"`
-		CreatedAt  time.Time `json:"created_at"`
-		Created    time.Time `json:"created"`
-		UpdatedAt  time.Time `json:"updated_at"`
-		Updated    time.Time `json:"updated"`
+		ID           int64     `json:"id"`
+		RunNumber    int64     `json:"run_number"`
+		IndexInRepo  int64     `json:"index_in_repo"`
+		Event        string    `json:"event"`
+		TriggerEvent string    `json:"trigger_event"`
+		HeadSHA      string    `json:"head_sha"`
+		CommitSHA    string    `json:"commit_sha"`
+		Status       string    `json:"status"`
+		Conclusion   string    `json:"conclusion"`
+		Path         string    `json:"path"`
+		WorkflowID   string    `json:"workflow_id"`
+		HeadBranch   string    `json:"head_branch"`
+		PrettyRef    string    `json:"prettyref"`
+		WebURL       string    `json:"html_url"`
+		CreatedAt    time.Time `json:"created_at"`
+		Created      time.Time `json:"created"`
+		StartedAt    time.Time `json:"started_at"`
+		Started      time.Time `json:"started"`
+		UpdatedAt    time.Time `json:"updated_at"`
+		Updated      time.Time `json:"updated"`
 	}
 
 	// wireRuns is the run listing's envelope. Its total is a pointer because an
@@ -547,15 +553,28 @@ func normalizeRelease(r *wireRelease) forgeapi.Release {
 // addressed, which is what the row's own repository object echoes.
 func (c *Client) normalizeRun(r *wireRun, repo forgeapi.RepoRef) forgeapi.Run {
 	return forgeapi.Run{
+		Ref:       forgeapi.RunRef{ID: r.ID, Number: cmp.Or(r.RunNumber, r.IndexInRepo)},
 		Repo:      repo,
 		Name:      r.name(),
 		Branch:    cmp.Or(r.HeadBranch, r.PrettyRef),
 		HeadSHA:   r.head(),
 		WebURL:    r.WebURL,
 		CreatedAt: firstTime(r.CreatedAt, r.Created),
+		StartedAt: firstTime(r.StartedAt, r.Started),
 		UpdatedAt: firstTime(r.UpdatedAt, r.Updated),
 		State:     c.runState(r),
+		Trigger:   c.runTrigger(cmp.Or(r.TriggerEvent, r.Event)),
 	}
+}
+
+// runTrigger maps one run's trigger, totally.
+func (c *Client) runTrigger(raw string) forgeapi.RunTrigger {
+	trigger, ok := runEvents[strings.ToLower(raw)]
+	if ok {
+		return trigger
+	}
+	c.unmapped("actions run event", raw)
+	return forgeapi.TriggerUnknown
 }
 
 // head is the commit the run ran on, under either product's spelling.
@@ -660,9 +679,66 @@ func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 	return remaining, time.Now().Add(time.Duration(seconds) * time.Second), true
 }
 
-// scopedOps are the operations that read the issue-search route under a scope,
-// which is where the mapper reads a 400 as the owner the call named.
-var scopedOps = map[string]bool{"ListMyPRs": true, "ListMyIssues": true}
+// runEvents maps a run's trigger onto the trigger, totally over the union of both
+// products' spellings in every release this family serves: the webhook event types
+// (modules/webhook/type.go), the names their Event method serializes, which Forgejo
+// publishes as a run's event (services/convert/action.go), and the workflow on: keys
+// (modules/actions/github.go) its trigger_event carries, which Gitea's own event also
+// carries from v28.0.0.
+var runEvents = map[string]forgeapi.RunTrigger{
+	"push":                         forgeapi.TriggerPush,
+	"pull_request":                 forgeapi.TriggerPullRequest,
+	"pull_request_target":          forgeapi.TriggerPullRequest,
+	"pull_request_review":          forgeapi.TriggerPullRequest,
+	"pull_request_review_comment":  forgeapi.TriggerPullRequest,
+	"pull_request_sync":            forgeapi.TriggerPullRequest,
+	"pull_request_assign":          forgeapi.TriggerPullRequest,
+	"pull_request_label":           forgeapi.TriggerPullRequest,
+	"pull_request_milestone":       forgeapi.TriggerPullRequest,
+	"pull_request_comment":         forgeapi.TriggerPullRequest,
+	"pull_request_review_approved": forgeapi.TriggerPullRequest,
+	"pull_request_review_rejected": forgeapi.TriggerPullRequest,
+	"pull_request_review_request":  forgeapi.TriggerPullRequest,
+	"pull_request_approved":        forgeapi.TriggerPullRequest,
+	"pull_request_rejected":        forgeapi.TriggerPullRequest,
+	"schedule":                     forgeapi.TriggerSchedule,
+	"workflow_dispatch":            forgeapi.TriggerManual,
+	"create":                       forgeapi.TriggerOther,
+	"delete":                       forgeapi.TriggerOther,
+	"fork":                         forgeapi.TriggerOther,
+	"issues":                       forgeapi.TriggerOther,
+	"issue_assign":                 forgeapi.TriggerOther,
+	"issue_label":                  forgeapi.TriggerOther,
+	"issue_milestone":              forgeapi.TriggerOther,
+	"issue_comment":                forgeapi.TriggerOther,
+	"wiki":                         forgeapi.TriggerOther,
+	"gollum":                       forgeapi.TriggerOther,
+	"repository":                   forgeapi.TriggerOther,
+	"release":                      forgeapi.TriggerOther,
+	"package":                      forgeapi.TriggerOther,
+	"registry_package":             forgeapi.TriggerOther,
+	"status":                       forgeapi.TriggerOther,
+	"workflow_run":                 forgeapi.TriggerOther,
+	"workflow_job":                 forgeapi.TriggerOther,
+	"action_run_failure":           forgeapi.TriggerOther,
+	"action_run_recover":           forgeapi.TriggerOther,
+	"action_run_success":           forgeapi.TriggerOther,
+	"workflow_run_blocked":         forgeapi.TriggerOther,
+	"workflow_run_cancelled":       forgeapi.TriggerOther,
+	"workflow_run_failure":         forgeapi.TriggerOther,
+	"workflow_run_running":         forgeapi.TriggerOther,
+	"workflow_run_skipped":         forgeapi.TriggerOther,
+	"workflow_run_success":         forgeapi.TriggerOther,
+	"workflow_run_waiting":         forgeapi.TriggerOther,
+	"workflow_job_blocked":         forgeapi.TriggerOther,
+	"workflow_job_cancelled":       forgeapi.TriggerOther,
+	"workflow_job_failure":         forgeapi.TriggerOther,
+	"workflow_job_running":         forgeapi.TriggerOther,
+	"workflow_job_skipped":         forgeapi.TriggerOther,
+	"workflow_job_success":         forgeapi.TriggerOther,
+	"workflow_job_waiting":         forgeapi.TriggerOther,
+	"":                             forgeapi.TriggerUnknown,
+}
 
 // conflictCodes is the code a 409 carries per operation, empty elsewhere. The merge
 // route answers it for a head that moved ("head out of date"), for a merge that
@@ -682,16 +758,8 @@ var conflictCodes = map[string]string{"MergePR": forgeapi.CodeNotMergeable, "Cre
 // refusal of its merge route alike, a pull request not yet mergeable among them, so
 // the status names no cause.
 //
-// One cell is per OPERATION: a 400 on either cross-repository list is the owner the
-// instance could not resolve, a not-found answer under the owner code, because the
-// issue-search route answers 400 for an owner or a team it cannot resolve and those
-// lists send no team.
-//
 // No cell reads the body's error member.
 func mapper(op string, status int, header http.Header, _ string) (kind forgeapi.ErrorKind, code string) {
-	if status == http.StatusBadRequest && scopedOps[op] {
-		return forgeapi.KindNotFound, forgeapi.CodeOwnerUnresolved
-	}
 	switch status {
 	case http.StatusUnauthorized:
 		return forgeapi.KindUnauthorized, ""

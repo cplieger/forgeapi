@@ -15,10 +15,8 @@ import (
 // constants because each of them decides an error-mapping cell or a list refusal, so
 // a typo there would silently change a refusal.
 const (
-	opMergePR      = "MergePR"
-	opListIssues   = "ListIssues"
-	opListMyPRs    = "ListMyPRs"
-	opListMyIssues = "ListMyIssues"
+	opMergePR    = "MergePR"
+	opListIssues = "ListIssues"
 )
 
 // developerAccess is the project role integer at which a credential may push, which
@@ -101,8 +99,8 @@ type (
 		Score int `json:"score"`
 	}
 
-	// docPayload is the decoded `data` of either document. One type serves both
-	// because the two documents differ in WHICH selection they populate rather
+	// docPayload is the decoded `data` of either pull-request document. One type serves
+	// both because the two differ in WHICH selection they populate rather
 	// than in the vocabulary they speak: a list fills mergeRequests and a read
 	// fills mergeRequest, and a caller of one reads nothing of the other's. The
 	// rule that forbids a shared struct is about the two TRANSPORTS, where the
@@ -111,7 +109,28 @@ type (
 		Project         *docProject    `json:"project"`
 		QueryComplexity *docComplexity `json:"queryComplexity"`
 	}
+
+	// ownerPayload is the owner lookup's answer: the global id of the group and of
+	// the user the name resolves to, each null where none holds it.
+	ownerPayload struct {
+		Group           *docGlobalID   `json:"group"`
+		User            *docGlobalID   `json:"user"`
+		QueryComplexity *docComplexity `json:"queryComplexity"`
+	}
+
+	// docGlobalID is a node selected for its global id alone.
+	docGlobalID struct {
+		ID string `json:"id"`
+	}
 )
+
+// complexity is what the endpoint charged for the owner lookup.
+func (p *ownerPayload) complexity() int {
+	if p.QueryComplexity == nil {
+		return 0
+	}
+	return p.QueryComplexity.Score
+}
 
 // complexity is what the endpoint charged for the document that filled this payload,
 // which is the figure this product bills a call in and therefore the one the governor
@@ -173,9 +192,11 @@ type (
 
 	restPipeline struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
 		ID        int64     `json:"id"`
+		IID       int64     `json:"iid"`
 		SHA       string    `json:"sha"`
 		Ref       string    `json:"ref"`
 		Status    string    `json:"status"`
+		Source    string    `json:"source"`
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		WebURL    string    `json:"web_url"`
@@ -263,6 +284,33 @@ type (
 		Version string `json:"version"`
 	}
 )
+
+// pipelineSources maps a pipeline's source onto the trigger, totally over
+// Enums::Ci::Pipeline.sources (app/models/concerns/enums/ci/pipeline.rb), whose
+// unknown member is declared and so counts nothing.
+var pipelineSources = map[string]forgeapi.RunTrigger{
+	"unknown":                               forgeapi.TriggerUnknown,
+	"":                                      forgeapi.TriggerUnknown,
+	"push":                                  forgeapi.TriggerPush,
+	"merge_request_event":                   forgeapi.TriggerPullRequest,
+	"external_pull_request_event":           forgeapi.TriggerPullRequest,
+	"schedule":                              forgeapi.TriggerSchedule,
+	"pipeline_execution_policy_schedule":    forgeapi.TriggerSchedule,
+	"web":                                   forgeapi.TriggerManual,
+	"api":                                   forgeapi.TriggerManual,
+	"trigger":                               forgeapi.TriggerManual,
+	"chat":                                  forgeapi.TriggerManual,
+	"webide":                                forgeapi.TriggerManual,
+	"external":                              forgeapi.TriggerOther,
+	"pipeline":                              forgeapi.TriggerOther,
+	"parent_pipeline":                       forgeapi.TriggerOther,
+	"ondemand_dast_scan":                    forgeapi.TriggerOther,
+	"ondemand_dast_validation":              forgeapi.TriggerOther,
+	"security_orchestration_policy":         forgeapi.TriggerOther,
+	"container_registry_push":               forgeapi.TriggerOther,
+	"duo_workflow":                          forgeapi.TriggerOther,
+	"dependency_management_security_update": forgeapi.TriggerOther,
+}
 
 // pipelineStates is this product's pipeline and job status enumeration, mapped
 // TOTALLY over every member its schema declares. Both transports send the same
@@ -410,6 +458,16 @@ func (c *Client) unmapped(field, value string) {
 	}
 	c.core.Logger().Warn("forgeapi unmapped enumeration value",
 		"family", forgeapi.FamilyGitLab.String(), "field", field, "value", transport.Sanitize(value))
+}
+
+// runTrigger maps one pipeline's source, totally.
+func (c *Client) runTrigger(raw string) forgeapi.RunTrigger {
+	trigger, ok := pipelineSources[strings.ToLower(raw)]
+	if ok {
+		return trigger
+	}
+	c.unmapped("pipeline source (rest)", raw)
+	return forgeapi.TriggerUnknown
 }
 
 // checkState maps one pipeline or job status onto the folded verdict, totally.
@@ -738,6 +796,7 @@ func (c *Client) normalizeIssue(i *restIssue, repo forgeapi.RepoRef) forgeapi.Is
 // so the run belongs to the repository the call named.
 func (c *Client) normalizeRun(p *restPipeline, repo forgeapi.RepoRef) forgeapi.Run {
 	return forgeapi.Run{
+		Ref:       forgeapi.RunRef{ID: p.ID, Number: p.IID},
 		Repo:      repo,
 		Name:      p.Name,
 		Branch:    p.Ref,
@@ -746,6 +805,7 @@ func (c *Client) normalizeRun(p *restPipeline, repo forgeapi.RepoRef) forgeapi.R
 		CreatedAt: p.CreatedAt,
 		UpdatedAt: p.UpdatedAt,
 		State:     c.checkState("pipeline status (rest)", p.Status),
+		Trigger:   c.runTrigger(p.Source),
 	}
 }
 
@@ -908,20 +968,11 @@ var conflictCodes = map[string]string{opMergePR: forgeapi.CodeStaleHead, "Create
 // what they ordinarily mean, so a list's bad parameter is not reported as an
 // unmergeable pull request and a dead credential is not reported as a permission.
 //
-// One cell is the cross-repository lists': a 404 there is the owner the call named,
-// a not-found answer under the owner code. Under an owner those lists read the
-// group's own route, which answers 404 for a group the instance does not resolve and
-// for a user's own namespace alike; their default scope reads an instance-wide list
-// that addresses nothing it could fail to find.
-//
 // One cell reads the body's machine-readable error member, the 403 [forbidden] answers.
 //
 // A 409 is mapped per operation, by [conflictCodes]. An unmapped combination stays
 // upstream and is never guessed.
 func mapper(op string, status int, _ http.Header, bodyError string) (kind forgeapi.ErrorKind, code string) {
-	if status == http.StatusNotFound && (op == opListMyPRs || op == opListMyIssues) {
-		return forgeapi.KindNotFound, forgeapi.CodeOwnerUnresolved
-	}
 	switch status {
 	case http.StatusBadRequest:
 		if op == opMergePR {

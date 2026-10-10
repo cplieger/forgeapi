@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/internal/transport"
@@ -16,6 +17,10 @@ import (
 // library's own value and a consumer never interprets it, so the encoding is the
 // smallest one that resumes a page-numbered list.
 const cursorPrefix = "p"
+
+// userCursorPrefix opens the continuation of an owner-scoped project walk that reads
+// a user's personal namespace, so a resumed page goes to that route directly.
+const userCursorPrefix = "u"
 
 // The page parameters every paged REST read of this product carries.
 const (
@@ -100,9 +105,17 @@ func (c *Client) unpagedList[T any](resume forgeapi.Cursor) (forgeapi.Page[T], b
 // anyway is the unexpected status the core maps, which reaches this function as the
 // error below.
 func (c *Client) readJSON(ctx context.Context, op, path string, query url.Values, out any) (http.Header, error) {
-	resp, err := c.do(ctx, &transport.Request{
-		Op: op, Method: http.MethodGet, EscapedPath: path, Query: query, Page: pageIn(query),
-	})
+	return c.readListed(ctx, op, path, query, nil, out)
+}
+
+// readListed is readJSON for a list an owner can scope: under one, the route is the
+// owner's, and this product answers 404 for an owner it does not resolve.
+func (c *Client) readListed(ctx context.Context, op, path string, query url.Values, set *forgeapi.ListSettings, out any) (http.Header, error) {
+	req := &transport.Request{Op: op, Method: http.MethodGet, EscapedPath: path, Query: query, Page: pageIn(query)}
+	if set != nil && set.OwnerSet {
+		req.OwnerStatus = http.StatusNotFound
+	}
+	resp, err := c.do(ctx, req)
 	if err != nil {
 		return headerOf(resp), err
 	}
@@ -175,20 +188,20 @@ const (
 	// scopedList is a cross-repository list: open by construction, and scoped
 	// to what the credential created or to one group's projects.
 	scopedList
+	// repoList is the project listing, which an owner scopes.
+	repoList
+	// runList is the pipeline listing, which a since bound narrows.
+	runList
 )
 
-// listing resolves one list call's options. A state filter is refused with a local
-// code on every list but a stateful one, because the endpoints behind the others fix
-// the state, and an owner on every list but a scoped one, because the others address
-// one project or the credential's own.
+// listing resolves one list call's options, refusing with a local code a state filter
+// on every list but a stateful one, an owner on every list but the scoped ones and the
+// project listing, and a since bound on every list but the pipeline listing. An owner
+// may be a PATH, since a group nests; [Client.ownerRoutes] decides its address.
 //
-// An owner here may be a PATH, because it names a group and a group nests: the shared
-// form the root checks already admits the separator, and [scopedRoute] sends it as
-// this product's encoded group id.
-//
-// It resolves the options and NOT the continuation, which is the caller's: this family
-// mints two encodings, the page-numbered one its REST lists resume from and the list
-// document's own opaque cursor, and a shared reading of one would refuse the other.
+// It resolves NOT the continuation, which is the caller's: this family mints two
+// encodings, the REST page number and the list document's opaque cursor, and a shared
+// reading of one would refuse the other.
 func listing(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi.ListSettings, error) {
 	set, err := forgeapi.ResolveList(opts...)
 	if err != nil {
@@ -198,9 +211,13 @@ func listing(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi.Lis
 		return set, transport.Local(forgeapi.CodeListStateInvalid,
 			op+" lists rows whose state the endpoint fixes, so a state filter cannot apply")
 	}
-	if set.OwnerSet && kind != scopedList {
+	if set.OwnerSet && kind != scopedList && kind != repoList {
 		return set, transport.Local(forgeapi.CodeListOwnerInvalid,
 			op+" lists rows no owner scopes, so an owner cannot apply")
+	}
+	if set.SinceSet && kind != runList {
+		return set, transport.Local(forgeapi.CodeListSinceInvalid,
+			op+" lists rows no creation bound narrows, so a since bound cannot apply")
 	}
 	if kind == statefulList && set.State == forgeapi.ListStateMerged && op == opListIssues {
 		return set, transport.Local(forgeapi.CodeListStateInvalid,
@@ -214,7 +231,7 @@ func listing(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi.Lis
 // mint the continuation for the next page. repo is the repository the call
 // addresses, the zero reference on a list no repository addresses. A scoped list
 // sends the open state its construction fixes.
-func (c *Client) restQuery(op string, repo forgeapi.RepoRef, set forgeapi.ListSettings, kind listKind) (url.Values, restWalk, error) {
+func (c *Client) restQuery(op string, repo forgeapi.RepoRef, set *forgeapi.ListSettings, kind listKind) (url.Values, restWalk, error) {
 	walk, err := restWalkAt(c.core.PageCall(op, repo, set), set.After)
 	if err != nil {
 		return nil, restWalk{}, err
@@ -228,22 +245,40 @@ func (c *Client) restQuery(op string, repo forgeapi.RepoRef, set forgeapi.ListSe
 		query.Set("state", listState(set.State))
 	case scopedList:
 		query.Set("state", stateOpened)
+	case runList:
+		if set.SinceSet {
+			query.Set("created_after", createdAfter(set.Since))
+		}
+	case fixedList, repoList:
 	}
 	return query, walk, nil
 }
 
+// createdAfter is the pipelines route's created_after for a since bound. The filter
+// is strictly after (CreatedAtFilter#by_created_at), so it is sent one second before
+// the bound and answers a superset.
+func createdAfter(since time.Time) string {
+	return since.Add(-time.Second).Format(time.RFC3339)
+}
+
 // scopedRoute is the route a cross-repository list reads for its scope: the
 // instance-wide collection narrowed to what the credential created, or under an
-// owner that group's own, which spans its subgroups. The group is its full path as
-// ONE encoded segment, as a project is. A user's namespace has no such route, so it
-// answers 404 as an absent group does, which the mapper reads as the unresolved
-// owner.
-func scopedRoute(set forgeapi.ListSettings, query url.Values, collection string) string {
-	if set.OwnerSet {
-		return "/groups/" + url.PathEscape(set.Owner) + "/" + collection
+// owner that group's own, which spans its subgroups, addressed as
+// [Client.ownerRoutes] answers. A user's namespace has no such route, so it answers
+// 404 as an absent group does, which [Client.readListed] reads as the unresolved owner.
+func (c *Client) scopedRoute(ctx context.Context, op string, set *forgeapi.ListSettings, query url.Values, collection string) (string, error) {
+	if !set.OwnerSet {
+		query.Set("scope", "created_by_me")
+		return "/" + collection, nil
 	}
-	query.Set("scope", "created_by_me")
-	return "/" + collection
+	owner, err := c.ownerRoutes(ctx, op, set.Owner)
+	if err != nil {
+		return "", err
+	}
+	if owner.group == "" {
+		return "", c.ownerUnresolved(ctx, op)
+	}
+	return "/groups/" + owner.group + "/" + collection, nil
 }
 
 // listState is this product's own spelling of the state filter, which is the same
@@ -262,11 +297,20 @@ func listState(s forgeapi.ListState) string {
 	return stateOpened
 }
 
-// restWalk is where one call of a REST list stands: the call its continuations name
-// and the page it reads.
+// restWalk is where one call of a REST list stands: the call its continuations name,
+// the page it reads, and the prefix its continuations carry, empty for [cursorPrefix].
 type restWalk struct {
-	call transport.PageCall
-	page int
+	prefix string
+	call   transport.PageCall
+	page   int
+}
+
+// encoding is the prefix this walk's continuations carry.
+func (w restWalk) encoding() string {
+	if w.prefix == "" {
+		return cursorPrefix
+	}
+	return w.prefix
 }
 
 // restWalkAt reads where a REST list call stands from its continuation, the empty one
@@ -293,10 +337,29 @@ func restWalkAt(call transport.PageCall, c forgeapi.Cursor) (restWalk, error) {
 	return restWalk{call: call, page: position[0]}, nil
 }
 
+// ownedWalkAt reads where an owner-scoped project walk stands, on the group route
+// or, under [userCursorPrefix], on the user route.
+func ownedWalkAt(call transport.PageCall, c forgeapi.Cursor) (restWalk, error) {
+	if !strings.HasPrefix(string(c), userCursorPrefix) {
+		return restWalkAt(call, c)
+	}
+	if err := forgeapi.ValidateCursor(c); err != nil {
+		return restWalk{}, err
+	}
+	position, err := call.Resume(c, userCursorPrefix, 1)
+	if err != nil {
+		return restWalk{}, err
+	}
+	if position[0] < 1 {
+		return restWalk{}, transport.Local(forgeapi.CodeCursorInvalid, "continuation names no page")
+	}
+	return restWalk{call: call, prefix: userCursorPrefix, page: position[0]}, nil
+}
+
 // here is the continuation naming the page this walk reads, which is what a list
 // whose bound admitted no page hands back so the remainder stays reachable.
 func (w restWalk) here() forgeapi.Cursor {
-	return w.call.Mint(cursorPrefix, w.page)
+	return w.call.Mint(w.encoding(), w.page)
 }
 
 // next is the continuation for the page the next-page header names, empty where the
@@ -306,7 +369,7 @@ func (w restWalk) next(header http.Header) forgeapi.Cursor {
 	if !ok {
 		return ""
 	}
-	return w.call.Mint(cursorPrefix, page)
+	return w.call.Mint(w.encoding(), page)
 }
 
 // nextPage is the page after one response's, and whether there is one. The witness is

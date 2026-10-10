@@ -130,6 +130,7 @@ const (
 	HoldsHeadSHA    Holds = "head SHA"
 	HoldsLabelNames Holds = "label names"
 	HoldsLabelIDs   Holds = "label ids"
+	HoldsSinceBound Holds = "since bound"
 	HoldsNothing    Holds = "nothing"
 )
 
@@ -192,12 +193,12 @@ var Fields = map[string]int{
 	"Merges.MergePR":                 4,
 	"Merges.MergeStatus":             4,
 	"Checks.CommitStatus":            10,
-	"Checks.ListRuns":                11,
+	"Checks.ListRuns":                15,
 	"Issues.ListIssues":              16,
 	"Issues.ListMyIssues":            16,
 	"Issues.CreateIssue":             13,
 	"Issues.CloseIssue":              13,
-	"Capabilities.ConnectionCaps":    3,
+	"Capabilities.ConnectionCaps":    4,
 	"Capabilities.GrantCaps":         2,
 	"Capabilities.RepoAffordances":   6,
 	"Governor.BudgetState":           4,
@@ -267,27 +268,32 @@ var Table = []Entry{
 	{
 		Method:    "Repos.ListRepos",
 		Product:   GitHub,
-		Exercises: "GET /user/repos",
+		Exercises: "GET /user/repos; under an owner scope the RepoOwned document, repositoryOwner(login: {owner}) with ownerAffiliations [OWNER], which resolves a user and an organization alike",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
 				Field: "Items[].Affordances.MergeStrategies",
 				Kind:  CannotSupply,
-				Says:  "empty: absent on a listing row",
+				Says:  "empty: absent on a listing row without an owner scope",
 			},
 			{
 				Field: "Items[].Affordances.MergeTrain",
 				Kind:  CannotSupply,
 				Says:  "no record field: a ruleset property",
 			},
+			{
+				Field: "Items[].CloneURL, under an owner scope",
+				Kind:  DiffersInShape,
+				Says:  "the document has no HTTPS clone field, so it is the repository url with .git appended",
+			},
 		},
 	},
 	{
 		Method:    "Repos.ListRepos",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects",
-		Requests:  Requests{Min: 1, Max: 1, Paged: true},
+		Exercises: "GET /api/v4/projects; under an owner scope GET /api/v4/groups/{owner}/projects with include_subgroups=true and with_shared=false, and where that answers 404 for a one-segment owner, GET /api/v4/users/{owner}/projects, the user's personal namespace, on the first page alone, since the continuation names the route; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page, the group or the user it names read with no fallback",
+		Requests:  Requests{Min: 1, Max: 2, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -306,6 +312,11 @@ var Table = []Entry{
 				Says:  "from a role integer",
 			},
 			{
+				Field: "Items[].Affordances.CanPush, under a group owner scope",
+				Kind:  CannotSupply,
+				Says:  "SupportUnknown: the group route answers its rows without the permissions object the other two routes carry",
+			},
+			{
 				Field: "Items[].Affordances.Ev",
 				Kind:  CannotSupply,
 				Says:  "no source on the row for its three keys, anonymous",
@@ -315,12 +326,17 @@ var Table = []Entry{
 				Kind:  DiffersInShape,
 				Says:  "visibility string, no private key",
 			},
+			{
+				Field: "error, owner unresolved",
+				Kind:  CannotSupply,
+				Says:  "no refusal for a user whose profile is private: the user route answers it an empty list, so such an owner reads as owning nothing",
+			},
 		},
 	},
 	{
 		Method:    "Repos.ListRepos",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/user/repos",
+		Exercises: "GET /api/v1/user/repos; under an owner scope GET /api/v1/users/{owner}/repos, which resolves a user and an organization alike and pages before it drops the rows the caller has no unit access to, so its walk continues while the pages read cover fewer rows than X-Total-Count",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
@@ -334,7 +350,7 @@ var Table = []Entry{
 	{
 		Method:    "Repos.ListRepos",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/user/repos",
+		Exercises: "GET /api/v1/user/repos; under an owner scope GET /api/v1/users/{owner}/repos, which resolves a user and an organization alike and pages before it drops the rows the caller has no unit access to, so its walk continues while the pages read cover fewer rows than X-Total-Count",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
@@ -482,8 +498,8 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.ListMyPRs",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/merge_requests?scope=created_by_me; under an owner scope GET /api/v4/groups/{owner}/merge_requests with the open state, which answers 404 for a user's own namespace; on either route, GET /api/v4/projects/{id} once for each distinct fork a row's source_project_id names",
-		Requests:  Requests{Min: 1, Max: 1, PerItemCeiling: 1, Paged: true},
+		Exercises: "GET /api/v4/merge_requests?scope=created_by_me; under an owner scope GET /api/v4/groups/{owner}/merge_requests with the open state, which answers 404 for a user's own namespace; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page; on either route, GET /api/v4/projects/{id} once for each distinct fork a row's source_project_id names",
+		Requests:  Requests{Min: 1, Max: 2, PerItemCeiling: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -540,6 +556,11 @@ var Table = []Entry{
 				Field: "error, owner unresolved",
 				Kind:  CannotSupply,
 				Says:  "404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds",
+			},
+			{
+				Field: "Items[], from an archived repository under an owner scope",
+				Kind:  CannotSupply,
+				Says:  "none: the group route's non_archived defaults to true",
 			},
 		},
 	},
@@ -1653,15 +1674,33 @@ var Table = []Entry{
 	{
 		Method:    "Checks.ListRuns",
 		Product:   GitHub,
-		Exercises: "GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address",
+		Exercises: "GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address; a run whose conclusion is action_required, a fork's run waiting for a maintainer's approval with no job run, reads pending, the verdict the Gitea family gives the same wait",
 		Requests:  Requests{Min: 1, Max: 3, Paged: true},
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "Items[].Ref.Number",
+				Kind:  DiffersInShape,
+				Says:  "run_number, numbered per workflow rather than per repository, so two runs of one repository can share it",
+			},
+			{
+				Field: "Next, under a since bound",
+				Kind:  DiffersInShape,
+				Says:  "the route serves a filtered listing through the first whole page that reaches its 1,000th run, so up to one page less one row more than 1,000 arrives, and answers the page after it with no rows and total_count 0, so a walk ends on that page with no continuation and carries result_window where total_count states more",
+			},
+		},
 		Sends: []Sent{
 			{
 				Field: "head_sha",
 				Where: InQuery,
 				Holds: HoldsNothing,
 				Says:  "absent: the listing answers every run of the repository, and the head filter the re-run sends on the same route would narrow it to one commit's runs",
+			},
+			{
+				Field: "created",
+				Where: InQuery,
+				Holds: HoldsSinceBound,
+				Says:  "under a since bound, >= the bound at whole seconds, the precision the route stamps created_at at, and the rows stamped before the bound's second are dropped; absent without one",
 			},
 		},
 	},
@@ -1678,6 +1717,11 @@ var Table = []Entry{
 				Says:  "ref string: a branch on 2 of 5 and a refs/ path on 3, which merge-request and workload pipelines run for",
 			},
 			{
+				Field: "Items[].StartedAt",
+				Kind:  CannotSupply,
+				Says:  "zero: the listing row carries no started_at, which only the single-pipeline route answers, and the listing adds no request for it",
+			},
+			{
 				Field: "Successor",
 				Kind:  CannotSupply,
 				Says:  "nil: no successor key",
@@ -1690,12 +1734,18 @@ var Table = []Entry{
 				Holds: HoldsNothing,
 				Says:  "absent: the listing answers every run of the repository, and the head filter the re-run sends on the same route would narrow it to one commit's runs",
 			},
+			{
+				Field: "created_after",
+				Where: InQuery,
+				Holds: HoldsSinceBound,
+				Says:  "under a since bound, one second before the bound at whole seconds, because the filter is strictly after, and the rows created before the bound's second are dropped; absent without one",
+			},
 		},
 	},
 	{
 		Method:    "Checks.ListRuns",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor; under a since bound no time filter, the route declaring none, so each page's rows created before the bound's second are dropped; the route answers runs by id descending, or from v28 by repository index descending, co-monotonic with id (models/actions/run_list.go, FindRunOptions.ToOrders), and stamps a run's creation once, at insert (models/actions/run.go, its Created field), so a page whose every run was created more than a minute before the bound, the step a host clock can take back between two inserts, ends the walk with no continuation",
 		Requests:  Requests{Min: 1, Max: 2, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
@@ -1703,6 +1753,16 @@ var Table = []Entry{
 				Field: "Items[].Name",
 				Kind:  DiffersInSpelling,
 				Says:  "path string, the workflow file and its ref, on 6 of 6; no name key among the 26 the route answers",
+			},
+			{
+				Field: "Items[].CreatedAt, before v28",
+				Kind:  CannotSupply,
+				Says:  "zero: the route's run object carries no created_at before v28, so a page read under a since bound is refused as run_undated rather than answered as holding no run",
+			},
+			{
+				Field: "Items[].UpdatedAt, before v28",
+				Kind:  CannotSupply,
+				Says:  "zero: the route's run object carries no updated_at before v28",
 			},
 		},
 		Sends: []Sent{
@@ -1731,7 +1791,7 @@ var Table = []Entry{
 	{
 		Method:    "Checks.ListRuns",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/actions/runs, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, since the route sends no paging header and an instance whose maximum was lowered after the connection read it still serves a page of its own maximum, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/actions/runs, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, since the route sends no paging header and an instance whose maximum was lowered after the connection read it still serves a page of its own maximum, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor; under a since bound no time filter, the route declaring none, so each page's rows created before the bound's second are dropped; the route answers runs by id descending (models/actions/run_list.go, FindRunOptions.ToOrders) and stamps a run's creation once, at insert (models/actions/run.go, its Created field), so a page whose every run was created more than a minute before the bound, the step a host clock can take back between two inserts, ends the walk with no continuation",
 		Requests:  Requests{Min: 1, Max: 2, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
@@ -1841,8 +1901,8 @@ var Table = []Entry{
 	{
 		Method:    "Issues.ListMyIssues",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/issues?scope=created_by_me, or GET /api/v4/groups/{owner}/issues under an owner scope, both with the open state and the label detail parameter",
-		Requests:  Requests{Min: 1, Max: 1, Paged: true},
+		Exercises: "GET /api/v4/issues?scope=created_by_me, or GET /api/v4/groups/{owner}/issues under an owner scope, both with the open state and the label detail parameter; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page",
+		Requests:  Requests{Min: 1, Max: 2, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1864,6 +1924,11 @@ var Table = []Entry{
 				Field: "error, owner unresolved",
 				Kind:  CannotSupply,
 				Says:  "404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds",
+			},
+			{
+				Field: "Items[], from an archived repository",
+				Kind:  CannotSupply,
+				Says:  "none on either route: non_archived defaults to true",
 			},
 		},
 	},
@@ -2181,7 +2246,7 @@ var Table = []Entry{
 			{
 				Field: "Remaining",
 				Kind:  DiffersInShape,
-				Says:  "two pools, one per surface",
+				Says:  "the pool the last response drew on, which its X-RateLimit-Resource header names: core after a REST call, graphql after a document",
 			},
 			{
 				Field: "RotationCursor",
@@ -2382,4 +2447,43 @@ var Table = []Entry{
 		Requests:  Requests{Min: 1, Max: 2, Paged: true},
 		Support:   Supported,
 	},
+}
+
+// Throttle is one answer a product sends for its rate limit, which every
+// operation on that product reports as KindRateLimited, with RetryAfter from the
+// Retry-After header where the answer carries one.
+//
+// Header is the response header that makes the status a throttle, empty where
+// the status alone does, and Value the value it carries, empty where any does.
+type Throttle struct {
+	Product Product
+	Header  string
+	Value   string
+	Says    string
+	Status  int
+}
+
+// Throttles is every rate-limit answer the families map.
+var Throttles = []Throttle{
+	{
+		Product: GitHub, Status: 403, Header: "X-RateLimit-Remaining", Value: "0",
+		Says: "the primary or a secondary limit spent, with no budget left in the window",
+	},
+	{
+		Product: GitHub, Status: 403, Header: "Retry-After",
+		Says: "a secondary limit, whatever X-RateLimit-Remaining reads, " +
+			"as [GitHub documents it](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)",
+	},
+	{Product: GitHub, Status: 429, Says: "a primary or a secondary limit"},
+	{Product: GitLab, Status: 429, Says: "a rate limit"},
+	{
+		Product: Gitea, Status: 403, Header: "RateLimit-Remaining", Value: "0",
+		Says: "a rate limit with no budget left in the window",
+	},
+	{Product: Gitea, Status: 429, Says: "a rate limit"},
+	{
+		Product: Forgejo, Status: 403, Header: "RateLimit-Remaining", Value: "0",
+		Says: "a rate limit with no budget left in the window",
+	},
+	{Product: Forgejo, Status: 429, Says: "a rate limit"},
 }

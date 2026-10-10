@@ -2,15 +2,18 @@ package gitlab
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/internal/spec"
 )
 
 // TestMapperAnswersOneCellPerStatus holds this family's error mapping to one case per
@@ -72,22 +75,15 @@ func TestMapperAnswersOneCellPerStatus(t *testing.T) {
 			code:   forgeapi.CodeRepoOrPRNotVisible,
 		},
 		{
-			name:   "404_on_the_cross_repository_pull_requests_is_the_unresolved_owner",
-			op:     opListMyPRs,
+			name:   "404_on_a_cross_repository_list_is_the_union_too_and_an_owner_is_the_scoped_requests",
+			op:     "ListMyPRs",
 			status: http.StatusNotFound,
 			kind:   forgeapi.KindNotFound,
-			code:   forgeapi.CodeOwnerUnresolved,
-		},
-		{
-			name:   "404_on_the_cross_repository_issues_is_the_unresolved_owner",
-			op:     opListMyIssues,
-			status: http.StatusNotFound,
-			kind:   forgeapi.KindNotFound,
-			code:   forgeapi.CodeOwnerUnresolved,
+			code:   forgeapi.CodeRepoOrPRNotVisible,
 		},
 		{
 			name:   "400_on_a_cross_repository_list_is_upstream_and_never_guessed",
-			op:     opListMyPRs,
+			op:     "ListMyPRs",
 			status: http.StatusBadRequest,
 			kind:   forgeapi.KindUpstream,
 		},
@@ -380,15 +376,11 @@ func TestTheOlderMergeStatusIsMappedRatherThanDropped(t *testing.T) {
 	}
 }
 
-// TestTheDocumentsSelectNoDeprecatedFieldOrMember holds both documents against the
-// schema's own deprecation flags, which is the gate a document has to clear before it
-// can ship: a deprecated field still ANSWERS, so nothing about executing it fails, and
-// the flag is the only warning there is.
-//
-// It is also the case that records why no merge-train field is selected. The train
-// connection and its cars are what a queue verdict on this product would have to read,
-// and both carry a deprecation reason, so the queue state is the neutral member rather
-// than a value read from an experiment.
+// TestTheDocumentsSelectNoDeprecatedFieldOrMember holds both pull-request documents
+// against the schema's own deprecation flags: a deprecated field still answers, so the
+// flag is the only warning there is. It also records why no merge-train field is
+// selected: the train connection and its cars, which a queue verdict would read, are
+// both deprecated, so the queue state is the neutral member.
 func TestTheDocumentsSelectNoDeprecatedFieldOrMember(t *testing.T) {
 	declared := readDeclaredEnums(t)
 	if len(declared.Fields) == 0 {
@@ -729,6 +721,25 @@ func TestThePushAffordanceReadsTheRoleInteger(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := pushSupport(test.in); got != test.want {
 				t.Errorf("pushSupport(%+v) = %v, want %v", test.in, got, test.want)
+			}
+		})
+	}
+}
+
+// TestEveryThrottleTheSpecNamesIsARateLimit holds this family's mapping to the
+// expectation table's rate-limit answers for the products it serves.
+func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
+	for _, th := range spec.Throttles {
+		if th.Product != spec.GitLab {
+			continue
+		}
+		t.Run(string(th.Product)+"_"+strconv.Itoa(th.Status)+"_"+th.Header, func(t *testing.T) {
+			header := http.Header{}
+			if th.Header != "" {
+				header.Set(th.Header, cmp.Or(th.Value, "60"))
+			}
+			if kind, code := mapper("ListRuns", th.Status, header, ""); kind != forgeapi.KindRateLimited || code != "" {
+				t.Errorf("mapper(ListRuns, %d, %v) = %v, %q, want %v: %s", th.Status, header, kind, code, forgeapi.KindRateLimited, th.Says)
 			}
 		})
 	}

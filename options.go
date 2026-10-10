@@ -484,9 +484,10 @@ func WithAttemptObserver(wrap func(next http.RoundTripper) http.RoundTripper) Op
 	return optionFunc(func(s *Settings) { s.AttemptObserver = wrap })
 }
 
-// WithLogger routes the library's own lines. The library retries, refreshes
-// credentials and follows redirects, so it emits as part of its job rather than
-// returning diagnostics and staying silent.
+// WithLogger routes the library's own lines, the transport's address and port
+// refusals included. The library retries, refreshes credentials and follows
+// redirects, so it emits as part of its job rather than returning diagnostics and
+// staying silent.
 //
 // Default: slog.Default.
 func WithLogger(l *slog.Logger) Option {
@@ -524,7 +525,7 @@ func WithPlaintextHTTP(allowed bool) Option {
 }
 
 // ListSettings is the resolved per-call option state for a list operation.
-type ListSettings struct {
+type ListSettings struct { //nolint:govet // fieldalignment: each field was appended in turn, and the order is API for an unkeyed composite literal
 	// After is the continuation to resume from, empty for a first page.
 	After Cursor
 	// Owner is the owner scope [WithOwner] named, empty where it named none.
@@ -542,10 +543,17 @@ type ListSettings struct {
 	StateSet bool
 	// OwnerSet reports that the caller named an owner scope, whatever it named,
 	// for the reason StateSet exists: an empty owner is refused, and without
-	// this field it resolves to the same value as no owner at all. The
-	// cross-repository lists read Owner where it is true; every other list
-	// refuses whenever it is true.
+	// this field it resolves to the same value as no owner at all. The lists an
+	// owner scopes read Owner where it is true; every other list refuses
+	// whenever it is true.
 	OwnerSet bool
+	// Since is the creation bound [WithSince] named, in UTC at whole seconds with no
+	// monotonic reading, the zero time where it named none.
+	Since time.Time
+	// SinceSet reports that the caller named a creation bound, for the reason
+	// OwnerSet exists. The run listing reads Since where it is true; every other
+	// list refuses whenever it is true.
+	SinceSet bool
 }
 
 // ListOption configures one list call. Like [Option] it cannot be implemented
@@ -555,13 +563,13 @@ type ListOption interface {
 }
 
 // ResolveList applies defaults and then every list option in order, and refuses
-// rather than clamps, with a [*Error]: [CodePageBoundInvalid] for a page bound
-// that is not positive, [CodeListStateInvalid] for [ListStateUnknown],
-// [CodeListOwnerInvalid] for an owner outside the form [WithOwner] states, and
-// [CodeCursorInvalid] for a [WithAfter] cursor that is not well formed. It is
-// not told which list it resolves for, so it records a named filter or owner in
-// [ListSettings.StateSet] and [ListSettings.OwnerSet]; the family method then
-// refuses one its list cannot take, under the filter's or the owner's code.
+// rather than clamps, with a [*Error]: [CodePageBoundInvalid] for a page bound that
+// is not positive, [CodeListStateInvalid] for [ListStateUnknown],
+// [CodeListOwnerInvalid] for an owner outside the form [WithOwner] states,
+// [CodeListSinceInvalid] for the zero time, and [CodeCursorInvalid] for a malformed
+// [WithAfter] cursor. It is not told which list it resolves for, so it records a
+// named filter, owner or bound in the matching Set field, and the family method
+// refuses one its list cannot take, under that option's code.
 func ResolveList(opts ...ListOption) (ListSettings, error) {
 	s := ListSettings{PageBound: DefaultPageBound, State: ListStateOpen}
 	for _, o := range opts {
@@ -576,6 +584,8 @@ func ResolveList(opts ...ListOption) (ListSettings, error) {
 		return ListSettings{}, localError(CodeListStateInvalid, "list state filter is the unknown member")
 	case s.OwnerSet && !ownerInForm(s.Owner):
 		return ListSettings{}, localError(CodeListOwnerInvalid, "owner is outside the shared form")
+	case s.SinceSet && s.Since.IsZero():
+		return ListSettings{}, localError(CodeListSinceInvalid, "since bound is the zero time")
 	}
 	if err := ValidateCursor(s.After); err != nil {
 		return ListSettings{}, err
@@ -583,14 +593,13 @@ func ResolveList(opts ...ListOption) (ListSettings, error) {
 	return s, nil
 }
 
-// ValidateOwner refuses, without a request, an owner the family's
-// cross-repository lists would refuse under [WithOwner]: one outside the shared
-// form, and a path on a family whose owner is one name. Only GitLab takes a
-// path, a group's full path; [FamilyUnknown] takes the single-name rule, as
-// [ValidateSelector] gives it the single-separator one.
-//
-// A failure is [CodeListOwnerInvalid], the code the list answers, so an owner
-// stored for later calls can be refused when it is stored.
+// ValidateOwner refuses, without a request, an owner the family's lists would refuse
+// under [WithOwner], with [CodeListOwnerInvalid], the code the list answers, so a
+// stored owner can be refused when it is stored. The shared form is one or more
+// segments of ASCII letters, digits, '-', '_' and '.', joined by '/', none empty, "."
+// or "..", at most 255 bytes. Only GitLab takes a path, a group's full path, and
+// [FamilyUnknown] takes the single-name rule, as [ValidateSelector] gives it the
+// single-separator one.
 func ValidateOwner(family Family, owner string) error {
 	if !ownerInForm(owner) {
 		return localError(CodeListOwnerInvalid, "owner is outside the shared form")
@@ -645,8 +654,8 @@ func WithPageBound(n int) ListOption {
 // WithAfter resumes a list from the opaque cursor a previous [Page] returned.
 // [ResolveList] refuses a malformed one with [CodeCursorInvalid], the check
 // [ValidateCursor] makes without a request. A call differing from the minting
-// one in family, API base, operation, repository, state filter or scope refuses
-// it with that code before any request. A page-numbered one is also refused at
+// one in family, API base, operation, repository, state filter, scope or since
+// bound refuses it with that code before any request. A page-numbered one is also refused at
 // another page bound; an upstream connection position resumes at any bound.
 //
 // Default: the first page.
@@ -669,27 +678,31 @@ func WithState(s ListState) ListOption {
 	})
 }
 
-// WithOwner scopes a cross-repository list to every OPEN item under one owner,
-// whoever authored it, in place of what the credential authored; the two scopes
-// are exclusive. The owner is a user or organization login on GitHub, Gitea and
-// Forgejo and a group's full path on GitLab, subgroups included, and it is never
-// resolved by a read of its own: an unresolved owner answers [CodeOwnerUnresolved],
-// or an empty page where the operation's per-forge block says the product cannot
-// tell, so the call stays one request per page.
+// WithOwner scopes [PullRequests.ListMyPRs] and [Issues.ListMyIssues] to every OPEN
+// item under one owner, whoever authored it, and [Repos.ListRepos] to the repositories
+// it owns: a login, or on GitLab a group's full path with its subgroups. An owner the
+// instance does not resolve answers [CodeOwnerUnresolved], or an empty page where the
+// per-forge block says so. Other lists, and an owner outside the form [ValidateOwner]
+// checks, are refused before any request with [CodeListOwnerInvalid].
 //
-// Only [PullRequests.ListMyPRs] and [Issues.ListMyIssues] take it; every other
-// list refuses it before any request with [CodeListOwnerInvalid], as both do an
-// owner outside the shared form. The form is one or more segments of ASCII
-// letters, digits, '-', '_' and '.', joined by '/', none empty, "." or "..", at
-// most 255 bytes, with '/' accepted on GitLab alone; [ValidateOwner] answers the
-// same refusal without a call. It is checked rather than escaped because the
-// owner reaches a search string whose grammar this library does not own. An
-// empty owner sets [ListSettings.OwnerSet] and is refused.
-//
-// Default: the credential's own authorship.
+// Default: the credential's own authorship, and every repository it reaches.
 func WithOwner(owner string) ListOption {
 	return listOptionFunc(func(ls *ListSettings) {
 		ls.Owner = owner
 		ls.OwnerSet = true
+	})
+}
+
+// WithSince bounds [Checks.ListRuns] to the runs created at or after t, read at
+// whole seconds: GitHub, Gitea and Forgejo stamp a run's creation at whole seconds,
+// so a run created in t's own second is answered. Every other list refuses it before
+// any request with [CodeListSinceInvalid], as [ResolveList] does the zero time. A
+// continuation names the bound it was minted under, so a walk resumes only under it.
+//
+// Default: no bound, every run of the repository.
+func WithSince(t time.Time) ListOption {
+	return listOptionFunc(func(ls *ListSettings) {
+		ls.Since = t.UTC().Truncate(time.Second)
+		ls.SinceSet = true
 	})
 }

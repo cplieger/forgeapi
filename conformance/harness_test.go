@@ -155,6 +155,9 @@ type subject struct {
 	// owner scopes the cross-repository lists to one owner's open items; empty is
 	// the viewer's own.
 	owner string
+	// since bounds the run listing to the runs created at or after it; the zero
+	// time is no bound.
+	since time.Time
 	repo  forgeapi.RepoRef
 	pr    forgeapi.PRRef
 	issue forgeapi.IssueRef
@@ -172,6 +175,7 @@ func canonicalSubject(p spec.Product) subject {
 		repo:    repoRef(p),
 		pr:      prRef(p),
 		issue:   forgeapi.IssueRef{Number: issueNumber},
+		since:   createdAt.Add(-time.Hour),
 	}
 }
 
@@ -188,6 +192,7 @@ func liveSubject(p spec.Product) subject {
 	}
 	s.ref = env(p, "REF", defaultLiveRef(p))
 	s.pr, s.prUnnamed, s.prInvalid = livePullRequest(p)
+	s.since = time.Time{}
 	return s
 }
 
@@ -499,6 +504,22 @@ func wanted(s *spec.Sent, sub *subject) (string, bool) {
 		return jsonOf(sub.ref), true
 	case spec.HoldsLabelNames:
 		return jsonOf([]string{labelName}), true
+	case spec.HoldsSinceBound:
+		return sinceOnTheWire(sub.product, sub.since)
+	}
+	return "", false
+}
+
+// sinceOnTheWire is a since bound as each product's run route takes it, which the
+// table's Says states: GitHub's created search syntax inclusive at whole seconds, and
+// GitLab's created_after, strictly after, one second early.
+func sinceOnTheWire(p spec.Product, since time.Time) (string, bool) {
+	floor := since.UTC().Truncate(time.Second)
+	switch p {
+	case spec.GitHub:
+		return ">=" + floor.Format("2006-01-02T15:04:05") + "+00:00", true
+	case spec.GitLab:
+		return floor.Add(-time.Second).Format(time.RFC3339), true
 	}
 	return "", false
 }

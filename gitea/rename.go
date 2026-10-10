@@ -44,7 +44,7 @@ func (a *address) route(rest string) string {
 // refusal carrying it; an answer cut before its body arrived leaves no response to
 // read the hop from, so it is the transport failure, and a retry names the move.
 func (c *Client) readAt(ctx context.Context, op string, a *address, rest string, query url.Values, out any) error {
-	resp, err := c.get(ctx, op, a.route(rest), query, out)
+	resp, err := c.get(ctx, op, a.route(rest), query, 0, out)
 	if resp == nil || !resp.Redirected || transport.ContextSentinel(err) != nil {
 		return err
 	}

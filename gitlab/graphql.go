@@ -22,8 +22,11 @@ const documentPath = "/api/graphql"
 // [forgeapi.ValidateCursor] admits, so it crosses the surface base64url encoded.
 const documentPrefix = "g"
 
-// mergeRequestFields is the node selection both documents share, all a normalized
-// pull request needs from this product. `diffHeadSha` is the head a merge and a
+// varFullPath is the variable every document addresses its project or namespace by.
+const varFullPath = "fullPath"
+
+// mergeRequestFields is the node selection both pull-request documents share, all a
+// normalized pull request needs from this product. `diffHeadSha` is the head a merge and a
 // re-run pin to; `headPipeline.sha` is a merged-results SHA, not the branch's.
 // `labels` is a connection of `title`s, one page of a set this product does not cap,
 // measured by `count` and `hasNextPage` ([Client.labelCut]). `headPipeline.status` is
@@ -58,10 +61,10 @@ const mergeRequestFields = `
 // document is one named GraphQL document this family ships: its operation name, its
 // text and the variables its callers fill.
 //
-// There are TWO rather than one, because their field sets differ at the collection
-// they select: a read must not pay a list's cost and a list must not pay a read's.
-// A document is not an operation, and the operations that reach each are named in
-// its own doc comment below.
+// The two pull-request documents are separate because their field sets differ at the
+// collection they select: a read must not pay a list's cost and a list must not pay
+// a read's. A document is not an operation, and the operations that reach each are
+// named in its own doc comment below.
 type document struct {
 	name string
 	text string
@@ -106,29 +109,30 @@ var prRead = document{
 `,
 }
 
-// docAcceptance is the ONE bounded question a connection asks its instance at setup:
-// does this schema carry every field the two documents above select. Its answer is
-// what decides whether this connection reads documents or REST, so no operation has
-// to discover it and every operation keeps an exact price.
-//
-// It is built FROM the shared node selection rather than from a list of field names
-// beside it, so a selection that changes cannot leave the question asking about the
-// old one, and the two arguments the list document passes as variables are passed
-// here as literals so that their names and the state member are ruled on too.
-//
-// It resolves NOTHING. The project selector is empty, so the project member is null
-// and no merge request, label or pipeline is read, while validation still rules on
-// every field the selection names. Measured anonymously against gitlab.com on
-// 2026-09-20: 68 bytes of answer at a complexity of 53 against that instance's own
-// limit of 200, and the same question carrying one field the schema does not declare
-// answered 200 with an undefinedField error and no data, which is the refusal
-// [Client.refuseDocument] already classifies.
-//
-// Introspection is not the question on this product, which is what makes this the
-// smallest equivalent rather than a second choice. Measured the same day: a NAMED
-// operation cannot select the introspection field at all, answering undefinedField
-// for __type on the Query type, and an unnamed one is answered with the whole
-// schema, 8.2 MB of it, whatever the query asked for.
+// ownerLookup resolves an owner named by digits alone, which every namespace route of
+// this product reads as a numeric id (lib/api/helpers.rb find_group,
+// app/finders/user_finder.rb), to the ids those routes take. Its callers are the
+// owner-scoped lists. Groups and users share one namespace of paths, so at most one
+// member answers. It is sent on a connection whose other documents are refused too,
+// because no REST route resolves such a name.
+var ownerLookup = document{
+	name: "OwnerLookup",
+	text: `query OwnerLookup($fullPath: ID!, $username: String!) {
+  group(fullPath: $fullPath) { id }
+  user(username: $username) { id }
+  queryComplexity { score limit }
+}
+`,
+}
+
+// docAcceptance is the ONE bounded question a connection asks at setup: does this
+// schema carry every field, argument and member the two pull-request documents above
+// select (their variables are literals here, so those are ruled on too). The answer
+// decides documents or REST for the connection's life. The empty project selector
+// resolves nothing while validation still rules on every field: 68 bytes at complexity
+// 53 of 200 on gitlab.com, and an undeclared field answers 200 undefinedField with no
+// data, the refusal [Client.refuseDocument] classifies. Introspection cannot ask it: a
+// named operation cannot select __type, and an unnamed one answers the 8.2 MB schema.
 var docAcceptance = document{
 	name: "DocumentAcceptance",
 	text: `query DocumentAcceptance {
@@ -194,10 +198,13 @@ type docError struct {
 }
 
 // docResult is what one document execution answered beside the decoded payload: the
-// complexity the endpoint charged, and whether data arrived BESIDE errors, which is
-// the partial success the caller marks rather than truncating or failing.
+// complexity the endpoint charged, the real status, and whether data arrived BESIDE
+// errors, which is the partial success the caller marks rather than truncating or
+// failing. Refusal is the first envelope error's message, quoted, on that answer.
 type docResult struct {
+	Refusal string
 	Cost    int
+	Status  int
 	Partial bool
 }
 
@@ -243,12 +250,13 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	if err := transport.Decode(env.Data, out); err != nil {
 		return docResult{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), status)
 	}
-	result := docResult{Cost: complexityOf(out), Partial: len(env.Errors) > 0}
+	result := docResult{Cost: complexityOf(out), Status: status, Partial: len(env.Errors) > 0}
 	if result.Cost > 0 {
 		c.core.Price(result.Cost)
 	}
 	if result.Partial {
 		c.countEnvelope(env.Errors)
+		result.Refusal = resp.Quote(env.Errors[0].Message)
 	}
 	return result, nil
 }

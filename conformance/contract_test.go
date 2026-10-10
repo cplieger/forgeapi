@@ -66,9 +66,13 @@ type operation struct {
 	// its default answer. A dedicated test asserts each one, and the
 	// departure-coverage gate reads them beside the fields expect declares.
 	errorArms []string
-	method    string
-	prelude   string
-	mutation  bool
+	// rowArms are row fields the recorded fixture was trimmed of, asserted by a
+	// dedicated test over the fixture's own row carrying the key the product's
+	// published shape names.
+	rowArms  []string
+	method   string
+	prelude  string
+	mutation bool
 	// readsPR marks a read addressed at the subject's pull request, which a live
 	// run can make only where the lane says which pull request its subject holds.
 	readsPR bool
@@ -87,6 +91,22 @@ const scopeInsufficient = "error, scope insufficient"
 // once a request on the connection was refused for a permission the credential
 // lacks.
 const afterScopeRefusal = "Caps[read_merge_state], after a scope refusal"
+
+// The table's fields for what a list answers under an option its default case does
+// not pass, or on an older release than the recorded one: the run listing's walk under
+// a since bound and its rows' times before v28, a repository listing row's clone URL
+// and push affordance under an owner scope, and the cross-repository lists' rows from
+// archived repositories.
+const (
+	nextUnderSince       = "Next, under a since bound"
+	createdBeforeV28     = "Items[].CreatedAt, before v28"
+	updatedBeforeV28     = "Items[].UpdatedAt, before v28"
+	runStartedAt         = "Items[].StartedAt"
+	cloneUnderOwner      = "Items[].CloneURL, under an owner scope"
+	canPushUnderGroup    = "Items[].Affordances.CanPush, under a group owner scope"
+	archivedRows         = "Items[], from an archived repository"
+	archivedRowsForOwner = "Items[], from an archived repository under an owner scope"
+)
 
 // runsBeyondTheFixturePage are the products whose run fixture serves one row of a
 // larger stated total, so the case meets a page the total says is not the last and
@@ -110,6 +130,12 @@ const (
 	runWeb      = "https://forge.example/example/example/actions/runs/1"
 	pipelineWeb = "https://forge.example/example/example/-/pipelines/1"
 )
+
+// productOf is the product each column's connection names.
+var productOf = map[spec.Product]forgeapi.Product{
+	spec.GitHub: forgeapi.ProductGitHub, spec.GitLab: forgeapi.ProductGitLab,
+	spec.Gitea: forgeapi.ProductGitea, spec.Forgejo: forgeapi.ProductForgejo,
+}
 
 // runWebURL is the page one product's fixture names for the canonical run. The
 // value is the forge's own text, so it is per product where the products' routes
@@ -199,8 +225,9 @@ var operations = []operation{
 		},
 	},
 	{
-		method: "Repos.ListRepos",
-		zero:   forgeapi.Page[forgeapi.Repository]{},
+		method:    "Repos.ListRepos",
+		zero:      forgeapi.Page[forgeapi.Repository]{},
+		errorArms: []string{ownerUnresolved, cloneUnderOwner, canPushUnderGroup},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.Repos)
 			if !ok {
@@ -251,7 +278,7 @@ var operations = []operation{
 	{
 		method:    "PullRequests.ListMyPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
-		errorArms: []string{ownerUnresolved, scopeInsufficient},
+		errorArms: []string{ownerUnresolved, scopeInsufficient, archivedRowsForOwner},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -438,18 +465,24 @@ var operations = []operation{
 		},
 	},
 	{
-		method: "Checks.ListRuns",
-		zero:   runPageZero(),
+		method:    "Checks.ListRuns",
+		zero:      runPageZero(),
+		errorArms: []string{nextUnderSince},
+		rowArms:   []string{"Items[].Ref.Number", "Items[].Trigger", createdBeforeV28, updatedBeforeV28, runStartedAt},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			if _, ok := c.(forgeapi.Checks); !ok {
 				return nil, roleAbsent("Checks")
 			}
-			return callListRuns(ctx, c, s.repo)
+			if s.since.IsZero() {
+				return callListRuns(ctx, c, s.repo)
+			}
+			return callListRuns(ctx, c, s.repo, forgeapi.WithSince(s.since))
 		},
 		items: func(got any) int { return reflectedLen(reflected(got, "Items")) },
 		expect: func(p spec.Product, got any) []check {
 			row := firstReflected(reflected(got, "Items"))
 			return []check{
+				eq("Items[].Ref.ID", fieldValue(reflect.ValueOf(fieldValue(row, "Ref")), "ID"), int64(1)),
 				eq("Items[].Repo", fieldValue(row, "Repo"), repoRef(p)),
 				eq("Items[].Name", fieldValue(row, "Name"), runName),
 				eq("Items[].Branch", fieldValue(row, "Branch"), sourceBranch),
@@ -489,7 +522,7 @@ var operations = []operation{
 	{
 		method:    "Issues.ListMyIssues",
 		zero:      forgeapi.Page[forgeapi.Issue]{},
-		errorArms: []string{ownerUnresolved},
+		errorArms: []string{ownerUnresolved, archivedRows},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			if _, ok := c.(forgeapi.Issues); !ok {
 				return nil, roleAbsent("Issues")
@@ -554,9 +587,10 @@ var operations = []operation{
 			}
 			return r.ConnectionCaps(ctx)
 		},
-		expect: func(_ spec.Product, got any) []check {
+		expect: func(p spec.Product, got any) []check {
 			g := got.(forgeapi.ConnectionCaps)
 			return []check{
+				eq("Product", g.Product, productOf[p]),
 				absentBy("Caps[rerun_checks]", g.Caps[forgeapi.CapRerunChecks],
 					forgeapi.SupportYes, forgeapi.SupportUnknown,
 					map[spec.Product]any{spec.Forgejo: forgeapi.SupportNo}),

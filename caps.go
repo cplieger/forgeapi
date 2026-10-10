@@ -83,15 +83,9 @@ type EvidenceSource string
 const EvidenceUnknown EvidenceSource = ""
 
 // String returns the member's wire spelling: each of the seven steps as it is
-// spelled, and "unknown" for [EvidenceUnknown], whose value is empty.
-//
-// It exists for that one member. The other fourteen enumerations on this surface
-// render through their own String methods, all fourteen of them defined types
-// over int; of the FOUR string-based types this is the only one with a member
-// whose value is not its spelling, since [Cursor] and [RotationCursor] are opaque
-// by contract and a [Capability] member IS its spelling. So without this method
-// an [Evidence] nobody populated would format through %s or %v as the empty
-// string, which on the wire is indistinguishable from an omitted key.
+// spelled, and "unknown" for [EvidenceUnknown], whose value is empty. It exists for
+// that one member: without it an [Evidence] nobody populated would format through %s
+// or %v as the empty string, which on the wire is indistinguishable from an omitted key.
 func (s EvidenceSource) String() string {
 	if s == EvidenceUnknown {
 		return nameUnknown
@@ -145,6 +139,31 @@ const (
 	EvidenceDefault EvidenceSource = "default"
 )
 
+// Product is the forge product an instance runs.
+type Product int
+
+// The Product members.
+const (
+	// ProductUnknown is the zero value, which no successful detection answers.
+	ProductUnknown Product = iota
+	// ProductGitHub is github.com or GitHub Enterprise Server.
+	ProductGitHub
+	// ProductGitLab is gitlab.com or a self-managed GitLab.
+	ProductGitLab
+	// ProductGitea is Gitea.
+	ProductGitea
+	// ProductForgejo is Forgejo.
+	ProductForgejo
+)
+
+// String returns the member's spelling: "unknown", "github", "gitlab", "gitea"
+// or "forgejo".
+func (p Product) String() string {
+	return nameOf([]string{nameUnknown, "github", "gitlab", "gitea", "forgejo"}, p)
+}
+
+var _ fmt.Stringer = Product(0)
+
 // ConnectionCaps is what this instance can do, whoever is asking.
 //
 // It is a separate scope from GrantCaps and RepoAffordances because the three
@@ -157,6 +176,10 @@ type ConnectionCaps struct {
 	Caps map[Capability]Support
 	// Ev is the evidence behind each verdict, keyed the same way.
 	Ev map[Capability]Evidence
+	// Product is the product this instance runs, as the detection that
+	// established the family read it, never inferred. It is [ProductUnknown]
+	// only on a zero value.
+	Product Product
 }
 
 // GrantCaps is what this credential can do on this instance. A capability the
@@ -228,9 +251,13 @@ const (
 	CheckUnknown CheckState = iota
 	// CheckPassing means every check that reported succeeded.
 	CheckPassing
-	// CheckFailing means at least one check reported failure.
+	// CheckFailing means at least one check finished with a conclusion that
+	// needs attention: a failure, a timeout, a startup failure, or a check's
+	// request that a person act on its result. Whether it blocks a merge is the
+	// repository's rule.
 	CheckFailing
-	// CheckPending means at least one check is still running and none failed.
+	// CheckPending means at least one check is still running or has not started,
+	// a run waiting for a person to approve it included, and none failed.
 	CheckPending
 	// CheckNeutral means the checks that reported were neutral or skipped. It
 	// is unreachable through one product's rollup field and only visible per

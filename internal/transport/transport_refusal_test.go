@@ -76,6 +76,29 @@ func TestARefusalCarriesTheInstancesOwnWordsForWhatWentWrong(t *testing.T) {
 	}
 }
 
+func TestOnlyTheOwnerStatusOfAnOwnerScopedRequestIsTheUnresolvedOwner(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		status      int
+		ownerStatus int
+		kind        forgeapi.ErrorKind
+		code        string
+	}{
+		{name: "the_owner_status", status: http.StatusNotFound, ownerStatus: http.StatusNotFound, kind: forgeapi.KindNotFound, code: forgeapi.CodeOwnerUnresolved},
+		{name: "another_status_under_an_owner", status: http.StatusForbidden, ownerStatus: http.StatusNotFound, kind: forgeapi.KindForbidden},
+		{name: "the_same_status_with_no_owner", status: http.StatusNotFound, kind: forgeapi.KindNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := refusingConn(t, test.status, `{"message":"refused"}`)
+			_, err := c.Do(t.Context(), &Request{Op: "ListRepos", Method: http.MethodGet, Path: "/repos", OwnerStatus: test.ownerStatus})
+			var fe *forgeapi.Error
+			if !asError(err, &fe) || fe.Kind != test.kind || fe.Code != test.code || fe.Status != test.status {
+				t.Errorf("Do(OwnerStatus %d) over %d = %v, want kind %v code %q at %d", test.ownerStatus, test.status, err, test.kind, test.code, test.status)
+			}
+		})
+	}
+}
+
 func TestOnlyATransientRefusalIsRetryable(t *testing.T) {
 	for _, test := range []struct {
 		name      string

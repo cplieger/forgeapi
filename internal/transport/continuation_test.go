@@ -6,18 +6,19 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/forgeapi"
 )
 
 // pageSettings resolves one list call's options for these cases.
-func pageSettings(t *testing.T, opts ...forgeapi.ListOption) forgeapi.ListSettings {
+func pageSettings(t *testing.T, opts ...forgeapi.ListOption) *forgeapi.ListSettings {
 	t.Helper()
 	set, err := forgeapi.ResolveList(opts...)
 	if err != nil {
 		t.Fatalf("Setup: ResolveList(%v) = %v", opts, err)
 	}
-	return set
+	return &set
 }
 
 // pageRepo is one repository reference spelled as a caller wrote it.
@@ -148,5 +149,36 @@ func TestPageCall_refuses_a_position_another_call_minted(t *testing.T) {
 	var fe *forgeapi.Error
 	if !errors.As(err, &fe) || fe.Code != forgeapi.CodeCursorInvalid {
 		t.Errorf("ResumePosition(%q) on another repository = %v, want code %q", minted, err, forgeapi.CodeCursorInvalid)
+	}
+}
+
+// A since bound is part of the call a continuation names, and a call with no bound
+// keeps the digest it had before the bound existed, so a stored cursor still resumes.
+func TestPageCall_names_the_since_bound_and_keeps_the_unbounded_digest(t *testing.T) {
+	repo := pageRepo("example/repo")
+	call := func(opts ...forgeapi.ListOption) PageCall {
+		return newPageCall(forgeapi.FamilyGitHub, pageConnection, "ListRuns", repo, pageSettings(t, append([]forgeapi.ListOption{forgeapi.WithPageBound(30)}, opts...)...))
+	}
+	const unbounded = forgeapi.Cursor("p2.30.5vHJH7OPCULiGKMB")
+	if got := call().Mint("p", 2); got != unbounded {
+		t.Errorf("Mint under no bound = %q, want %q, the continuation minted before the bound existed", got, unbounded)
+	}
+	monday := time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC)
+	bounded := call(forgeapi.WithSince(monday)).Mint("p", 2)
+	for name, other := range map[string]PageCall{
+		"no_bound":      call(),
+		"another_bound": call(forgeapi.WithSince(monday.Add(time.Second))),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := other.Resume(bounded, "p", 1)
+			var fe *forgeapi.Error
+			if !errors.As(err, &fe) || fe.Code != forgeapi.CodeCursorInvalid || !strings.Contains(fe.Message, "since bound") {
+				t.Errorf("Resume(a continuation minted under %v) = %v, want code %q naming the since bound", monday, err, forgeapi.CodeCursorInvalid)
+			}
+		})
+	}
+	same := call(forgeapi.WithSince(monday.In(time.FixedZone("UTC+2", 7200)).Add(500 * time.Millisecond)))
+	if got, err := same.Resume(bounded, "p", 1); err != nil || !slices.Equal(got, []int{2}) {
+		t.Errorf("Resume under the same second in another zone = %v, %v, want [2]: the bound is read at whole seconds", got, err)
 	}
 }

@@ -77,12 +77,11 @@ func (c *Conn) PostForm(ctx context.Context, op, path string, form url.Values) (
 	for _, h := range c.headers {
 		r.Header.Set(h.Name, h.Value)
 	}
-	//nolint:bodyclose // the close is the defer below, which the analyzer cannot follow across the error branch
+	//nolint:bodyclose // httpx.ReadLimitedBody below always closes the body, which the analyzer cannot follow
 	resp, err := c.mutate.Do(r)
 	if err != nil {
 		return nil, c.transportError(ctx, req, err, started)
 	}
-	defer httpx.DrainClose(resp.Body)
 	body, err := httpx.ReadLimitedBody(resp.Body, maxEndpointBytes)
 	if err != nil {
 		lost := &Response{Header: resp.Header, Status: resp.StatusCode, quote: c.quoter("")}

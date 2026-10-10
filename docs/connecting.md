@@ -38,12 +38,15 @@ A `RepoRef` comes from what the forge answered and is never built by hand. It is
 `Option` configures a client and `ListOption` a single list call. Every option takes a parameter, and none is signalled by its presence alone. Leaving an option out gives its documented default, which `DefaultBudget` and `DefaultRefreshLead` publish.
 
 - `WithMutations(false)` refuses every write with `CodeMutationsDisabled`. The default is `true`, so a client can merge and close pull requests unless you say otherwise.
-- `WithOwner` scopes the cross-repository lists, `ListMyPRs` and `ListMyIssues`, to every open item under one owner, in place of what the credential authored. The owner is a user or an organization, or a group on GitLab. `ValidateOwner` checks an owner against a family's rule before any request.
+- `WithOwner` scopes the cross-repository lists, `ListMyPRs` and `ListMyIssues`, to every open item under one owner, in place of what the credential authored. On `ListRepos` it lists the repositories that owner owns. The owner is a user or an organization, or a group on GitLab. An owner is one or more segments of ASCII letters, digits, `-`, `_` and `.`, joined by `/` on GitLab alone. The library checks this form rather than escaping it, because the owner can reach a search string. `ValidateOwner` checks an owner against a family's rule before any request.
+- `WithSince` bounds `ListRuns` to the runs created at or after a time, read at whole seconds, and every other list refuses it.
 - `WithWireTransport` replaces the wire under a client's own HTTP stack, which is what a test uses to answer requests without a network. It bypasses the address policy, the trust anchor, the redirect policy and the proxy, because those live in the transport it replaces.
 
 ## Capabilities
 
 `ConnectionCaps`, `GrantCaps`, `RepoAffordances` and `ActionState` are four separate scopes. A capability can be disabled for one repository, refused to one credential, or unknown because no safe probe exists, and each scope answers one of those questions.
+
+`ConnectionCaps.Product` names the product the instance runs, so a consumer can tell Gitea from Forgejo, which one family serves.
 
 ## Closing a client
 

@@ -100,11 +100,12 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 		return forgeapi.ConnectionCaps{}, err
 	}
 	rerun, ev := rerunCapability(swagger)
-	caps := forgeapi.ConnectionCaps{
-		Caps: map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
-		Ev:   map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
-	}
 	c.mu.Lock()
+	caps := forgeapi.ConnectionCaps{
+		Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
+		Ev:      map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
+		Product: c.product,
+	}
 	c.caps = &caps
 	c.mu.Unlock()
 	return caps, nil
@@ -238,22 +239,34 @@ func (c *Client) establishFamily(ctx context.Context, doc *swaggerDoc) error {
 	c.mu.Lock()
 	forgejo, namedBy, status := c.forgejo, c.namedBy, c.versionStatus
 	c.mu.Unlock()
-	if forgejo || namedBy != "" || productNamed(doc) {
-		return nil
+	product := witnessedProduct(namedBy, forgejo, doc)
+	if product == forgeapi.ProductUnknown {
+		return c.undetected(ctx, "ConnectionCaps", status,
+			"no second witness of this family on the instance: the version body carries neither product's own marker, no version header names one, and no API document of this family's own names the product")
 	}
-	return c.undetected(ctx, "ConnectionCaps", status,
-		"no second witness of this family on the instance: the version body carries neither product's own marker, no version header names one, and no API document of this family's own names the product")
+	c.mu.Lock()
+	c.product = product
+	c.mu.Unlock()
+	return nil
 }
 
-// productNamed reports whether an API document titles itself with one of the two
-// products this family serves, which is the only thing in it detection reads as a
-// mark. An absent document names nobody, and so does one titled for something else.
-func productNamed(doc *swaggerDoc) bool {
-	if doc == nil {
-		return false
+// witnessedProduct is the product the first witness names, in the evidence order: a
+// version header, then the version body's marker, then the API document's title. An
+// absent document names nobody, and so does one titled for something else.
+func witnessedProduct(namedBy string, marker bool, doc *swaggerDoc) forgeapi.Product {
+	switch {
+	case namedBy == headerForgejoVersion, namedBy == "" && marker:
+		return forgeapi.ProductForgejo
+	case namedBy == headerGiteaVersion:
+		return forgeapi.ProductGitea
+	case doc == nil:
+		return forgeapi.ProductUnknown
+	case strings.Contains(doc.Info.Title, titleForgejo):
+		return forgeapi.ProductForgejo
+	case strings.Contains(doc.Info.Title, titleGitea):
+		return forgeapi.ProductGitea
 	}
-	title := doc.Info.Title
-	return strings.Contains(title, titleGitea) || strings.Contains(title, titleForgejo)
+	return forgeapi.ProductUnknown
 }
 
 // undetected is the refusal a connection whose family cannot be established answers.
@@ -403,9 +416,7 @@ func asForgeError(err error, out **forgeapi.Error) bool {
 // productDetail is the evidence detail for a verdict the product rather than the
 // repository settles. It names the version body, which is this family's own
 // evidence source, and it carries the Gitea compatibility number for the product
-// that reports one: that number rides the evidence rather than a type, because
-// publishing a product enumeration would hand back the axis the capability model
-// rejects.
+// that reports one.
 func (c *Client) productDetail() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

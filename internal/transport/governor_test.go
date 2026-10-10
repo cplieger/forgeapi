@@ -268,6 +268,47 @@ func foldConn(t *testing.T, clock *fakeClock, reads int) *Conn {
 	)
 }
 
+// TestADeferralEndsWhenTheReportedWindowRenews holds the reserve to the window the
+// instance named: a read deferred at the reserve stays deferred until Reset, and from
+// Reset on it is sent, because only a response can report the renewed budget.
+func TestADeferralEndsWhenTheReportedWindowRenews(t *testing.T) {
+	clock := newFakeClock()
+	sent := &atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		sent.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	defer srv.Close()
+	opts := testOptions()
+	opts.Clock = clock.read
+	opts.Signal = func(http.Header) (int, time.Time, bool) { return 1, clock.read().Add(time.Minute), true }
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, forgeapi.WithMutationReserve(1))
+	read := func() error {
+		_, err := c.Do(Call(t.Context(), "ListPRs"), &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"})
+		return err
+	}
+	if err := read(); err != nil {
+		t.Fatalf("Setup: the first read = %v, want nil", err)
+	}
+	clock.advance(59 * time.Second)
+	if err := read(); !IsDeferred(err) {
+		t.Fatalf("a read at the reserve one second before Reset = %v, want the deferral", err)
+	}
+	clock.advance(time.Second)
+	if err := read(); err != nil {
+		t.Fatalf("a read at Reset = %v, want it sent: the window it was deferred against has renewed", err)
+	}
+	if got := sent.Load(); got != 2 {
+		t.Errorf("the instance saw %d request(s), want 2: the deferred read sends nothing and the read at Reset is sent", got)
+	}
+	if got, want := c.BudgetState(), clock.read().Add(time.Minute); got.Remaining != 1 || !got.Reset.Equal(want) {
+		t.Errorf("BudgetState after the read at Reset = (Remaining %d, Reset %v), want (1, %v): its response reports the renewed window", got.Remaining, got.Reset, want)
+	}
+}
+
 func TestAFoldedReadPastTheCountCapWaitsForTheNextInterval(t *testing.T) {
 	clock := newFakeClock()
 	c := foldConn(t, clock, 2)

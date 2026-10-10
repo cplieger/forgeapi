@@ -98,6 +98,15 @@ func (g *governor) observe(header http.Header, signal budgetSignal) {
 	}
 }
 
+// expire forgets an observation whose reported window has renewed. Only a response
+// can report the new budget, so a stale figure left in place would defer every read
+// that could refresh it. The caller holds mu.
+func (g *governor) expire() {
+	if !g.reset.IsZero() && !g.now().Before(g.reset) {
+		g.remaining, g.reset = forgeapi.BudgetRemainingUnknown, time.Time{}
+	}
+}
+
 // price publishes what the call in flight has SENT so far, counted at the wire and
 // carried on that call's own context.
 //
@@ -124,6 +133,7 @@ func (g *governor) price(cost int) {
 func (g *governor) admit(op string) (forgeapi.PartialReason, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.expire()
 	if g.remaining != forgeapi.BudgetRemainingUnknown && g.remaining <= g.reserve {
 		if g.counters.ReadDeferred != nil {
 			g.counters.ReadDeferred(g.family, op)

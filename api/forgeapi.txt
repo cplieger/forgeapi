@@ -85,6 +85,7 @@ const CodeGrantUnsupported = "grant_unsupported"
 const CodeHeaderReserved = "header_reserved"
 const CodeLabelPageTruncated = "label_page_truncated"
 const CodeListOwnerInvalid = "list_owner_invalid"
+const CodeListSinceInvalid = "list_since_invalid"
 const CodeListStateInvalid = "list_state_invalid"
 const CodeMissingSHA = "missing_sha"
 const CodeMutationsDisabled = "mutations_disabled"
@@ -103,6 +104,7 @@ const CodeRepoArchived = "repo_archived"
 const CodeRepoOrPRNotVisible = "repo_or_pr_not_visible"
 const CodeRepoRefInvalid = "repo_ref_invalid"
 const CodeRepoRefStale = "repo_ref_stale"
+const CodeRunUndated = "run_undated"
 const CodeScopeInsufficient = "scope_insufficient"
 const CodeStaleHead = "stale_head"
 const CodeStrategyNotAllowed = "strategy_not_allowed"
@@ -132,6 +134,7 @@ type Connection struct {
 type ConnectionCaps struct {
 	Caps map[Capability]Support
 	Ev map[Capability]Evidence
+	Product Product
 }
 type Core interface {
 	Identity
@@ -301,6 +304,8 @@ type ListSettings struct {
 	State ListState
 	StateSet bool
 	OwnerSet bool
+	Since time.Time
+	SinceSet bool
 }
 type ListState int
 func (l ListState) String() string
@@ -407,6 +412,13 @@ type PartialReason int
 func (p PartialReason) String() string
 const PartialResultWindow PartialReason = iota + 6
 const PartialUnknown PartialReason = iota
+type Product int
+func (p Product) String() string
+const ProductForgejo Product = iota + 4
+const ProductGitHub Product = iota + 1
+const ProductGitLab Product = iota + 2
+const ProductGitea Product = iota + 3
+const ProductUnknown Product = iota
 type PullRequest struct {
 	Ref PRRef
 	Repo RepoRef
@@ -493,15 +505,24 @@ func Resolve(opts ...Option) Settings
 func ResolveList(opts ...ListOption) (ListSettings, error)
 type RotationCursor string
 type Run struct {
+	Ref RunRef
 	Repo RepoRef
 	Name string
 	Branch string
 	HeadSHA string
 	WebURL string
 	CreatedAt time.Time
+	StartedAt time.Time
 	UpdatedAt time.Time
 	State CheckState
+	Trigger RunTrigger
 }
+type RunRef struct {
+	ID int64
+	Number int64
+}
+type RunTrigger int
+func (r RunTrigger) String() string
 type Settings struct {
 	Logger *slog.Logger
 	Credential CredentialSource
@@ -522,6 +543,12 @@ func (s Support) String() string
 const SupportNo Support = iota + 2
 const SupportUnknown Support = iota
 const SupportYes Support = iota + 1
+const TriggerManual RunTrigger = iota + 4
+const TriggerOther RunTrigger = iota + 5
+const TriggerPullRequest RunTrigger = iota + 2
+const TriggerPush RunTrigger = iota + 1
+const TriggerSchedule RunTrigger = iota + 3
+const TriggerUnknown RunTrigger = iota
 func ValidateCursor(c Cursor) error
 func ValidateOwner(family Family, owner string) error
 func ValidateRef(ref string) error
@@ -546,6 +573,7 @@ func WithRefreshLead(d time.Duration) Option
 func WithRequestObserver(wrap func(next http.RoundTripper) http.RoundTripper) Option
 func WithRetries(n int) Option
 func WithRotationCursor(c RotationCursor) Option
+func WithSince(t time.Time) ListOption
 func WithState(s ListState) ListOption
 func WithStatusPages(n int) Option
 func WithStatusReadsPerInterval(n int) Option

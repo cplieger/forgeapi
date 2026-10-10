@@ -33,6 +33,8 @@ const (
 	keyDraft  = "draft"
 	varOwner  = "owner"
 	varName   = "name"
+	varFirst  = "first"
+	varAfter  = "after"
 )
 
 // Whoami implements [forgeapi.Identity]. This product reports the credential's
@@ -64,20 +66,22 @@ func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 
 // ListRepos implements [forgeapi.Repos].
 //
-// It asks for the repositories the CREDENTIAL can reach, which is what this product's
-// own identity-scoped route answers, and it sends no affiliation or visibility filter
-// of its own: the operation publishes the credential's repositories, and a filter
-// would answer a narrower question than the one a consumer asked.
-//
-// Each row carries its own affordances, which is what keeps a listing from needing one
-// accessor call per row. What a row cannot carry is the merge strategies: measured,
-// this product's minimal repository representation omits all three flags, so a listed
-// repository answers an empty set with its evidence saying why and a caller that needs
-// them pays [Client.RepoAffordances].
+// Without an owner scope it asks the identity-scoped route for the repositories the
+// CREDENTIAL can reach, with no affiliation or visibility filter. Each row carries its
+// own affordances but the merge strategies: this product's minimal repository
+// representation omits all three flags, measured, so a row answers an empty set with
+// evidence saying why and a caller that needs them pays [Client.RepoAffordances].
 func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error) {
 	const op = "ListRepos"
 	ctx = transport.Call(ctx, op)
-	query, walk, err := c.listing(op, forgeapi.RepoRef{}, fixedList, opts)
+	set, err := listOptions(op, repoList, opts)
+	if err != nil {
+		return forgeapi.Page[forgeapi.Repository]{}, err
+	}
+	if set.OwnerSet {
+		return c.ownedRepos(ctx, op, &set)
+	}
+	query, walk, err := c.listQuery(op, forgeapi.RepoRef{}, repoList, &set)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Repository]{}, err
 	}
@@ -105,6 +109,60 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		Next:    next,
 		Partial: c.pagePartial(len(rows), next, walk.page),
 	}, nil
+}
+
+// ownedRepos is the repository listing under an owner scope: one owner's repositories
+// through the document, because no REST route lists a user's private repositories and
+// an organization's alike in one request a page. A null owner is the schema's answer
+// for a login no user or organization holds, unless an error other than NOT_FOUND
+// nulled it.
+func (c *Client) ownedRepos(ctx context.Context, op string, set *forgeapi.ListSettings) (forgeapi.Page[forgeapi.Repository], error) {
+	call := c.core.PageCall(op, forgeapi.RepoRef{}, set)
+	after, err := decodeAfter(call, set.After)
+	if err != nil {
+		return forgeapi.Page[forgeapi.Repository]{}, err
+	}
+	if bounded, ok := c.unpagedList[forgeapi.Repository](set.After); ok {
+		return bounded, nil
+	}
+	var payload docOwnerPayload
+	result, err := c.execute(ctx, op, repoOwned, map[string]any{
+		varOwner: set.Owner,
+		varFirst: min(set.PageBound, repoOwnedPageCeiling),
+		varAfter: nullableString(after),
+	}, &payload)
+	if err != nil {
+		if deferred, ok := c.deferredPage[forgeapi.Repository](err); ok {
+			return deferred, nil
+		}
+		return forgeapi.Page[forgeapi.Repository]{}, err
+	}
+	if payload.Owner == nil {
+		if result.RootFailure != "" {
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
+				"", forgeapi.KindUpstream, result.Status,
+				"the RepoOwned document could not resolve the owner: "+result.RootFailure)
+		}
+		return forgeapi.Page[forgeapi.Repository]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
+			forgeapi.CodeOwnerUnresolved, forgeapi.KindNotFound, result.Status,
+			"the instance resolves no user or organization for this owner")
+	}
+	rows := payload.Owner.Repositories
+	if rows == nil {
+		return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status)
+	}
+	items := make([]forgeapi.Repository, 0, len(rows.Nodes))
+	for i := range rows.Nodes {
+		if rows.Nodes[i].NameWithOwner == "" {
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status)
+		}
+		items = append(items, c.normalizeOwnedRepo(&rows.Nodes[i]))
+	}
+	page := forgeapi.Page[forgeapi.Repository]{Items: items, Next: documentNext(call, rows.PageInfo)}
+	if result.Partial {
+		page.Partial = c.partial(forgeapi.PartialGraphQLPartial, len(items))
+	}
+	return page, nil
 }
 
 // ListPRs implements [forgeapi.PullRequests].
@@ -152,7 +210,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	call := c.core.PageCall(op, repo, set)
+	call := c.core.PageCall(op, repo, &set)
 	after, err := decodeAfter(call, set.After)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -164,8 +222,8 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	result, err := c.execute(ctx, op, prList, map[string]any{
 		varOwner: owner,
 		varName:  name,
-		"first":  min(set.PageBound, prListPageCeiling),
-		"after":  nullableString(after),
+		varFirst: min(set.PageBound, prListPageCeiling),
+		varAfter: nullableString(after),
 		"states": documentStates(set.State),
 	}, &payload)
 	if err != nil {
@@ -244,7 +302,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	call := c.core.PageCall(op, forgeapi.RepoRef{}, set)
+	call := c.core.PageCall(op, forgeapi.RepoRef{}, &set)
 	after, served, err := decodeSearchAfter(set.After, call)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -252,10 +310,10 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	if bounded, ok := c.unpagedList[forgeapi.PullRequest](set.After); ok {
 		return bounded, nil
 	}
-	query := searchQuery(searchPulls, set)
+	query := searchQuery(searchPulls, &set)
 	set.PageBound = min(set.PageBound, prSearchPageCeiling)
 	var payload docPayload
-	result, err := c.execute(ctx, op, prMine, searchVariables(query, set, after), &payload)
+	result, err := c.execute(ctx, op, prMine, searchVariables(query, &set, after), &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
 			return deferred, nil
@@ -378,7 +436,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
-	call := c.core.PageCall(op, forgeapi.RepoRef{}, set)
+	call := c.core.PageCall(op, forgeapi.RepoRef{}, &set)
 	after, served, err := decodeSearchAfter(set.After, call)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
@@ -386,9 +444,9 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 	if bounded, ok := c.unpagedList[forgeapi.Issue](set.After); ok {
 		return bounded, nil
 	}
-	query := searchQuery(searchIssues, set)
+	query := searchQuery(searchIssues, &set)
 	var payload docIssuePayload
-	result, err := c.execute(ctx, op, issueMine, searchVariables(query, set, after), &payload)
+	result, err := c.execute(ctx, op, issueMine, searchVariables(query, &set, after), &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.Issue](err); ok {
 			return deferred, nil
@@ -831,6 +889,12 @@ func (c *Client) readRuns(ctx context.Context, op string, repo forgeapi.RepoRef,
 	return runs, resp, err
 }
 
+// runWindow is the run count a created-filtered listing serves through: it serves the
+// first whole page reaching it, then answers total_count 0 and no rows (measured), so a
+// walk ends on the page that reaches it:
+// https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository
+const runWindow = 1000
+
 // ListRuns implements [forgeapi.Checks].
 //
 // A run is an Actions workflow run, the row the re-run resolves its run from: its
@@ -845,7 +909,7 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	query, walk, err := c.listing(op, repo, fixedList, opts)
+	set, query, walk, err := c.listing(op, repo, runList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
@@ -860,17 +924,50 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 		}
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	items := make([]forgeapi.Run, 0, len(runs.Runs))
-	for i := range runs.Runs {
-		items = append(items, c.normalizeRun(&runs.Runs[i], repo))
+	items, err := c.runsSince(ctx, op, runs.Runs, repo, &set, resp.Status)
+	if err != nil {
+		return forgeapi.Page[forgeapi.Run]{}, err
 	}
 	next := walk.next(resp.Header)
+	partial := c.pagePartial(len(runs.Runs), next, walk.page)
+	n := min(set.PageBound, restPerPageMax)
+	if served := (walk.page-1)*n + len(runs.Runs); set.SinceSet && served < runs.TotalCount && (next == "" || walk.page*n >= runWindow) {
+		next = ""
+		partial = c.partial(forgeapi.PartialResultWindow, served)
+		partial.OmittedAtLeast = runs.TotalCount - served
+	}
 	return forgeapi.Page[forgeapi.Run]{
 		Items:     items,
 		Next:      next,
-		Partial:   c.pagePartial(len(runs.Runs), next, walk.page),
+		Partial:   partial,
 		Successor: moved.to,
 	}, nil
+}
+
+// runsSince normalizes one page's runs and drops those created before the call's since
+// bound. A row with no id or a negative number, or with no creation time under a
+// bound, is refused rather than published or read as older.
+func (c *Client) runsSince(ctx context.Context, op string, rows []restWorkflowRun, repo forgeapi.RepoRef, set *forgeapi.ListSettings, status int) ([]forgeapi.Run, error) {
+	items := make([]forgeapi.Run, 0, len(rows))
+	for i := range rows {
+		switch {
+		case rows[i].ID <= 0:
+			return nil, c.refuseRun(ctx, op, status, "the run listing answered a run with no id, which is the run's identity")
+		case rows[i].RunNumber < 0:
+			return nil, c.refuseRun(ctx, op, status, "the run listing answered a negative run number, which is no place in the repository's run sequence")
+		case set.SinceSet && rows[i].CreatedAt.IsZero():
+			return nil, c.refuseRun(ctx, op, status, "the run listing answered a run with no creation time, so it cannot be held to the since bound")
+		case set.SinceSet && rows[i].CreatedAt.Before(set.Since):
+			continue
+		}
+		items = append(items, c.normalizeRun(&rows[i], repo))
+	}
+	return items, nil
+}
+
+// refuseRun is the failure a run row this family will not publish answers.
+func (c *Client) refuseRun(ctx context.Context, op string, status int, message string) error {
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation, forgeapi.KindUpstream, status, message)
 }
 
 // MergePR implements [forgeapi.Merges].
@@ -1284,7 +1381,7 @@ func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
-	query, walk, err := c.listing(op, repo, statefulList, opts)
+	_, query, walk, err := c.listing(op, repo, statefulList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
@@ -1370,7 +1467,7 @@ func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts .
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
-	query, walk, err := c.listing(op, repo, fixedList, opts)
+	_, query, walk, err := c.listing(op, repo, fixedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
@@ -1433,7 +1530,7 @@ func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
-	query, walk, err := c.listing(op, repo, fixedList, opts)
+	_, query, walk, err := c.listing(op, repo, fixedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
