@@ -21,7 +21,7 @@ import (
 
 	"github.com/cplieger/forgeapi/internal/spec"
 	"github.com/cplieger/httpx/v5"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // The lane's marks. Everything a live mutation makes in a sandbox carries one
