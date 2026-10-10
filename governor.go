@@ -69,20 +69,14 @@ const BudgetRemainingUnknown = -1
 // it has drained it itself, and it costs nothing, because the number is already
 // in hand on every response.
 type BudgetState struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, remaining first, and it is API for an unkeyed composite literal
-	// Remaining is the budget left in the current window, in the instance's own
-	// units: a REST endpoint counts requests and a document endpoint counts
-	// points. What one call spends in those units is per product, and every read
-	// this library issues is unconditional, so no call of its own is answered by
-	// the one status a product prices at nothing.
-	// It is [BudgetRemainingUnknown] where the instance reports none.
-	//
-	// It is what the FORGE reports for the credential, which on GitHub and GitLab
-	// is the user's own quota rather than this client's share of it: every
-	// application acting for that user draws on the same pool, so this number
-	// falls while this client sends nothing and a consumer that renders it as
-	// "what the library has used" is showing something false. Rendered as the
-	// account's remaining budget it is exactly right, and it is the number the
-	// mutation reserve is held against.
+	// Remaining is the budget left in the current window, in the instance's own units:
+	// requests on a REST endpoint, points on a document endpoint, and on a product with
+	// one pool per surface the pool the last response drew on. It is
+	// [BudgetRemainingUnknown] where the instance reports none. On GitHub and GitLab it
+	// is the user's own quota, which every application acting for that user draws on,
+	// so it falls while this client sends nothing: render it as the account's remaining
+	// budget. The mutation reserve is held against it until Reset, after which the next
+	// read is sent and its response reports the renewed window.
 	Remaining int
 	// Reset is when the window renews, or the zero time where the instance
 	// reports none.

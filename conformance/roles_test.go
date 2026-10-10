@@ -59,9 +59,8 @@ func TestTheCrossRepositoryIssueListTakesTheListOptionsAlone(t *testing.T) {
 
 // TestTheRunListingAnswersTheRunRecord holds the run listing's signature and its row:
 // one repository and the list-option vocabulary in, a page of runs out, and a run
-// carrying its repository, its display name, its branch, its head, its page, its two
-// times and its folded verdict. A run carries no id, no number and no trigger
-// event: an id is a product token, and the event is one product's vocabulary.
+// carrying its identity, its repository, its display name, its branch, its head, its
+// page, its two times, its folded verdict and its trigger.
 func TestTheRunListingAnswersTheRunRecord(t *testing.T) {
 	m, ok := listRunsMethod()
 	if !ok {
@@ -96,6 +95,7 @@ func TestTheRunListingAnswersTheRunRecord(t *testing.T) {
 		t.Fatalf("forgeapi.Checks.ListRuns answers a page of %v, want forgeapi.Run", run)
 	}
 	fields := map[string]reflect.Type{
+		"Ref":       reflect.TypeFor[forgeapi.RunRef](),
 		"Repo":      reflect.TypeFor[forgeapi.RepoRef](),
 		"Name":      reflect.TypeFor[string](),
 		"Branch":    reflect.TypeFor[string](),
@@ -104,6 +104,7 @@ func TestTheRunListingAnswersTheRunRecord(t *testing.T) {
 		"CreatedAt": reflect.TypeFor[time.Time](),
 		"UpdatedAt": reflect.TypeFor[time.Time](),
 		"State":     reflect.TypeFor[forgeapi.CheckState](),
+		"Trigger":   reflect.TypeFor[forgeapi.RunTrigger](),
 	}
 	for name, want := range fields {
 		f, ok := run.FieldByName(name)
@@ -113,11 +114,6 @@ func TestTheRunListingAnswersTheRunRecord(t *testing.T) {
 		}
 		if f.Type != want {
 			t.Errorf("forgeapi.Run.%s is %v, want %v", name, f.Type, want)
-		}
-	}
-	for _, name := range []string{"ID", "Number", "Event"} {
-		if _, ok := run.FieldByName(name); ok {
-			t.Errorf("forgeapi.Run carries %s, want none: it is a product token or one product's vocabulary", name)
 		}
 	}
 }

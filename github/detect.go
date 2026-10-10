@@ -96,8 +96,9 @@ func (c *Client) askVersions(ctx context.Context, op string) {
 // holdCaps records this connection's one-time answers and returns them.
 func (c *Client) holdCaps(ev forgeapi.Evidence) forgeapi.ConnectionCaps {
 	caps := forgeapi.ConnectionCaps{
-		Caps: map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: forgeapi.SupportUnknown},
-		Ev:   map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
+		Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: forgeapi.SupportUnknown},
+		Ev:      map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
+		Product: forgeapi.ProductGitHub,
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

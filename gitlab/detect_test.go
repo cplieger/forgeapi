@@ -149,15 +149,11 @@ func TestACapabilityUnknownRefusesTheOperationRatherThanSendingIt(t *testing.T) 
 }
 
 // TestTheGrantIsReadFromTheDocumentEveryReadAlreadySent holds the grant accessor's price
-// and its three answers.
-//
-// It names no repository, so it has no project path and no merge-request number to send
-// a document with, and the permissions it reports ride every document a read of this
-// product already sends. That is why it costs zero requests, and it is also why a cold
-// connection has to answer from this product's own default rather than from unknown: the
-// merge state is selected by both documents and readable by any credential that can read
-// the merge request, so an unknown there would disable a control that works on every
-// instance of it.
+// and its three answers. It names no repository, so it reads the permissions every
+// pull-request document already carries at zero requests, and a cold connection answers
+// this product's default rather than unknown: any credential that can read the merge
+// request reads its merge state, so an unknown would disable a control that works on
+// every instance.
 func TestTheGrantIsReadFromTheDocumentEveryReadAlreadySent(t *testing.T) {
 	t.Run("cold_it_answers_this_product_s_own_default_at_no_request", func(t *testing.T) {
 		h := newHarness(t, nil)
@@ -169,7 +165,7 @@ func TestTheGrantIsReadFromTheDocumentEveryReadAlreadySent(t *testing.T) {
 			t.Errorf("GrantCaps sent %d request(s), want 0: it names no repository, so there is no document for it to send", h.instance.count())
 		}
 		if got := caps.Caps[forgeapi.CapReadMergeState]; got != forgeapi.SupportYes {
-			t.Errorf("GrantCaps = merge state %v, want %v: both documents select the field, so an unknown here disables a control that works everywhere",
+			t.Errorf("GrantCaps = merge state %v, want %v: both pull-request documents select the field, so an unknown here disables a control that works everywhere",
 				got, forgeapi.SupportYes)
 		}
 		if caps.Ev[forgeapi.CapReadMergeState].Source != forgeapi.EvidenceDefault {

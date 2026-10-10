@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/internal/transport"
@@ -22,6 +23,10 @@ const (
 	keyPage    = "page"
 	keyPerPage = "per_page"
 )
+
+// restPerPageMax is the most rows a REST page serves whatever per_page asks: "The
+// number of results per page (max 100)", per the REST reference's list parameters.
+const restPerPageMax = 100
 
 // The two state spellings this product takes and answers, on a pull request, an
 // issue and the filter over either.
@@ -269,14 +274,19 @@ const (
 	// scopedList is a cross-repository list: open by construction, and scoped
 	// to what the credential authored or to one owner's repositories.
 	scopedList
+	// repoList is the repository listing, which an owner scopes.
+	repoList
+	// runList is the run listing, which a since bound narrows.
+	runList
 )
 
 // listOptions resolves one list call's options and refuses, before any request, the
 // ones its route or document cannot apply: a state filter on a list that fixes its
-// state, and an owner on a list that is not scoped. An owner is ONE login, because
-// the search grammar's owner qualifier takes a single account, so a path the shared
-// form admits is refused by [forgeapi.ValidateOwner] rather than sent as a qualifier
-// no account matches.
+// state, an owner on every list but the scoped ones and the repository listing, and a
+// since bound on every list but the run listing. An owner is ONE login, because the
+// search grammar's owner qualifier takes a single account, so a path the shared form
+// admits is refused by [forgeapi.ValidateOwner] rather than sent as a qualifier no
+// account matches.
 func listOptions(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi.ListSettings, error) {
 	set, err := forgeapi.ResolveList(opts...)
 	if err != nil {
@@ -286,9 +296,13 @@ func listOptions(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi
 		return set, transport.Local(forgeapi.CodeListStateInvalid,
 			op+" lists rows whose state the endpoint fixes, so a state filter cannot apply")
 	}
-	if set.OwnerSet && kind != scopedList {
+	if set.OwnerSet && kind != scopedList && kind != repoList {
 		return set, transport.Local(forgeapi.CodeListOwnerInvalid,
 			op+" lists rows no owner scopes, so an owner cannot apply")
+	}
+	if set.SinceSet && kind != runList {
+		return set, transport.Local(forgeapi.CodeListSinceInvalid,
+			op+" lists rows no creation bound narrows, so a since bound cannot apply")
 	}
 	if set.OwnerSet {
 		if err := forgeapi.ValidateOwner(forgeapi.FamilyGitHub, set.Owner); err != nil {
@@ -305,11 +319,17 @@ func listOptions(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi
 // at, and this product's page query for it, sending the state filter on a stateful
 // list alone. repo is the repository the call addresses, the zero reference on a
 // list no repository addresses.
-func (c *Client) listing(op string, repo forgeapi.RepoRef, kind listKind, opts []forgeapi.ListOption) (url.Values, restWalk, error) {
+func (c *Client) listing(op string, repo forgeapi.RepoRef, kind listKind, opts []forgeapi.ListOption) (forgeapi.ListSettings, url.Values, restWalk, error) {
 	set, err := listOptions(op, kind, opts)
 	if err != nil {
-		return nil, restWalk{}, err
+		return set, nil, restWalk{}, err
 	}
+	query, walk, err := c.listQuery(op, repo, kind, &set)
+	return set, query, walk, err
+}
+
+// listQuery is listing over options already resolved.
+func (c *Client) listQuery(op string, repo forgeapi.RepoRef, kind listKind, set *forgeapi.ListSettings) (url.Values, restWalk, error) {
 	walk, err := restWalkAt(c.core.PageCall(op, repo, set), set.After)
 	if err != nil {
 		return nil, restWalk{}, err
@@ -318,10 +338,19 @@ func (c *Client) listing(op string, repo forgeapi.RepoRef, kind listKind, opts [
 		keyPage:    {strconv.Itoa(walk.page)},
 		keyPerPage: {strconv.Itoa(set.PageBound)},
 	}
-	if kind == statefulList {
+	switch {
+	case kind == statefulList:
 		query.Set("state", listState(set.State))
+	case kind == runList && set.SinceSet:
+		query.Set("created", createdFilter(set.Since))
 	}
 	return query, walk, nil
+}
+
+// createdFilter is the runs route's created filter for a since bound, which
+// ListSettings.Since holds in UTC at whole seconds: the search syntax, inclusive.
+func createdFilter(since time.Time) string {
+	return ">=" + since.Format("2006-01-02T15:04:05") + "+00:00"
 }
 
 // listState is this product's own spelling of the state filter, which is the same

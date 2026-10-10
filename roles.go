@@ -44,25 +44,35 @@ type Identity interface {
 type Repos interface {
 	// ListRepos returns repositories accessible to the authenticated account.
 	//
+	// Under [WithOwner] it returns every repository that owner owns which the
+	// credential can see instead, private ones included where it can, archived
+	// repositories and forks included, each row carrying [Repository.Archived] and
+	// [Repository.Fork]. A GitLab group's projects include its subgroups' and exclude
+	// projects shared into it. An owner the instance does not resolve answers
+	// [CodeOwnerUnresolved].
+	//
 	// Per forge:
 	//
-	//	GitHub   GET /user/repos, 1 request per page
-	//	GitLab   GET /api/v4/projects, 1 request per page
-	//	Gitea    GET /api/v1/user/repos, 1 request per page
-	//	Forgejo  GET /api/v1/user/repos, 1 request per page
+	//	GitHub   GET /user/repos; under an owner scope the RepoOwned document, repositoryOwner(login: {owner}) with ownerAffiliations [OWNER], which resolves a user and an organization alike, 1 request per page
+	//	GitLab   GET /api/v4/projects; under an owner scope GET /api/v4/groups/{owner}/projects with include_subgroups=true and with_shared=false, and where that answers 404 for a one-segment owner, GET /api/v4/users/{owner}/projects, the user's personal namespace, on the first page alone, since the continuation names the route; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page, the group or the user it names read with no fallback, 1 to 2 requests per page
+	//	Gitea    GET /api/v1/user/repos; under an owner scope GET /api/v1/users/{owner}/repos, which resolves a user and an organization alike and pages before it drops the rows the caller has no unit access to, so its walk continues while the pages read cover fewer rows than X-Total-Count, 1 request per page
+	//	Forgejo  GET /api/v1/user/repos; under an owner scope GET /api/v1/users/{owner}/repos, which resolves a user and an organization alike and pages before it drops the rows the caller has no unit access to, so its walk continues while the pages read cover fewer rows than X-Total-Count, 1 request per page
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Items[].Affordances.MergeStrategies  cannot supply  empty: absent on a listing row
-	//	Items[].Affordances.MergeTrain       cannot supply  no record field: a ruleset property
+	//	Items[].Affordances.MergeStrategies     cannot supply     empty: absent on a listing row without an owner scope
+	//	Items[].Affordances.MergeTrain          cannot supply     no record field: a ruleset property
+	//	Items[].CloneURL, under an owner scope  differs in shape  the document has no HTTPS clone field, so it is the repository url with .git appended
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Items[].Ref                    differs in spelling  namespace path selector
-	//	Items[].Affordances.HasIssues  differs in shape     varies by permission
-	//	Items[].Affordances.CanPush    differs in shape     from a role integer
-	//	Items[].Affordances.Ev         cannot supply        no source on the row for its three keys, anonymous
-	//	Items[].Private                differs in shape     visibility string, no private key
+	//	Items[].Ref                                             differs in spelling  namespace path selector
+	//	Items[].Affordances.HasIssues                           differs in shape     varies by permission
+	//	Items[].Affordances.CanPush                             differs in shape     from a role integer
+	//	Items[].Affordances.CanPush, under a group owner scope  cannot supply        SupportUnknown: the group route answers its rows without the permissions object the other two routes carry
+	//	Items[].Affordances.Ev                                  cannot supply        no source on the row for its three keys, anonymous
+	//	Items[].Private                                         differs in shape     visibility string, no private key
+	//	error, owner unresolved                                 cannot supply        no refusal for a user whose profile is private: the user route answers it an empty list, so such an owner reads as owning nothing
 	//
 	// Gitea and Forgejo depart from the normalized contract:
 	//
@@ -142,67 +152,19 @@ type PullRequests interface {
 	//	Items[].Action.MergeBlocked    cannot supply  mergeable and draft, no reason
 	ListPRs(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[PullRequest], error)
 
-	// ListMyPRs lists the authenticated credential's OPEN pull requests across
-	// every repository it can reach, in one call.
-	//
-	// Under [WithOwner] it lists every OPEN pull request in the repositories
-	// under that owner instead, whoever authored it, at the same price, with the
-	// same row and the same continuation; the two scopes are exclusive, and an
-	// owner the instance does not resolve answers [CodeOwnerUnresolved] where the
-	// product's answer can say so, which each product's cell below states.
-	//
-	// It names no repository, because it is keyed by the credential or by the
-	// owner rather than by a selector: there is nothing
-	// for [ValidateSelector] to check here and no stored identifier being
-	// resolved, so neither [CodeRepoRefInvalid] nor [CodeRepoRefStale] can arise
-	// from the call itself. Each row carries its own [PullRequest.Repo], which is
-	// what a consumer acts on, and the response-level [Page.Successor] is never
-	// SET for the same reason [Repos.ListRepos]' is not: neither call addresses a
-	// repository, so neither has one that could have moved. A rename under a row
-	// reaches the consumer as that row's own repository differing from the one it
-	// held.
-	//
-	// It exists because the shape of the alternative is what spends a budget.
-	// Answering "which of my pull requests are open" by listing per repository
-	// costs one request per repository per cycle, so the cost is set by how many
-	// repositories the user has, which this library cannot bound: measured on a
-	// workspace of 62 repositories against a per-USER quota of 5,000 requests an
-	// hour, one such poller consumed about 3,700 of it and starved every other
-	// application drawing on the same account. This read makes a cycle
-	// [Identity.Whoami] plus this call, TWO requests as its base count on every
-	// product. No product adds a per-row term to it, the Gitea family included:
-	// that family's rows carry neither a check state nor a head commit, and a
-	// folded status is addressed BY the head, so its rows answer
-	// [CheckUnknown] with a zero total and the per-forge block below says so
-	// field by field. What no product's count carries is a term in the repository
-	// count, which is the property this operation exists for.
-	// [PullRequests.ListPRs] stays for the per-repository view a user opens
-	// deliberately, and it is the call, with [PullRequests.ReadPR] and
-	// [Checks.CommitStatus], that answers a check verdict.
-	//
-	// Its state is OPEN by construction rather than by default, so [WithState] is
-	// REFUSED here with [CodeListStateInvalid] as it is on every list with no
-	// state to filter on: each product's endpoint carries the open state as
-	// part of the query this operation is, so a filter has nothing to select.
-	// Widening that later is additive; narrowing a published filter is not, which
-	// is why the refusal is the side to start on.
-	//
-	// It is paged and continued exactly as the other lists are, one request per
-	// page up to [Budget.ListPages], and what the count moves with is how many
-	// pull requests the credential has open rather than how many repositories it
-	// watches. Where a product answers the call from a search with a result
-	// window, a walk ends at the window's edge with no continuation, and the
-	// page that ends it carries [PartialResultWindow] wherever the search's own
-	// total states more than the walk was served; the per-forge block's Next
-	// row states the window. A row carries no affordance object of its own, so a consumer that
-	// wants a row's merge strategies reads them per repository through
-	// [Capabilities.RepoAffordances], bounded by the distinct repositories the
-	// credential has open pull requests in.
+	// ListMyPRs lists the credential's OPEN pull requests across every repository it
+	// can reach or, under [WithOwner], every open pull request under that owner; an
+	// owner the product reports unknown answers [CodeOwnerUnresolved], and [WithState]
+	// is refused with [CodeListStateInvalid]. Each row carries its own
+	// [PullRequest.Repo] and no affordance object, [Page.Successor] is never set, a
+	// search's result window ends a walk with [PartialResultWindow], and archived
+	// repositories' rows are listed unless the block below says otherwise, their close
+	// and merge refused with [CodeRepoArchived]. docs/cross-repository-lists.md has more.
 	//
 	// Per forge:
 	//
 	//	GitHub   the PRMine search document, asking for at most 25 rows a page whatever the page bound asks, since a larger page of its rows answered 502 under both owners measured, the smaller of them holding fewer than a hundred open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user, 1 request per page
-	//	GitLab   GET /api/v4/merge_requests?scope=created_by_me; under an owner scope GET /api/v4/groups/{owner}/merge_requests with the open state, which answers 404 for a user's own namespace; on either route, GET /api/v4/projects/{id} once for each distinct fork a row's source_project_id names, 1 request per page plus up to one per row
+	//	GitLab   GET /api/v4/merge_requests?scope=created_by_me; under an owner scope GET /api/v4/groups/{owner}/merge_requests with the open state, which answers 404 for a user's own namespace; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page; on either route, GET /api/v4/projects/{id} once for each distinct fork a row's source_project_id names, 1 to 2 requests per page plus up to one per row
 	//	Gitea    GET /api/v1/repos/issues/search filtered to pull requests and to the rows the authenticated credential created, whose rows carry no head commit and therefore no folded status; under an owner scope the same route filtered by owner={owner} in place of created=true, 1 request per page
 	//	Forgejo  GET /api/v1/repos/issues/search filtered to pull requests and to the rows the authenticated credential created, whose rows carry no head commit and therefore no folded status; under an owner scope the same route filtered by owner={owner} in place of created=true, 1 request per page
 	//
@@ -213,17 +175,18 @@ type PullRequests interface {
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Items[].Ref                                  differs in spelling  iid, sigil "!"
-	//	Items[].SourceRepo                           differs in shape     source_project_id beside target_project_id, a fork resolved by one GET /api/v4/projects/{id} per distinct fork on the page to its path_with_namespace, the zero value where the id is null on a deleted fork or the lookup answers 404 or 403
-	//	Items[].Labels[].Color                       differs in spelling  color string, leading #, on 2 of 2, upper-case hex on 0
-	//	Items[].Action.Mergeable                     cannot supply        no mergeable key on a list row, which states mergeability only through detailed_merge_status, mergeable 1, unchecked 2, and answers unchecked before the asynchronous check
-	//	Items[].Action.Checks                        cannot supply        CheckUnknown: no head_pipeline key on 3 of 3 list rows
-	//	Items[].Action.ChecksPassing .. ChecksTotal  cannot supply        zero: no head_pipeline key on a list row, so no status to count
-	//	Items[].Action.QueueState                    cannot supply        QueueNone always: no merge-train key among the 51 keys a list row answers
-	//	Items[].Action.QueuePosition                 cannot supply        QueuePositionUnknown: no merge-train key on a list row
-	//	Items[].Action.MergeBlocked                  cannot supply        unknown on a list row, whose detailed_merge_status is the status the product stored when it last checked, which listing may leave unrefreshed: mergeable 1, unchecked 2 on the 3 open rows both scopes answered
-	//	Items[].Partial                              cannot supply        nil: no status read runs for a list row, which carries no head_pipeline
-	//	error, owner unresolved                      cannot supply        404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds
+	//	Items[].Ref                                                differs in spelling  iid, sigil "!"
+	//	Items[].SourceRepo                                         differs in shape     source_project_id beside target_project_id, a fork resolved by one GET /api/v4/projects/{id} per distinct fork on the page to its path_with_namespace, the zero value where the id is null on a deleted fork or the lookup answers 404 or 403
+	//	Items[].Labels[].Color                                     differs in spelling  color string, leading #, on 2 of 2, upper-case hex on 0
+	//	Items[].Action.Mergeable                                   cannot supply        no mergeable key on a list row, which states mergeability only through detailed_merge_status, mergeable 1, unchecked 2, and answers unchecked before the asynchronous check
+	//	Items[].Action.Checks                                      cannot supply        CheckUnknown: no head_pipeline key on 3 of 3 list rows
+	//	Items[].Action.ChecksPassing .. ChecksTotal                cannot supply        zero: no head_pipeline key on a list row, so no status to count
+	//	Items[].Action.QueueState                                  cannot supply        QueueNone always: no merge-train key among the 51 keys a list row answers
+	//	Items[].Action.QueuePosition                               cannot supply        QueuePositionUnknown: no merge-train key on a list row
+	//	Items[].Action.MergeBlocked                                cannot supply        unknown on a list row, whose detailed_merge_status is the status the product stored when it last checked, which listing may leave unrefreshed: mergeable 1, unchecked 2 on the 3 open rows both scopes answered
+	//	Items[].Partial                                            cannot supply        nil: no status read runs for a list row, which carries no head_pipeline
+	//	error, owner unresolved                                    cannot supply        404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds
+	//	Items[], from an archived repository under an owner scope  cannot supply        none: the group route's non_archived defaults to true
 	//
 	// Gitea and Forgejo depart from the normalized contract:
 	//
@@ -647,34 +610,37 @@ type Checks interface {
 	//	Successor  cannot supply  nil: no successor key
 	CommitStatus(ctx context.Context, repo RepoRef, ref string) (CommitChecks, error)
 
-	// ListRuns lists repo's CI runs, in the order the product answers them:
-	// no sort parameter is sent, because one family's route declares none.
-	//
-	// It reads the route [PullRequests.RerunFailedChecks] resolves its run on,
-	// with the page bound as its page size and none of the head filter that
-	// read sends, so the answer is every run of the repository rather than one
-	// commit's. A consumer wanting the failed ones filters [Run.State] on
-	// [CheckFailing].
-	//
-	// [WithState] and [WithOwner] are refused on it, with [CodeListStateInvalid]
-	// and [CodeListOwnerInvalid], before any request: a run has no open or
-	// closed state to select on, and one repository has no owner to scope by.
+	// ListRuns lists every run of repo, not one commit's, in the order the product
+	// answers them, on the route [PullRequests.RerunFailedChecks] resolves its run on;
+	// no sort parameter is sent, because one family's route declares none. Under
+	// [WithSince] it answers only the runs created at or after the bound, and a walk
+	// ends once no later page can hold one. [WithState] and [WithOwner] are refused
+	// before any request, with [CodeListStateInvalid] and [CodeListOwnerInvalid]: a
+	// run has no open state to select on, and one repository has no owner.
 	//
 	// Per forge:
 	//
-	//	GitHub   GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 3 requests per page
+	//	GitHub   GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address; a run whose conclusion is action_required, a fork's run waiting for a maintainer's approval with no job run, reads pending, the verdict the Gitea family gives the same wait, 1 to 3 requests per page
 	//	GitLab   GET /api/v4/projects/{id}/pipelines, the route the re-run resolves its pipeline on, with the page bound as its page size and no head filter, 1 request per page
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/actions/runs, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, since the route sends no paging header and an instance whose maximum was lowered after the connection read it still serves a page of its own maximum, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor; under a since bound no time filter, the route declaring none, so each page's rows created before the bound's second are dropped; the route answers runs by id descending, or from v28 by repository index descending, co-monotonic with id (models/actions/run_list.go, FindRunOptions.ToOrders), and stamps a run's creation once, at insert (models/actions/run.go, its Created field), so a page whose every run was created more than a minute before the bound, the step a host clock can take back between two inserts, ends the walk with no continuation, 1 to 2 requests per page
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/actions/runs, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, since the route sends no paging header and an instance whose maximum was lowered after the connection read it still serves a page of its own maximum, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor; under a since bound no time filter, the route declaring none, so each page's rows created before the bound's second are dropped; the route answers runs by id descending (models/actions/run_list.go, FindRunOptions.ToOrders) and stamps a run's creation once, at insert (models/actions/run.go, its Created field), so a page whose every run was created more than a minute before the bound, the step a host clock can take back between two inserts, ends the walk with no continuation, 1 to 2 requests per page
+	//
+	// GitHub departs from the normalized contract:
+	//
+	//	Items[].Ref.Number         differs in shape  run_number, numbered per workflow rather than per repository, so two runs of one repository can share it
+	//	Next, under a since bound  differs in shape  the route serves a filtered listing through the first whole page that reaches its 1,000th run, so up to one page less one row more than 1,000 arrives, and answers the page after it with no rows and total_count 0, so a walk ends on that page with no continuation and carries result_window where total_count states more
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Items[].Branch  differs in spelling  ref string: a branch on 2 of 5 and a refs/ path on 3, which merge-request and workload pipelines run for
-	//	Successor       cannot supply        nil: no successor key
+	//	Items[].Branch     differs in spelling  ref string: a branch on 2 of 5 and a refs/ path on 3, which merge-request and workload pipelines run for
+	//	Items[].StartedAt  cannot supply        zero: the listing row carries no started_at, which only the single-pipeline route answers, and the listing adds no request for it
+	//	Successor          cannot supply        nil: no successor key
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Items[].Name  differs in spelling  path string, the workflow file and its ref, on 6 of 6; no name key among the 26 the route answers
+	//	Items[].Name                   differs in spelling  path string, the workflow file and its ref, on 6 of 6; no name key among the 26 the route answers
+	//	Items[].CreatedAt, before v28  cannot supply        zero: the route's run object carries no created_at before v28, so a page read under a since bound is refused as run_undated rather than answered as holding no run
+	//	Items[].UpdatedAt, before v28  cannot supply        zero: the route's run object carries no updated_at before v28
 	//
 	// Forgejo departs from the normalized contract:
 	//
@@ -684,10 +650,12 @@ type Checks interface {
 	// GitHub sends this, where a wrong default would change the request silently:
 	//
 	//	head_sha  query  absent: the listing answers every run of the repository, and the head filter the re-run sends on the same route would narrow it to one commit's runs
+	//	created   query  under a since bound, >= the bound at whole seconds, the precision the route stamps created_at at, and the rows stamped before the bound's second are dropped; absent without one
 	//
 	// GitLab sends this, where a wrong default would change the request silently:
 	//
-	//	sha  query  absent: the listing answers every run of the repository, and the head filter the re-run sends on the same route would narrow it to one commit's runs
+	//	sha            query  absent: the listing answers every run of the repository, and the head filter the re-run sends on the same route would narrow it to one commit's runs
+	//	created_after  query  under a since bound, one second before the bound at whole seconds, because the filter is strictly after, and the rows created before the bound's second are dropped; absent without one
 	//
 	// Gitea and Forgejo send this, where a wrong default would change the request silently:
 	//
@@ -717,24 +685,17 @@ type Issues interface {
 	ListIssues(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Issue], error)
 
 	// ListMyIssues lists OPEN issues across every repository the credential can
-	// reach, in one call, scoped exactly as [PullRequests.ListMyPRs] is: what
-	// the credential authored by default, and every open issue under one owner
-	// under [WithOwner].
-	//
-	// It names no repository, for the reason [PullRequests.ListMyPRs] does, so
-	// neither [CodeRepoRefInvalid] nor [CodeRepoRefStale] can arise from the call
-	// itself, each row carries its own [Issue.Repo], and [Page.Successor] is never
-	// set. It costs one request per page under either scope: the owner is never
-	// resolved by a read of its own and no row adds a term. A search's result
-	// window ends a walk as it does there, which the Next row below states.
-	//
-	// Its state is OPEN by construction, so [WithState] is refused here with
-	// [CodeListStateInvalid] as it is on [PullRequests.ListMyPRs].
+	// reach, scoped as [PullRequests.ListMyPRs] is: what the credential authored by
+	// default, and every open issue under one owner under [WithOwner]. As there, each
+	// row carries its own [Issue.Repo], [Page.Successor] is never set, a search's
+	// result window ends a walk with [PartialResultWindow], [WithState] is refused
+	// with [CodeListStateInvalid], and archived repositories' rows are listed unless
+	// the block below says otherwise. No row adds a request to a page's price.
 	//
 	// Per forge:
 	//
 	//	GitHub   the IssueMine search document, whose query names type:issue and the author keyword, or user:{owner} in its place under an owner scope, 1 request per page
-	//	GitLab   GET /api/v4/issues?scope=created_by_me, or GET /api/v4/groups/{owner}/issues under an owner scope, both with the open state and the label detail parameter, 1 request per page
+	//	GitLab   GET /api/v4/issues?scope=created_by_me, or GET /api/v4/groups/{owner}/issues under an owner scope, both with the open state and the label detail parameter; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page, 1 to 2 requests per page
 	//	Gitea    GET /api/v1/repos/issues/search filtered to issues and to the rows the authenticated credential created, or by owner={owner} in place of created=true under an owner scope, 1 request per page
 	//	Forgejo  GET /api/v1/repos/issues/search filtered to issues and to the rows the authenticated credential created, or by owner={owner} in place of created=true under an owner scope, 1 request per page
 	//
@@ -745,10 +706,11 @@ type Issues interface {
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Items[].Ref              differs in spelling  iid int, on the group route's 2 of 2 rows
-	//	Items[].Labels[].Color   differs in spelling  color string, leading #, on 16 of 16, upper-case hex on 1
-	//	Items[].State            differs in spelling  state string, opened on 2 of 2: the state parameter fixes it
-	//	error, owner unresolved  cannot supply        404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds
+	//	Items[].Ref                           differs in spelling  iid int, on the group route's 2 of 2 rows
+	//	Items[].Labels[].Color                differs in spelling  color string, leading #, on 16 of 16, upper-case hex on 1
+	//	Items[].State                         differs in spelling  state string, opened on 2 of 2: the state parameter fixes it
+	//	error, owner unresolved               cannot supply        404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds
+	//	Items[], from an archived repository  cannot supply        none on either route: non_archived defaults to true
 	ListMyIssues(ctx context.Context, opts ...ListOption) (Page[Issue], error)
 
 	// CreateIssue files an issue and returns the created object.
@@ -884,24 +846,12 @@ type Capabilities interface {
 // cursor, without asserting a concrete client. One method, because the governor
 // exposes one value and is never written from outside.
 type Governor interface {
-	// BudgetState reports the remaining budget, when it renews, what the last
-	// call cost, and where the rotation stands. It performs no I/O and is safe
-	// to call concurrently with operations; see [BudgetState] for how the
-	// governor uses it and for the neutral values on Gitea, the one product that
-	// sends no signal.
-	//
-	// The budget it reports belongs to the USER and not to this connection: on
-	// GitHub and GitLab it is the account's own quota, drawn on by every
-	// application acting for that user, so the number moves while this client
-	// sends nothing. That is stated here as well as on [BudgetState] and
-	// [BudgetState.Remaining] because a reader who stops at this accessor is the
-	// one the misreading costs: a user-wide number read as this connection's own
-	// is a budget the caller believes it alone is spending.
-	//
-	// It is also the one place the [RotationCursor] a consumer persists is read
-	// back, which is why a client that rotates nothing still answers here: the
-	// value is empty there, and a consumer stores what it is given without a
-	// per-family branch.
+	// BudgetState reports the remaining budget, when it renews, what the last call
+	// cost, and where the rotation stands. It performs no I/O and is safe to call
+	// concurrently with operations. On GitHub and GitLab the budget is the USER's
+	// quota, which every application acting for that user draws on, so it moves
+	// while this client sends nothing ([BudgetState.Remaining]). The [RotationCursor]
+	// a consumer persists is read back here, empty on a client that rotates nothing.
 	//
 	// Per forge:
 	//
@@ -912,7 +862,7 @@ type Governor interface {
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Remaining       differs in shape  two pools, one per surface
+	//	Remaining       differs in shape  the pool the last response drew on, which its X-RateLimit-Resource header names: core after a REST call, graphql after a document
 	//	RotationCursor  cannot supply     empty: every response carries its budget
 	//
 	// GitLab departs from the normalized contract:

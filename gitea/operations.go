@@ -34,18 +34,29 @@ func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 }
 
 // ListRepos implements [forgeapi.Repos].
+//
+// Under an owner it reads the owner's own route, which both products resolve for a
+// user and an organization alike and which pages in SQL before dropping the rows the
+// caller has no unit access to, so its walk continues from the stated total. Its 404
+// is an owner the instance does not hold (services/context/user.go), so it carries
+// [forgeapi.CodeOwnerUnresolved].
 func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error) {
 	const op = "ListRepos"
 	ctx = transport.Call(ctx, op)
-	set, query, walk, err := c.listing(op, forgeapi.RepoRef{}, fixedList, opts)
+	set, query, walk, err := c.listing(op, forgeapi.RepoRef{}, repoList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Repository]{}, err
 	}
 	if page, ok := c.unpagedList[forgeapi.Repository](walk.here()); ok {
 		return page, nil
 	}
+	route := "/user/repos"
+	if set.OwnerSet {
+		route = "/users/" + set.Owner + "/repos"
+	}
 	var rows []wireRepo
-	if err := c.readPage(ctx, op, "/user/repos", query, &walk, set.PageBound, &rows); err != nil {
+	resp, err := c.readPageResponse(ctx, op, route, query, ownerStatus(&set, http.StatusNotFound), &walk, set.PageBound, &rows)
+	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.Repository](err); ok {
 			return page, nil
 		}
@@ -59,6 +70,14 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		items = append(items, c.normalizeRepo(&rows[i]))
 	}
 	next := walk.next(len(rows))
+	if set.OwnerSet {
+		total, err := strconv.Atoi(resp.Header.Get("X-Total-Count"))
+		if err != nil || total < 0 {
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation,
+				forgeapi.KindUpstream, resp.Status, "the owner's repositories answered no X-Total-Count it can count by, which is what says whether a further page exists")
+		}
+		next = walk.nextOfTotal(total)
+	}
 	return forgeapi.Page[forgeapi.Repository]{
 		Items:   items,
 		Next:    next,
@@ -156,7 +175,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		return page, nil
 	}
 	var rows []wirePull
-	if err := c.readPage(ctx, op, issueSearch, query, &walk, set.PageBound, &rows); err != nil {
+	if err := c.readPage(ctx, op, issueSearch, query, ownerStatus(&set, http.StatusBadRequest), &walk, set.PageBound, &rows); err != nil {
 		if page, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
 			return page, nil
 		}
@@ -187,7 +206,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 		return page, nil
 	}
 	var rows []wireIssue
-	if err := c.readPage(ctx, op, issueSearch, query, &walk, set.PageBound, &rows); err != nil {
+	if err := c.readPage(ctx, op, issueSearch, query, ownerStatus(&set, http.StatusBadRequest), &walk, set.PageBound, &rows); err != nil {
 		if page, ok := c.deferredPage[forgeapi.Issue](err); ok {
 			return page, nil
 		}
@@ -582,30 +601,14 @@ func (c *Client) readRuns(ctx context.Context, op string, addr *address, query u
 	return runs, err
 }
 
-// ListRuns implements [forgeapi.Checks].
-//
-// Both products answer the same envelope around their own row: Gitea's carries a
-// status beside a conclusion, Forgejo's a status carrying the outcome under its own
-// field names, and the row type reads both. Neither names the workflow it ran, only
-// its file, so [forgeapi.Run.Name] is that file's name without its YAML extension.
-// It is not gated on [forgeapi.CapRerunChecks], the re-run verb's, since both
-// products carry the route whether or not they can re-run.
-//
-// The continuation is the one list of this family not decided by a short page. The
-// envelope states the listing's whole total, and an instance serves at most its own
-// maximum page size whatever limit is asked for, so a page continues exactly while
-// the rows the walk has been served are fewer than that total, and the served count
-// travels in the continuation. Every page of a walk sends the limit its first page
-// was asked for, the smaller of the page bound and the instance's stated maximum,
-// carried in the continuation, and a page number from 1, so the instance pages at
-// one size throughout: a later call at another bound, or on a connection whose
-// instance states another maximum, is refused rather than paging at a second size;
-// Forgejo answers a request with no page number with every run of the repository.
-// An envelope with no total says neither that the listing ended nor that it goes
-// on, so it is refused as the malformed answer it is, and so is a total below zero,
-// which counts nothing. A page that serves no row while the total states more ends
-// the walk, since no later page can serve what it did not, and carries
-// [forgeapi.PartialResultWindow] with what the walk was served.
+// ListRuns implements [forgeapi.Checks]. The row type reads both products' status
+// fields, and [forgeapi.Run.Name] is the workflow file's name without its YAML
+// extension, since neither product names the workflow. It is not gated on
+// [forgeapi.CapRerunChecks], since both carry the route whether or not they can
+// re-run. The envelope's total_count decides the continuation (see runWalk.next), so
+// one missing or below zero is refused, a page with no row while the total states
+// more ends the walk with [forgeapi.PartialResultWindow], and under
+// [forgeapi.WithSince] a page runsSince reports passed ends it complete.
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error) {
 	const op = "ListRuns"
 	ctx = transport.Call(ctx, op)
@@ -616,7 +619,7 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	walk, err := runWalkAt(c.core.PageCall(op, repo, set), set.After)
+	walk, err := runWalkAt(c.core.PageCall(op, repo, &set), set.After)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
@@ -636,9 +639,12 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 			forgeapi.KindUpstream, http.StatusOK, "the run listing answered no total_count it can count by, which is what says whether a further page exists")
 	}
 	rows, total := runs.WorkflowRuns, *runs.TotalCount
-	items := make([]forgeapi.Run, 0, len(rows))
-	for i := range rows {
-		items = append(items, c.normalizeRun(&rows[i], repo))
+	items, passed, err := c.runsSince(ctx, op, rows, repo, &set)
+	if err != nil {
+		return forgeapi.Page[forgeapi.Run]{}, err
+	}
+	if passed {
+		return forgeapi.Page[forgeapi.Run]{Items: items, Successor: addr.successor}, nil
 	}
 	next := walk.next(len(rows), total)
 	partial := c.pagePartial(len(rows), next, walk.page)
@@ -647,6 +653,48 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 		partial.OmittedAtLeast = total - served
 	}
 	return forgeapi.Page[forgeapi.Run]{Items: items, Next: next, Partial: partial, Successor: addr.successor}, nil
+}
+
+// runOrderSkew is how far a run's creation stamp may fall behind an older-id run's,
+// a host clock stepped back between the two inserts.
+const runOrderSkew = time.Minute
+
+// runsSince normalizes one page's runs and drops those created before the call's since
+// bound. Both products answer runs newest id first and stamp a run's creation at
+// insert, so passed reports a page whose every run predates the bound by more than
+// [runOrderSkew], after which no later page holds a run inside it. A row with no id
+// or a negative number, or with no creation time under a bound, is refused: a Gitea
+// release before v28 sends no created_at, and holding it to a bound would read every
+// run as older.
+func (c *Client) runsSince(ctx context.Context, op string, rows []wireRun, repo forgeapi.RepoRef, set *forgeapi.ListSettings) (items []forgeapi.Run, passed bool, err error) {
+	items = make([]forgeapi.Run, 0, len(rows))
+	floor := set.Since.Add(-runOrderSkew)
+	passed = set.SinceSet && len(rows) > 0
+	for i := range rows {
+		run := c.normalizeRun(&rows[i], repo)
+		switch {
+		case run.Ref.ID <= 0:
+			return nil, false, c.refuseRun(ctx, op, "the run listing answered a run with no id, which is the run's identity")
+		case run.Ref.Number < 0:
+			return nil, false, c.refuseRun(ctx, op, "the run listing answered a negative run number, which is no place in the repository's run sequence")
+		case set.SinceSet && run.CreatedAt.IsZero():
+			return nil, false, c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunUndated, forgeapi.KindUpstream,
+				http.StatusOK, "the run listing answered a run with no creation time, so it cannot be held to the since bound")
+		}
+		if passed && !run.CreatedAt.Before(floor) {
+			passed = false
+		}
+		if set.SinceSet && run.CreatedAt.Before(set.Since) {
+			continue
+		}
+		items = append(items, run)
+	}
+	return items, passed, nil
+}
+
+// refuseRun is the failure a run row this family will not publish answers.
+func (c *Client) refuseRun(ctx context.Context, op, message string) error {
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation, forgeapi.KindUpstream, http.StatusOK, message)
 }
 
 // readRunPage reads the page a run walk stands at, at the limit [Client.pageLimit]

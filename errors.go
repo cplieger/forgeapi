@@ -97,10 +97,10 @@ const (
 	// that does. It is issued only where the evidence separates the two, which
 	// on two families is the document's own envelope.
 	CodePRNotFound = "pr_not_found"
-	// CodeOwnerUnresolved is a cross-repository list scoped by [WithOwner] to an
-	// owner the instance does not resolve to a namespace it lists by owner for
-	// this credential: absent, invisible, or a namespace of a kind that product
-	// lists by no owner route. It is a not-found answer carrying the status the
+	// CodeOwnerUnresolved is a list scoped by [WithOwner] to an owner the
+	// instance does not resolve to a namespace it lists by owner for this
+	// credential: absent, invisible, or a namespace of a kind that product lists
+	// by no owner route. It is a not-found answer carrying the status the
 	// instance sent. A product whose answer cannot separate no such owner from
 	// nothing open answers an empty page instead, and that product's own
 	// per-forge block on the operation says so.
@@ -257,6 +257,17 @@ const (
 	// because the owner can reach a search string, whose grammar would read a
 	// space, a colon or a quote as a second qualifier.
 	CodeListOwnerInvalid = "list_owner_invalid"
+	// CodeListSinceInvalid is a [WithSince] bound that cannot be sent: the zero
+	// time, which [ResolveList] refuses whichever list it resolves for, and a
+	// bound named on a list with no creation time to bound, which the family
+	// method refuses.
+	CodeListSinceInvalid = "list_since_invalid"
+	// CodeRunUndated is a run row with no creation time on a listing held to a
+	// [WithSince] bound, which such a row cannot be held to. It is upstream's
+	// shape, not the caller's: the same listing read with no bound answers the
+	// row with a zero CreatedAt. A malformed run row of any other kind stays
+	// [CodeValidation].
+	CodeRunUndated = "run_undated"
 	// CodeCursorInvalid is a [Cursor] that is not well formed, refused by
 	// [ValidateCursor] and by [ResolveList] before it can be interpolated into
 	// a request, and one well formed that names no position in the call it was

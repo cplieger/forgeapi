@@ -28,7 +28,7 @@ const documentPageSize = 100
 
 // documents is every document this family ships, which is what the document
 // assertions iterate.
-var documents = []document{prList, prRead, prMine, issueMine, commitRollup, enableAutoMerge}
+var documents = []document{prList, prRead, prMine, issueMine, commitRollup, enableAutoMerge, repoOwned}
 
 // TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn holds every document to
 // the selection their prices and their normalizers both rest on.
@@ -41,8 +41,8 @@ var documents = []document{prList, prRead, prMine, issueMine, commitRollup, enab
 // rate-limit field, which the endpoint answers as an undefined field, so the arm
 // document opens a named mutation and selects no budget object.
 func TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn(t *testing.T) {
-	if len(documents) != 6 {
-		t.Errorf("this family ships %d document(s), want 6: the pull-request list, the single read, the two cross-repository searches, the commit rollup and the auto-merge arm", len(documents))
+	if len(documents) != 7 {
+		t.Errorf("this family ships %d document(s), want 7: the pull-request list, the single read, the two cross-repository searches, the commit rollup, the auto-merge arm and the owner's repositories", len(documents))
 	}
 	for _, doc := range documents {
 		t.Run(doc.name, func(t *testing.T) {
@@ -175,7 +175,7 @@ func TestTheSearchQueryNamesOneScopeAndTheOpenState(t *testing.T) {
 		{itemType: searchPulls, set: owned, want: "type:pr user:example-org state:open"},
 		{itemType: searchIssues, set: owned, want: "type:issue user:example-org state:open"},
 	} {
-		if got := searchQuery(test.itemType, test.set); got != test.want {
+		if got := searchQuery(test.itemType, &test.set); got != test.want {
 			t.Errorf("searchQuery(%q, owner %q set %v) = %q, want %q", test.itemType, test.set.Owner, test.set.OwnerSet, got, test.want)
 		}
 	}

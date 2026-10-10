@@ -36,3 +36,18 @@ Where a product departs from the normalized contract, the operation's own godoc 
 | `Releases.ListReleases` | supported | supported | supported | supported |
 | `Releases.CreateRelease` | supported | supported | supported | supported |
 | `Labels.ListLabels` | supported | supported | supported | supported |
+
+## Rate-limit answers
+
+Every operation reports these answers as `KindRateLimited`, with `RetryAfter` set from the `Retry-After` header where the answer carries one.
+
+| Product | Status | Header | Answer |
+| --- | --- | --- | --- |
+| GitHub | 403 | `X-RateLimit-Remaining: 0` | the primary or a secondary limit spent, with no budget left in the window |
+| GitHub | 403 | `Retry-After`, any value | a secondary limit, whatever X-RateLimit-Remaining reads, as [GitHub documents it](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) |
+| GitHub | 429 | none: the status alone | a primary or a secondary limit |
+| GitLab | 429 | none: the status alone | a rate limit |
+| Gitea | 403 | `RateLimit-Remaining: 0` | a rate limit with no budget left in the window |
+| Gitea | 429 | none: the status alone | a rate limit |
+| Forgejo | 403 | `RateLimit-Remaining: 0` | a rate limit with no budget left in the window |
+| Forgejo | 429 | none: the status alone | a rate limit |

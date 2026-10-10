@@ -199,57 +199,10 @@ func packageSection(rendered, pkg string) string {
 	return rest
 }
 
-// TestRuledDefaultsAreStated pins the doc-comment obligations the golden file
-// cannot see, because the generator renders declarations and never doc comments.
-//
-// A default is one of the few things a 1.0 can neither loosen nor tighten
-// afterwards, and every row here states one the surface publishes: editing
-// "Default: true" to say the opposite changes no declaration, so without this
-// test each obligation rests on a review that happens once. The two
-// security-shaped defaults are here for the same reason as the mutations gate,
-// and that gate carries a second row because an option documented as advisory is
-// a different contract from one enforced at the operation boundary.
-//
-// The population is EVERY option that has a ruled default, which since the one
-// configuration door is the nine budget knobs plus the reserve, the rotation
-// cursor, the two per-connection postures, the mutations gate, the credential
-// source, the refresh lead and the page bound. Each of the nine numbers is one option whose absence
-// means its Default* constant and whose zero means zero, so each owes a clause of
-// its own here: nine clauses over one door is the accepted cost of an options-only
-// surface, and this is the test that holds them. WithCredentialSource's is the default
-// that decides whether a client with no credential connects at all, which the exported
-// surface makes mandatory and answers with a local-refusal code.
-//
-// The rows hold three obligations and the difference is worth naming. Some state
-// their default in PROSE ALONE, so the prose is the only thing holding it. Most
-// name a constant instead, and that constant's VALUE is already in the golden
-// file, so what those rows pin is not the value but WHICH constant the doc names:
-// rewriting "Default: [DefaultPageBound]." to "Default: the first page." changes
-// no declaration and leaves the golden byte-identical. And the nine knobs plus
-// the reserve additionally owe a sentence saying what a ZERO passed to them
-// means, because the one-door rule turns on that zero being the literal zero and
-// nothing in a declaration says so; zeroStated is that row. WithCredentialSource's
-// and WithRotationCursor's clauses WRAP mid-sentence, so those rows pin the value
-// and the punctuation that follows it rather than the wrapped prose, which is what
-// keeps them from going red on a re-flow that changes nothing and from passing a
-// bare "Default: none." should the clause ever be shortened.
-//
-// The zero clause is held as its own EXPECTED TEXT per row rather than as the
-// presence of the token "Zero ". Presence is satisfied by a doc stating the
-// opposite of what is ruled: measured, rewriting WithRetries' clause to
-// "Zero is refused with [CodeBudgetInvalid]" left its Default: clause intact and
-// this test green, which is the whole obligation the row exists to hold. So
-// zeroClause names the ruled meaning, and a row with no clause is one of the six
-// options whose zero nothing rules.
-//
-// The default is held as the OPERATIVE statement rather than as a substring
-// anywhere in the doc: "Default:" appears exactly once, opening a line, and that
-// line opens with the ruled value. A substring search accepts a doc that states the
-// wrong default first and keeps the ruled phrase as history, which is the shape a
-// contradictory edit takes; measured, "Default: false; prior docs said Default:
-// true." passed, and so did "Default: false. Default: true." on one line under a
-// count of lines alone. The enforcement-code names stay substring checks, since a
-// code is named rather than asserted.
+// TestRuledDefaultsAreStated pins, for every option with a ruled default, what the
+// surface golden cannot see because it omits doc comments: the one operative
+// "Default:" line opening with the ruled value or constant, the ruled meaning of a
+// zero where one is ruled, and the codes that enforce it.
 func TestRuledDefaultsAreStated(t *testing.T) {
 	const file = "options.go"
 	const defaultPrefix = "Default:"
@@ -276,6 +229,7 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 		{fn: "WithCredentialSource", defaultClause: "Default: none,"},
 		{fn: "WithRefreshLead", defaultClause: "Default: [DefaultRefreshLead].", zeroClause: "Zero refreshes a token only once it has expired.", names: []string{"CodeBudgetInvalid"}},
 		{fn: "WithPageBound", defaultClause: "Default: [DefaultPageBound].", names: []string{"CodePageBoundInvalid"}},
+		{fn: "WithSince", defaultClause: "Default: no bound,", names: []string{"CodeListSinceInvalid"}},
 	} {
 		t.Run(test.fn, func(t *testing.T) {
 			doc := funcDoc(t, file, test.fn)

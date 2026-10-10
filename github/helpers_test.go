@@ -392,5 +392,5 @@ func listCall(t *testing.T, client *Client, op string, repo forgeapi.RepoRef, op
 	if err != nil {
 		t.Fatalf("Setup: ResolveList() = %v", err)
 	}
-	return client.core.PageCall(op, repo, set)
+	return client.core.PageCall(op, repo, &set)
 }

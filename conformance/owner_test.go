@@ -236,10 +236,9 @@ func checkOwnerUnresolved(t *testing.T, e spec.Entry, method string, err error, 
 	}
 }
 
-// listsWithoutOwnerScope are the lists that answer one repository or the credential's
-// own repositories, where an owner names nothing.
+// listsWithoutOwnerScope are the lists that answer one repository, where an owner
+// names nothing.
 var listsWithoutOwnerScope = []string{
-	"Repos.ListRepos",
 	"PullRequests.ListPRs",
 	"Issues.ListIssues",
 	"Checks.ListRuns",

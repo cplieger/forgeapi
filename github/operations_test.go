@@ -1588,12 +1588,14 @@ func TestTheRunListingReadsEachWorkflowRun(t *testing.T) {
 	}
 	want := []forgeapi.Run{
 		{
+			Ref:  forgeapi.RunRef{ID: 1},
 			Repo: testRef(), Name: "example", Branch: "example-feature", HeadSHA: testHeadSHA,
 			WebURL:    "https://forge.example/example/example/actions/runs/1",
 			CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			State: forgeapi.CheckFailing,
 		},
 		{
+			Ref:  forgeapi.RunRef{ID: 2},
 			Repo: testRef(), Name: "example-security", Branch: "example-feature", HeadSHA: testHeadSHA,
 			WebURL:    "https://forge.example/example/example/actions/runs/2",
 			CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
@@ -1619,7 +1621,8 @@ func TestTheRunListingReadsEachWorkflowRun(t *testing.T) {
 // TestTheWorkflowRunVocabularyFoldsTotally holds the run's verdict to the vocabulary
 // the runs route's own status filter documents, every member of which is a check
 // run's status or conclusion: a run still in flight is pending whatever its status
-// member, a completed one is its conclusion's verdict, and a value outside the table
+// member, a completed one is its conclusion's verdict, except a run waiting for a
+// maintainer's approval, which is pending, and a value outside the table
 // is unknown, counted and named.
 func TestTheWorkflowRunVocabularyFoldsTotally(t *testing.T) {
 	for _, test := range []struct {
@@ -1636,7 +1639,7 @@ func TestTheWorkflowRunVocabularyFoldsTotally(t *testing.T) {
 		{status: "completed", conclusion: "failure", want: forgeapi.CheckFailing},
 		{status: "completed", conclusion: "timed_out", want: forgeapi.CheckFailing},
 		{status: "completed", conclusion: "startup_failure", want: forgeapi.CheckFailing},
-		{status: "completed", conclusion: "action_required", want: forgeapi.CheckFailing},
+		{status: "completed", conclusion: "action_required", want: forgeapi.CheckPending},
 		{status: "completed", conclusion: "neutral", want: forgeapi.CheckNeutral},
 		{status: "completed", conclusion: "skipped", want: forgeapi.CheckNeutral},
 		{status: "completed", conclusion: "cancelled", want: forgeapi.CheckNeutral},

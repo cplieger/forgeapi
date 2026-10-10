@@ -333,13 +333,42 @@ type CommitChecks struct { //nolint:govet // fieldalignment: field order is the 
 	Total int
 }
 
+// RunTrigger is what started one CI run.
+type RunTrigger int
+
+// The RunTrigger members.
+const (
+	// TriggerUnknown is the zero value: the product sent no trigger, or one
+	// outside its mapping table, which is counted and logged.
+	TriggerUnknown RunTrigger = iota
+	// TriggerPush is a push of a branch or a tag.
+	TriggerPush
+	// TriggerPullRequest is an event on a pull request, or a merge queue's or a
+	// merge train's run for one.
+	TriggerPullRequest
+	// TriggerSchedule is the product's own schedule.
+	TriggerSchedule
+	// TriggerManual is a run started on demand, through the product's pages or
+	// its API.
+	TriggerManual
+	// TriggerOther is a trigger the product names that none of the above
+	// describes. It is a mapped member, so it is never counted as unknown.
+	TriggerOther
+)
+
+// String returns the member's spelling: "unknown", "push", "pull_request",
+// "schedule", "manual" or "other".
+func (r RunTrigger) String() string {
+	return nameOf([]string{nameUnknown, "push", "pull_request", "schedule", "manual", "other"}, r)
+}
+
+var _ fmt.Stringer = RunTrigger(0)
+
 // Run is one CI run of one repository: a GitHub Actions workflow run, a GitLab
 // pipeline, or a Gitea or Forgejo Actions run.
-//
-// It carries no id, no number and no trigger event. An id is a product token
-// this surface does not hand out, and the event is one product's vocabulary
-// with no counterpart on the others.
 type Run struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, addressing first, and it is API for an unkeyed composite literal
+	// Ref identifies the run within Repo.
+	Ref RunRef
 	// Repo is the repository the run belongs to.
 	Repo RepoRef
 	// Name is the workflow's or pipeline's display name, empty where the
@@ -353,11 +382,17 @@ type Run struct { //nolint:govet // fieldalignment: field order is the reading o
 	WebURL string
 	// CreatedAt is when the run was created.
 	CreatedAt time.Time
+	// StartedAt is when the run's current attempt started, zero where the product
+	// sends none.
+	StartedAt time.Time
 	// UpdatedAt is when the run last changed.
 	UpdatedAt time.Time
 	// State is folded from the run's status and conclusion, in the verdict a
-	// check fold names: a failed run is [CheckFailing], and one still running
-	// is [CheckPending]. An upstream value outside the product's mapping table
-	// yields CheckUnknown, a counter increment and a log line naming it.
+	// check fold names: a failed run is [CheckFailing], and one still running or
+	// waiting for a person to approve it is [CheckPending]. An upstream value
+	// outside the product's mapping table yields CheckUnknown, a counter
+	// increment and a log line naming it.
 	State CheckState
+	// Trigger is what started the run, mapped from the product's own vocabulary.
+	Trigger RunTrigger
 }

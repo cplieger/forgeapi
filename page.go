@@ -88,22 +88,13 @@ const (
 	// of labels the call named, since that request applies them all or none.
 	// Only a product whose creation route declares no labels produces it.
 	PartialLabelsNotApplied
-	// PartialResultWindow means the route stopped serving rows while its own
-	// stated total says more exist, and no continuation reaches them, because
-	// the remainder lies outside what the route serves at all. It rides
-	// [Page.Partial] on the page where the walk ends, and it is the one
-	// response-level reason that arrives WITHOUT a [Cursor]. Its
-	// [Partial.Fetched] counts the rows the whole walk was served rather than
-	// the one page, and its [Partial.OmittedAtLeast] is the stated total less
-	// that, so the two sum to the total the route stated. A consumer renders
-	// it as a list holding more rows than the route will serve, never as a
-	// complete one. The cross-repository lists ([PullRequests.ListMyPRs],
-	// [Issues.ListMyIssues]) produce it on a product whose search serves a
-	// fixed window of results; a page whose document also answered errors
-	// carries [PartialGraphQLPartial] instead, since that says the page's own
-	// rows are in question. [Checks.ListRuns] produces it on a page that
-	// served no row while the listing's stated total says more than the walk
-	// was served.
+	// PartialResultWindow means the route stopped serving rows while its own stated
+	// total says more, and no continuation reaches them. It rides [Page.Partial] on
+	// the page where the walk ends, the one response-level reason that arrives
+	// WITHOUT a [Cursor]. [Partial.Fetched] counts the rows the whole walk was served
+	// and [Partial.OmittedAtLeast] is the stated total less that. A consumer renders
+	// it as a list holding more rows than the route serves, never as a complete one;
+	// docs/pagination.md names the lists that produce it.
 	PartialResultWindow
 )
 

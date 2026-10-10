@@ -119,18 +119,14 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	lastMutate time.Time
 }
 
-// Options is what a family hands [Open]: the connection, the resolved settings,
-// the family this client serves, the API base to use when the connection names
-// none, and the two per-family functions this package cannot own.
+// Options is what a family hands [Open]: the connection, the resolved settings, the
+// family this client serves, the API base to use when the connection names none, and
+// the two per-family functions this package cannot own.
 //
-// Clock is the time source the governor's ROLLING INTERVAL is measured on,
-// [time.Now] where it is nil. It exists because the interval is the one bound
-// nothing but the clock can move: a caller cannot ask for the next window, so a
-// test of the rotation across several windows either waits out a real interval,
-// which makes its verdict a race against however loaded the machine is, or drives
-// the clock. Nothing else in this package reads it, and no exported surface carries
-// it, so a consumer cannot substitute a clock for the pacing this governor exists
-// to do.
+// Clock is the time source the governor's rolling interval and a reported reset are
+// measured on, [time.Now] where it is nil. Only a test sets it, to move a bound no
+// caller can advance; no exported surface carries it, so a consumer cannot replace
+// the pacing this governor exists to do.
 type Options struct {
 	Mapper        errorMapper
 	Signal        budgetSignal
@@ -176,6 +172,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		ssrf.WithAddressPolicy(addressPolicy(set, &set.Counters, opts.Family)),
 		ssrf.WithAllowedPorts(dialablePorts(web, conn.Proxy, set)...),
 		ssrf.WithDialer(&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}),
+		ssrf.WithLogger(set.Logger),
 	)
 	wire.TLSClientConfig = tlsCfg
 	wire.TLSHandshakeTimeout = handshakeTimeout
@@ -593,10 +590,8 @@ func proxyFor(conn *forgeapi.Connection, set *forgeapi.Settings) (func(*http.Req
 // addressPolicy is this connection's address verdict, taken at the socket inside
 // the transport's own control hook, which is where containment lives.
 //
-// It counts its own refusals, because the layer beneath logs them to the default
-// sink and exposes no logger option: a refusal reported only there lands somewhere
-// this library does not own, so the counter seam is what makes it observable to a
-// consumer at all.
+// The layer beneath logs each refusal through the connection's logger; the policy
+// also counts it, so a consumer can alert on refusals without parsing lines.
 func addressPolicy(set *forgeapi.Settings, counters *forgeapi.Counters, family forgeapi.Family) ssrf.AddressPolicy {
 	if set.PrivateAddresses {
 		return func(netip.Addr) bool { return true }
@@ -752,6 +747,13 @@ type Request struct {
 	// names that merge's handle, which is the outcome, not a conflict.
 	Answers  []int
 	MaxBytes int64
+	// OwnerStatus is the status this request's route answers for an owner
+	// [forgeapi.WithOwner] named and the instance does not resolve, zero on a
+	// request no owner scopes. [Conn] maps exactly that status to
+	// [forgeapi.CodeOwnerUnresolved] before the family's [Mapper] is asked,
+	// because the cell is the scoped request's: the operation's default scope
+	// names no owner, and the same status there is the ordinary cell.
+	OwnerStatus int
 	// Page is which page of a paged read this request asks for, so the
 	// per-request record carries it. One where the read is not paged.
 	Page int
@@ -895,13 +897,11 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	defer c.release(req)
 
 	started := time.Now()
-	//nolint:bodyclose // the close is the defer below, which the analyzer cannot follow across the error branch
+	//nolint:bodyclose // httpx.ReadLimitedBody below always closes the body, which the analyzer cannot follow
 	resp, token, err := c.send(ctx, req, target)
 	if err != nil {
 		return refusedHop(resp), c.transportError(ctx, req, err, started)
 	}
-
-	defer httpx.DrainClose(resp.Body)
 
 	c.gov.observe(resp.Header, c.signal)
 	out := &Response{
@@ -1329,7 +1329,10 @@ func contextSentinel(err error) error {
 // plus status plus selected headers rather than by status alone.
 func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, started time.Time) *forgeapi.Error {
 	answer := readRefusal(resp.Body)
-	kind, code := c.mapper(req.Op, resp.Status, resp.Header, answer.Error)
+	kind, code := forgeapi.KindNotFound, forgeapi.CodeOwnerUnresolved
+	if req.OwnerStatus == 0 || resp.Status != req.OwnerStatus {
+		kind, code = c.mapper(req.Op, resp.Status, resp.Header, answer.Error)
+	}
 	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
 	fe.Retryable = kind == forgeapi.KindTransient
 	if kind == forgeapi.KindRateLimited {

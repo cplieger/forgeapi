@@ -126,9 +126,13 @@ func pullRequestFields(foldPage int, foldAfter string) string {
 // text, and whether it is a mutation, which the transport governs as a write. A
 // document is not an operation, and the operations that reach each are named in its
 // own comment below.
+//
+// absence names a nullable root field whose NOT_FOUND error is the schema's answer for
+// no such node, so an envelope carrying only that error is an answer, not a refusal.
 type document struct {
 	name     string
 	text     string
+	absence  string
 	mutation bool
 }
 
@@ -294,6 +298,32 @@ var enableAutoMerge = document{
 	mutation: true,
 }
 
+// repoOwned is one owner's repositories, whose caller is [Client.ListRepos] under an
+// owner scope. repositoryOwner resolves a user and an organization alike, and
+// ownerAffiliations is sent because the schema defaults it to [OWNER, COLLABORATOR].
+var repoOwned = document{
+	name:    "RepoOwned",
+	absence: "repositoryOwner",
+	text: `query RepoOwned($owner: String!, $first: Int!, $after: String) {` + rateLimitSelection + `
+  repositoryOwner(login: $owner) {
+    repositories(first: $first, after: $after, ownerAffiliations: [OWNER]) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        nameWithOwner description url isPrivate isArchived isFork updatedAt
+        defaultBranchRef { name }
+        hasIssuesEnabled viewerPermission mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
+      }
+    }
+  }
+}
+`,
+}
+
+// repoOwnedPageCeiling is the most rows [repoOwned] asks for on one page: this
+// product refuses a connection's first argument above 100
+// (https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api).
+const repoOwnedPageCeiling = 100
+
 // envelope is the GraphQL response envelope, decoded whenever the body is JSON
 // whatever the status: an unknown field, an unresolvable selection and a partial
 // result all arrive at HTTP 200, so the status alone classifies none of them.
@@ -313,12 +343,42 @@ func (e *envelope) carriesData() bool {
 	return len(e.Data) > 0 && string(e.Data) != "null"
 }
 
-// docError is one envelope error. Its path is not decoded: on this product it is a
-// HETEROGENEOUS array of strings and integers, measured, so a typed list of either
-// element type would fail to decode the other and take the envelope with it.
+// docError is one envelope error. Its path is a HETEROGENEOUS array of strings and
+// integers on this product, measured, which is why it is held as raw JSON rather than
+// as a typed list that would fail to decode the other element type.
 type docError struct {
-	Message string `json:"message"`
-	Type    string `json:"type"`
+	Message string          `json:"message"`
+	Type    string          `json:"type"`
+	Path    json.RawMessage `json:"path"`
+}
+
+// notFoundType is the discriminator this product sends for a node no one holds.
+const notFoundType = "NOT_FOUND"
+
+// on reports whether this error's path starts at the root field named.
+func (e *docError) on(field string) bool {
+	var path []json.RawMessage
+	var first string
+	return json.Unmarshal(e.Path, &path) == nil && len(path) > 0 &&
+		json.Unmarshal(path[0], &first) == nil && first == field
+}
+
+// absenceOf reads an envelope's errors against the document's nullable root: whether
+// every error is a NOT_FOUND on it, and the first other error on it, which is a
+// resolver failure that nulled the root rather than an absence.
+func (d *document) absenceOf(errs []docError) (onlyNotFound bool, failure *docError) {
+	if d.absence == "" || len(errs) == 0 {
+		return false, nil
+	}
+	onlyNotFound = true
+	for i := range errs {
+		absent := errs[i].Type == notFoundType && errs[i].on(d.absence)
+		onlyNotFound = onlyNotFound && absent
+		if failure == nil && !absent && errs[i].on(d.absence) {
+			failure = &errs[i]
+		}
+	}
+	return onlyNotFound, failure
 }
 
 // docData is the decoded `data` of one document, which reports what the endpoint
@@ -334,9 +394,12 @@ type docResult struct {
 	// Refusal is the first envelope error's message, quoted, on a partial answer: a
 	// mutation whose payload is null beside an error is refused by that error.
 	Refusal string
-	Cost    int
-	Status  int
-	Partial bool
+	// RootFailure is the quoted message of a non-NOT_FOUND error on the document's
+	// absence root, empty where none arrived: the root's null is then that failure.
+	RootFailure string
+	Cost        int
+	Status      int
+	Partial     bool
 }
 
 // execute sends one document and decodes its data into out.
@@ -381,8 +444,13 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	if !decoded {
 		return docResult{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), status)
 	}
+	onlyNotFound, rootFailure := doc.absenceOf(env.Errors)
 	if len(env.Errors) > 0 && !env.carriesData() {
-		return docResult{}, c.refuseDocument(ctx, op, doc, resp, env.Errors)
+		if !onlyNotFound {
+			return docResult{}, c.refuseDocument(ctx, op, doc, resp, env.Errors)
+		}
+		c.countEnvelope(env.Errors)
+		return docResult{Status: status}, nil
 	}
 	if err := transport.Decode(env.Data, out); err != nil {
 		return docResult{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), status)
@@ -394,6 +462,9 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	if result.Partial {
 		c.countEnvelope(env.Errors)
 		result.Refusal = resp.Quote(env.Errors[0].Message)
+	}
+	if rootFailure != nil {
+		result.RootFailure = resp.Quote(rootFailure.Message)
 	}
 	return result, nil
 }
@@ -501,7 +572,7 @@ const (
 // as it resolves a user's, measured on both. Either way the query names no
 // repository, which is what makes the call's price independent of how many
 // repositories the credential can reach.
-func searchQuery(itemType string, set forgeapi.ListSettings) string {
+func searchQuery(itemType string, set *forgeapi.ListSettings) string {
 	scope := "author:@me"
 	if set.OwnerSet {
 		scope = "user:" + set.Owner
@@ -511,11 +582,11 @@ func searchQuery(itemType string, set forgeapi.ListSettings) string {
 
 // searchVariables are the variables both cross-repository documents take for one
 // page of one query.
-func searchVariables(query string, set forgeapi.ListSettings, after string) map[string]any {
+func searchVariables(query string, set *forgeapi.ListSettings, after string) map[string]any {
 	return map[string]any{
-		"q":     query,
-		"first": set.PageBound,
-		"after": nullableString(after),
+		"q":      query,
+		varFirst: set.PageBound,
+		varAfter: nullableString(after),
 	}
 }
 
