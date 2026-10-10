@@ -7,6 +7,6 @@ require (
 	github.com/cplieger/httpx/v5 v5.0.5
 	github.com/cplieger/jsoncap/v2 v2.0.3
 	github.com/cplieger/runesafe/v2 v2.1.1
-	github.com/cplieger/ssrf/v4 v4.2.0
+	github.com/cplieger/ssrf/v4 v4.3.0-dev.1
 	github.com/cplieger/urlform v1.4.0
 )
