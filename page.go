@@ -91,10 +91,10 @@ const (
 	// PartialResultWindow means the route stopped serving rows while its own stated
 	// total says more, and no continuation reaches them. It rides [Page.Partial] on
 	// the page where the walk ends, the one response-level reason that arrives
-	// WITHOUT a [Cursor]. [Partial.Fetched] counts the rows the whole walk was served
-	// and [Partial.OmittedAtLeast] is the stated total less that. A consumer renders
-	// it as a list holding more rows than the route serves, never as a complete one;
-	// docs/pagination.md names the lists that produce it.
+	// WITHOUT a [Cursor]. [Partial.Fetched] counts the rows the whole walk answered,
+	// and [Partial.OmittedAtLeast] is a lower bound on the stated rows it did not
+	// answer. A consumer renders it as a list holding more rows than the route
+	// serves, never as a complete one; docs/pagination.md names its lists.
 	PartialResultWindow
 	// PartialForbidden means the product refused part of an item to this
 	// credential and answered the rest of it. It rides the item's own marker,

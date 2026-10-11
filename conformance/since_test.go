@@ -93,9 +93,15 @@ func TestASinceBoundHoldsTheRunListingToTheRunsCreatedSinceIt(t *testing.T) {
 		t.Run(string(p), func(t *testing.T) {
 			e := runsEntry(t, p)
 			key := runCreatedKey[p]
-			// A stated total above the rows served, so a walk continues on the products
-			// that page by the total.
-			f := runFixture(t, p, 120,
+			// A stated total above the rows served where the route takes no time
+			// filter, so a walk continues on the products that page by the total; on a
+			// filtered route the page serves its whole total, so the walk is complete.
+			filtered := slices.ContainsFunc(e.Sends, func(row spec.Sent) bool { return row.Holds == spec.HoldsSinceBound })
+			total := 120
+			if filtered {
+				total = 3
+			}
+			f := runFixture(t, p, total,
 				map[string]any{"id": 3, key: createdAt.Format(time.RFC3339)},
 				map[string]any{"id": 2, key: bound.Format(time.RFC3339)},
 				map[string]any{"id": 1, key: bound.Add(-time.Second).Format(time.RFC3339)})
@@ -107,7 +113,6 @@ func TestASinceBoundHoldsTheRunListingToTheRunsCreatedSinceIt(t *testing.T) {
 			if len(page.Items) != 2 || page.Items[0].Ref.ID != 3 || page.Items[1].Ref.ID != 2 {
 				t.Errorf("ListRuns(WithSince(%v)) on %s answered %+v, want runs 3 and 2, the ones stamped in or after the bound's second", bound, p, page.Items)
 			}
-			filtered := slices.ContainsFunc(e.Sends, func(row spec.Sent) bool { return row.Holds == spec.HoldsSinceBound })
 			if continued := page.Next != ""; continued == filtered {
 				t.Errorf("ListRuns(WithSince(%v)) on %s = Next %q, want a continuation exactly where the route takes no time filter (filter sent: %t)", bound, p, page.Next, filtered)
 			}
@@ -160,10 +165,12 @@ func TestARunWithNoCreationTimeAnswersAsTheTableStates(t *testing.T) {
 	}
 }
 
-// TestABoundedRunWalkEndingShortOfItsTotalAnswersAsTheTableStates holds the products
-// whose table states a window on a bounded run listing to it: a walk ending with no
-// continuation while the stated total says more carries the result window.
-func TestABoundedRunWalkEndingShortOfItsTotalAnswersAsTheTableStates(t *testing.T) {
+// TestABoundedRunWalkEndingShortOfItsTotalBelowTheWindowFails holds the products whose
+// table states a window on a bounded run listing to it: a walk served 1 run of a
+// stated 1500 narrows to the range from the bound through that run's second, then
+// reads that second alone, and fails there as an upstream validation, no narrower
+// range reaching the rest, never marking the result window.
+func TestABoundedRunWalkEndingShortOfItsTotalBelowTheWindowFails(t *testing.T) {
 	for _, p := range spec.Products {
 		t.Run(string(p), func(t *testing.T) {
 			e := runsEntry(t, p)
@@ -171,14 +178,29 @@ func TestABoundedRunWalkEndingShortOfItsTotalAnswersAsTheTableStates(t *testing.
 				t.Skipf("the table states no window on %s's bounded run listing", p)
 			}
 			f := runFixture(t, p, 1500, map[string]any{runCreatedKey[p]: createdAt.Format(time.RFC3339)})
-			got, _, err := listAgainst(t, e, f, forgeapi.WithSince(createdAt.Add(-time.Hour)))
-			if err != nil {
-				t.Fatalf("ListRuns(WithSince) on %s = error %v, want the page", p, err)
+			f.Routes[0].Repeat = 3
+			srv, rec := newFixtureServer(t, f)
+			since := forgeapi.WithSince(createdAt.Add(-time.Hour))
+			var next forgeapi.Cursor
+			for call := 1; call <= 3; call++ {
+				opts := []forgeapi.ListOption{since}
+				if next != "" {
+					opts = append(opts, forgeapi.WithAfter(next))
+				}
+				got, _, err := listOn(t, e, srv, rec, opts...)
+				if err != nil {
+					if fe, ok := errors.AsType[*forgeapi.Error](err); !ok || fe.Code != forgeapi.CodeValidation || fe.Kind != forgeapi.KindUpstream || call != 3 {
+						t.Errorf("ListRuns(WithSince) on %s over 1 of a stated 1500 = %v on page %d, want code %q of kind %v on page 3, after the bound range and the second's own range", p, err, call, forgeapi.CodeValidation, forgeapi.KindUpstream)
+					}
+					return
+				}
+				page := got.(forgeapi.Page[forgeapi.Run])
+				if page.Partial != nil || page.Next == "" {
+					t.Fatalf("ListRuns(WithSince) on %s over 1 of a stated 1500 page %d = Next %q, Partial %+v, want a continuation and no marker until it fails", p, call, page.Next, page.Partial)
+				}
+				next = page.Next
 			}
-			page := got.(forgeapi.Page[forgeapi.Run])
-			if pt := page.Partial; page.Next != "" || pt == nil || pt.Reason != forgeapi.PartialResultWindow || pt.Fetched != 1 || pt.OmittedAtLeast != 1499 {
-				t.Errorf("ListRuns(WithSince) on %s over 1 of a stated 1500 = Next %q, Partial %+v, want no continuation and result_window with 1 fetched and at least 1499 omitted", p, page.Next, pt)
-			}
+			t.Errorf("ListRuns(WithSince) on %s over 1 of a stated 1500 went on past 3 pages, want a validation failure", p)
 		})
 	}
 }

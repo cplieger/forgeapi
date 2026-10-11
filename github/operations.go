@@ -948,12 +948,6 @@ func (c *Client) readRuns(ctx context.Context, op string, repo forgeapi.RepoRef,
 	return runs, resp, err
 }
 
-// runWindow is the run count a created-filtered listing serves through: it serves the
-// first whole page reaching it, then answers total_count 0 and no rows (measured), so a
-// walk ends on the page that reaches it:
-// https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository
-const runWindow = 1000
-
 // ListRuns implements [forgeapi.Checks].
 //
 // A run is an Actions workflow run, the row the re-run resolves its run from: its
@@ -968,7 +962,14 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	set, query, walk, err := c.listing(op, repo, runList, opts)
+	set, err := listOptions(op, runList, opts)
+	if err != nil {
+		return forgeapi.Page[forgeapi.Run]{}, err
+	}
+	if set.SinceSet {
+		return c.listRunsSince(ctx, op, repo, &set)
+	}
+	query, walk, err := c.listQuery(op, repo, runList, &set)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
@@ -983,31 +984,24 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 		}
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	items, err := c.runsSince(ctx, op, runs.Runs, repo, &set, resp.Status)
+	kept, err := c.keptRuns(ctx, op, runs.Runs, &set, resp.Status)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
 	next := walk.next(resp.Header)
-	partial := c.pagePartial(len(runs.Runs), next, walk.page)
-	n := min(set.PageBound, restPerPageMax)
-	if served := (walk.page-1)*n + len(runs.Runs); set.SinceSet && served < runs.TotalCount && (next == "" || walk.page*n >= runWindow) {
-		next = ""
-		partial = c.partial(forgeapi.PartialResultWindow, served)
-		partial.OmittedAtLeast = runs.TotalCount - served
-	}
 	return forgeapi.Page[forgeapi.Run]{
-		Items:     items,
+		Items:     c.normalizeRuns(kept, repo),
 		Next:      next,
-		Partial:   partial,
+		Partial:   c.pagePartial(len(runs.Runs), next, walk.page),
 		Successor: moved.to,
 	}, nil
 }
 
-// runsSince normalizes one page's runs and drops those created before the call's since
-// bound. A row with no id or a negative number, or with no creation time under a
-// bound, is refused rather than published or read as older.
-func (c *Client) runsSince(ctx context.Context, op string, rows []restWorkflowRun, repo forgeapi.RepoRef, set *forgeapi.ListSettings, status int) ([]forgeapi.Run, error) {
-	items := make([]forgeapi.Run, 0, len(rows))
+// keptRuns is one page's runs less those created before the call's since bound. A row
+// with no id or a negative number, or with no creation time under a bound, is refused
+// rather than published or read as older.
+func (c *Client) keptRuns(ctx context.Context, op string, rows []restWorkflowRun, set *forgeapi.ListSettings, status int) ([]restWorkflowRun, error) {
+	kept := make([]restWorkflowRun, 0, len(rows))
 	for i := range rows {
 		switch {
 		case rows[i].ID <= 0:
@@ -1019,9 +1013,17 @@ func (c *Client) runsSince(ctx context.Context, op string, rows []restWorkflowRu
 		case set.SinceSet && rows[i].CreatedAt.Before(set.Since):
 			continue
 		}
+		kept = append(kept, rows[i])
+	}
+	return kept, nil
+}
+
+func (c *Client) normalizeRuns(rows []restWorkflowRun, repo forgeapi.RepoRef) []forgeapi.Run {
+	items := make([]forgeapi.Run, 0, len(rows))
+	for i := range rows {
 		items = append(items, c.normalizeRun(&rows[i], repo))
 	}
-	return items, nil
+	return items
 }
 
 // refuseRun is the failure a run row this family will not publish answers.
@@ -1453,7 +1455,7 @@ func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
-	_, query, walk, err := c.listing(op, repo, statefulList, opts)
+	query, walk, err := c.listing(op, repo, statefulList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
@@ -1539,7 +1541,7 @@ func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts .
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
-	_, query, walk, err := c.listing(op, repo, fixedList, opts)
+	query, walk, err := c.listing(op, repo, fixedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
@@ -1602,7 +1604,7 @@ func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
-	_, query, walk, err := c.listing(op, repo, fixedList, opts)
+	query, walk, err := c.listing(op, repo, fixedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
