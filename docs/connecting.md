@@ -19,6 +19,16 @@ The credential is the `WithCredentialSource` option. A family's constructor refu
 
 A self-hosted forge is usually on a private network. A connection refuses a private-range address or a single-label host until you pass `forgeapi.WithPrivateAddresses(true)`. With a `Proxy` set, the proxy resolves the destination, so this check applies to the proxy's own address and the proxy decides which destinations are reachable. A connection refuses `http` until you pass `forgeapi.WithPlaintextHTTP(true)`. With plain HTTP, the token and every request travel in cleartext on that network. A redirect from `https` down to `http` stays refused whatever you set.
 
+## When an instance cannot be reached
+
+A request that never got an answer fails with one of four codes, and `Error.Retryable` says whether trying again can help.
+
+- `CodeUnreachable` is a failed lookup, a refused or unroutable connection, or a dial that timed out. Its message names the host. It is retryable, and the library retries it itself where the budget allows, except a dial timeout, which it hands back at once so the host is not lost to the operation's own deadline.
+- `CodeTLSRefused` is a certificate that did not verify, a peer that does not speak TLS, or a fatal alert from the peer during the handshake. It is not retryable. Every fatal alert counts, an `internal_error` from an overloaded peer included, because Go reports alerts only as text.
+- `CodePrivateAddressRefused` and `CodeRedirectPortRefused` are a dial whose address or port the connection's policy refused, as they are for a redirect hop. Neither is retryable.
+
+A proxy that refuses the `CONNECT` for a destination reaches you as `CodeUnreachable`, because Go's HTTP stack reports that refusal as untyped text. A body over the library's bound fails with `CodeResponseTooLarge`, carrying the status the instance answered with.
+
 ## Detecting the family
 
 `families.Open` is the entry point for when the family is a fact about the instance rather than about your configuration. It asks GitLab's connection read first, then GitHub's, then the one Gitea and Forgejo share. It answers the first family that recognizes the instance, beside a `forgeapi.Core` client for it that already holds the connection's capabilities.

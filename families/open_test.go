@@ -141,3 +141,38 @@ func TestOpenRefusesAServerThatIdentifiesNoFamily(t *testing.T) {
 		})
 	}
 }
+
+// An instance that answered every detection read with the same failure is
+// undetected with that failure's verdict: a server failure may pass, a 404 will not.
+func TestAnUndetectedFamilyKeepsTheLastReadsVerdict(t *testing.T) {
+	for _, test := range []struct {
+		status    int
+		retryable bool
+	}{
+		{status: http.StatusServiceUnavailable, retryable: true},
+		{status: http.StatusNotFound},
+	} {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+			}))
+			t.Cleanup(srv.Close)
+			_, _, err := families.Open(t.Context(), forgeapi.Connection{WebBaseURL: srv.URL},
+				forgeapi.WithWireTransport(srv.Client().Transport),
+				forgeapi.WithCredentialSource(openCredential{}),
+				forgeapi.WithPlaintextHTTP(true),
+				forgeapi.WithPrivateAddresses(true),
+				forgeapi.WithRetries(0),
+				forgeapi.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+			)
+			var fe *forgeapi.Error
+			if !errors.As(err, &fe) || fe.Code != forgeapi.CodeFamilyUndetected {
+				t.Fatalf("families.Open over an instance answering %d = %v, want code %q", test.status, err, forgeapi.CodeFamilyUndetected)
+			}
+			if fe.Status != test.status || fe.Retryable != test.retryable {
+				t.Errorf("families.Open over an instance answering %d = (status %d, retryable %v), want (%d, %v)", test.status, fe.Status, fe.Retryable, test.status, test.retryable)
+			}
+		})
+	}
+}

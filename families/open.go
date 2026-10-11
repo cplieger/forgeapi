@@ -8,6 +8,7 @@ import (
 	"github.com/cplieger/forgeapi/gitea"
 	"github.com/cplieger/forgeapi/github"
 	"github.com/cplieger/forgeapi/gitlab"
+	"github.com/cplieger/forgeapi/internal/transport"
 )
 
 // Open builds a client for conn by asking GitLab's connection read, then GitHub's, then the
@@ -77,7 +78,7 @@ func undetected(err error) error {
 			Code:      forgeapi.CodeFamilyUndetected,
 			Family:    forgeapi.FamilyUnknown,
 			Kind:      forgeapi.KindTransient,
-			Retryable: true,
+			Retryable: transport.Retryable(forgeapi.KindTransient, 0),
 			Message:   "no family established: the last family's connection read outlived its operation deadline",
 		}
 	}
@@ -86,12 +87,13 @@ func undetected(err error) error {
 		return err
 	}
 	return &forgeapi.Error{
-		Op:      fe.Op,
-		Code:    forgeapi.CodeFamilyUndetected,
-		Family:  forgeapi.FamilyUnknown,
-		Status:  fe.Status,
-		Kind:    fe.Kind,
-		Message: fe.Message,
-		DiagID:  fe.DiagID,
+		Op:        fe.Op,
+		Code:      forgeapi.CodeFamilyUndetected,
+		Family:    forgeapi.FamilyUnknown,
+		Status:    fe.Status,
+		Kind:      fe.Kind,
+		Retryable: transport.Retryable(fe.Kind, fe.Status),
+		Message:   fe.Message,
+		DiagID:    fe.DiagID,
 	}
 }

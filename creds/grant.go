@@ -180,7 +180,10 @@ func (g *DeviceGrant) outcome(a *answer, status int) error {
 }
 
 func (g *DeviceGrant) refusal(code string, kind forgeapi.ErrorKind, status int, message string) *forgeapi.Error {
-	return &forgeapi.Error{Code: code, Family: g.family, Status: status, Kind: kind, Message: message}
+	return &forgeapi.Error{
+		Code: code, Family: g.family, Status: status, Kind: kind,
+		Retryable: transport.Retryable(kind, status), Message: message,
+	}
 }
 
 // end makes err the grant's terminal answer and releases its connection.

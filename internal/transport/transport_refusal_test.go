@@ -99,16 +99,27 @@ func TestOnlyTheOwnerStatusOfAnOwnerScopedRequestIsTheUnresolvedOwner(t *testing
 	}
 }
 
-func TestOnlyATransientRefusalIsRetryable(t *testing.T) {
+// Retryable says whether another attempt may succeed, whatever kind the family's
+// mapping gave the status: a throttle, a timeout and a server failure may pass.
+func TestARefusalIsRetryableExactlyWhereAnotherAttemptCanSucceed(t *testing.T) {
 	for _, test := range []struct {
-		name      string
 		status    int
 		retryable bool
 	}{
-		{name: "a_transient_refusal", status: http.StatusServiceUnavailable, retryable: true},
-		{name: "a_permanent_refusal", status: http.StatusNotFound},
+		{status: http.StatusRequestTimeout, retryable: true},
+		{status: http.StatusTooManyRequests, retryable: true},
+		{status: http.StatusInternalServerError, retryable: true},
+		{status: http.StatusBadGateway, retryable: true},
+		{status: http.StatusServiceUnavailable, retryable: true},
+		{status: http.StatusGatewayTimeout, retryable: true},
+		{status: http.StatusBadRequest},
+		{status: http.StatusUnauthorized},
+		{status: http.StatusForbidden},
+		{status: http.StatusNotFound},
+		{status: http.StatusConflict},
+		{status: http.StatusUnprocessableEntity},
 	} {
-		t.Run(test.name, func(t *testing.T) {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
 			c := refusingConn(t, test.status, `{}`)
 			_, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"})
 			var fe *forgeapi.Error
