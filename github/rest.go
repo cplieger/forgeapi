@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/internal/transport"
@@ -319,13 +318,12 @@ func listOptions(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi
 // at, and this product's page query for it, sending the state filter on a stateful
 // list alone. repo is the repository the call addresses, the zero reference on a
 // list no repository addresses.
-func (c *Client) listing(op string, repo forgeapi.RepoRef, kind listKind, opts []forgeapi.ListOption) (forgeapi.ListSettings, url.Values, restWalk, error) {
+func (c *Client) listing(op string, repo forgeapi.RepoRef, kind listKind, opts []forgeapi.ListOption) (url.Values, restWalk, error) {
 	set, err := listOptions(op, kind, opts)
 	if err != nil {
-		return set, nil, restWalk{}, err
+		return nil, restWalk{}, err
 	}
-	query, walk, err := c.listQuery(op, repo, kind, &set)
-	return set, query, walk, err
+	return c.listQuery(op, repo, kind, &set)
 }
 
 // listQuery is listing over options already resolved.
@@ -338,19 +336,10 @@ func (c *Client) listQuery(op string, repo forgeapi.RepoRef, kind listKind, set 
 		keyPage:    {strconv.Itoa(walk.page)},
 		keyPerPage: {strconv.Itoa(set.PageBound)},
 	}
-	switch {
-	case kind == statefulList:
+	if kind == statefulList {
 		query.Set("state", listState(set.State))
-	case kind == runList && set.SinceSet:
-		query.Set("created", createdFilter(set.Since))
 	}
 	return query, walk, nil
-}
-
-// createdFilter is the runs route's created filter for a since bound, which
-// ListSettings.Since holds in UTC at whole seconds: the search syntax, inclusive.
-func createdFilter(since time.Time) string {
-	return ">=" + since.Format("2006-01-02T15:04:05") + "+00:00"
 }
 
 // listState is this product's own spelling of the state filter, which is the same

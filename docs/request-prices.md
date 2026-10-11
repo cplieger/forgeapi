@@ -8,6 +8,8 @@ Each operation's godoc publishes what the call costs on each product, under the 
 
 On GitLab, an owner named by digits alone costs one more request on every page of `ListRepos`, `ListMyPRs` and `ListMyIssues`. Every GitLab namespace route reads such a name as a numeric id, so the library first resolves the name to the id of the group or user that holds it.
 
+On GitHub, the run route serves one created filter through a result window of 1,000 runs, ending with the whole page that reaches it. A `ListRuns` walk under `WithSince` that goes past the window costs more pages than its runs fill. Each page still costs what the block states. But each time the walk narrows its created range, it reads the runs of one second twice, so it pays once more for the pages those runs fill.
+
 ## The per-product block
 
 The same `Per forge:` block names the capability a detection can refuse the call on. It also lists every field where that product departs from the normalized contract, because it cannot supply the field, supplies another shape or spells the value differently. A field arriving exactly as the contract states has no row, which keeps the blocks short. The blocks and [SUPPORT.md](../SUPPORT.md) are generated from one table, so they cannot disagree.

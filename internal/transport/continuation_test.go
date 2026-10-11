@@ -182,3 +182,17 @@ func TestPageCall_names_the_since_bound_and_keeps_the_unbounded_digest(t *testin
 		t.Errorf("Resume under the same second in another zone = %v, %v, want [2]: the bound is read at whole seconds", got, err)
 	}
 }
+
+// A position may name a value no 32-bit int holds, such as a run id, and resumes as
+// the same 64-bit numbers it was minted with, negatives included.
+func TestPageCall_resumes_a_wide_position_as_it_was_minted(t *testing.T) {
+	call := newPageCall(forgeapi.FamilyGitHub, pageConnection, "ListRuns", pageRepo("example/repo"), pageSettings(t))
+	want := []int64{38_104_061_176, -1, 0, 1 << 62}
+	got, err := call.ResumeWide(call.MintWide("w", want...), "w", len(want))
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("ResumeWide(MintWide(%v)) = %v, %v, want the same numbers", want, got, err)
+	}
+	if _, err := call.ResumeWide(call.MintWide("w", want...), "w", len(want)+1); err == nil {
+		t.Errorf("ResumeWide(MintWide(%v)) reading %d numbers = nil error, want the continuation refused", want, len(want)+1)
+	}
+}

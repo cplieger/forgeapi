@@ -2,7 +2,6 @@ package github
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -158,119 +157,6 @@ func TestAnUnboundedRunListingSendsNoCreatedFilter(t *testing.T) {
 	}
 	if _, sent := h.instance.queries[runsRoute]["created"]; sent {
 		t.Errorf("ListRuns with no bound sent created %q, want none", h.instance.query(runsRoute, "created"))
-	}
-}
-
-// The route serves a created-filtered listing only through its 1,000-run window, so a
-// walk that ends with no next relation while total_count states more says so.
-func TestABoundedRunWalkEndingShortOfItsTotalCarriesTheResultWindow(t *testing.T) {
-	bound := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	h := newHarness(t, map[string]string{runsRoute: `{"total_count":10,"workflow_runs":[` +
-		`{"id":6,"created_at":"2026-01-02T00:00:00Z"},{"id":5,"created_at":"2026-01-02T00:00:00Z"}]}`})
-	after := restCursor(t, h.client, "ListRuns", testRef(), 3, forgeapi.WithPageBound(2), forgeapi.WithSince(bound))
-	page, err := h.client.ListRuns(t.Context(), testRef(), forgeapi.WithPageBound(2), forgeapi.WithSince(bound), forgeapi.WithAfter(after))
-	if err != nil {
-		t.Fatalf("ListRuns(page 3 under a bound) = %v, want the page", err)
-	}
-	if page.Next != "" {
-		t.Errorf("ListRuns(page 3 under a bound) = Next %q, want none: no next relation was sent", page.Next)
-	}
-	if p := page.Partial; p == nil || p.Reason != forgeapi.PartialResultWindow || p.Fetched != 6 || p.OmittedAtLeast != 4 {
-		t.Errorf("ListRuns(page 3 of 2 under a bound, total 10) = Partial %+v, want result_window with 6 fetched and at least 4 omitted", p)
-	}
-	unbounded := newHarness(t, map[string]string{runsRoute: `{"total_count":10,"workflow_runs":[{"id":2},{"id":1}]}`})
-	if page, err := unbounded.client.ListRuns(t.Context(), testRef(), forgeapi.WithPageBound(2)); err != nil || page.Partial != nil {
-		t.Errorf("ListRuns(no bound, no next, total 10) = Partial %+v, error %v, want none: the window applies to a filtered listing", page.Partial, err)
-	}
-}
-
-// boundedRunsPage is one page of a created-filtered run listing as the route serves it
-// inside its window: rows created after the bound, the listing's whole total, and a
-// next relation.
-func boundedRunsPage(rows, total int) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, `{"total_count":%d,"workflow_runs":[`, total)
-	for i := range rows {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		fmt.Fprintf(&b, `{"id":%d,"created_at":"2026-01-02T00:00:00Z"}`, i+1)
-	}
-	b.WriteString("]}")
-	return b.String()
-}
-
-// A created-filtered listing serves through the first whole page reaching its 1,000th
-// run and answers the page after it with total_count 0 and no rows (read on a public
-// repository: page 11 at per_page 100, page 35 at per_page 30, so 1,020 runs arrive at
-// 30), so the walk ends on the page that reaches the window and counts the window from
-// the total that page still states. The route serves at most 100 rows a page whatever
-// per_page asks.
-func TestABoundedRunWalkEndsOnTheLastPageTheResultWindowServes(t *testing.T) {
-	bound := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	for name, c := range map[string]struct {
-		pageBound, page, rows, total, fetched, omitted int
-	}{
-		"bound_200_page_10": {pageBound: 200, page: 10, rows: 100, total: 1872, fetched: 1000, omitted: 872},
-		"bound_30_page_34":  {pageBound: 30, page: 34, rows: 30, total: 2500, fetched: 1020, omitted: 1480},
-	} {
-		t.Run(name, func(t *testing.T) {
-			h := newHarness(t, map[string]string{runsRoute: boundedRunsPage(c.rows, c.total)}, forgeapi.WithListPages(40))
-			h.instance.answerHeaders(runsRoute, http.Header{"Link": []string{`<https://forge.example/runs?page=next>; rel="next"`}})
-			opts := []forgeapi.ListOption{forgeapi.WithPageBound(c.pageBound), forgeapi.WithSince(bound)}
-			after := restCursor(t, h.client, "ListRuns", testRef(), c.page, opts...)
-			page, err := h.client.ListRuns(t.Context(), testRef(), append(opts, forgeapi.WithAfter(after))...)
-			if err != nil {
-				t.Fatalf("ListRuns(page %d at bound %d under a since bound) = %v, want the page", c.page, c.pageBound, err)
-			}
-			if page.Next != "" {
-				t.Errorf("ListRuns(page %d at bound %d, total %d) = Next %q, want none: the page after it is past the window", c.page, c.pageBound, c.total, page.Next)
-			}
-			if p := page.Partial; p == nil || p.Reason != forgeapi.PartialResultWindow || p.Fetched != c.fetched || p.OmittedAtLeast != c.omitted {
-				t.Errorf("ListRuns(page %d at bound %d, total %d) = Partial %+v, want result_window with %d fetched and at least %d omitted", c.page, c.pageBound, c.total, p, c.fetched, c.omitted)
-			}
-		})
-	}
-}
-
-// The page before the window's last still has a page inside the window after it, so
-// the walk goes on to it rather than to an empty page 35.
-func TestABoundedRunWalkInsideTheResultWindowContinues(t *testing.T) {
-	bound := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	h := newHarness(t, map[string]string{runsRoute: boundedRunsPage(30, 2500)}, forgeapi.WithListPages(40))
-	h.instance.answerHeaders(runsRoute, http.Header{"Link": []string{`<https://forge.example/runs?page=next>; rel="next"`}})
-	opts := []forgeapi.ListOption{forgeapi.WithPageBound(30), forgeapi.WithSince(bound)}
-	after := restCursor(t, h.client, "ListRuns", testRef(), 33, opts...)
-	page, err := h.client.ListRuns(t.Context(), testRef(), append(opts, forgeapi.WithAfter(after))...)
-	if err != nil {
-		t.Fatalf("ListRuns(page 33 at bound 30 under a since bound) = %v, want the page", err)
-	}
-	if want := restCursor(t, h.client, "ListRuns", testRef(), 34, opts...); page.Next != want {
-		t.Errorf("ListRuns(page 33 at bound 30, total 2500) = Next %q, want %q: page 34 is still inside the window", page.Next, want)
-	}
-	if page.Partial != nil {
-		t.Errorf("ListRuns(page 33 at bound 30, total 2500) = Partial %+v, want none", page.Partial)
-	}
-}
-
-func TestAContinuationMintedUnderOneBoundIsRefusedUnderAnother(t *testing.T) {
-	bound := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	h := newHarness(t, nil)
-	after := restCursor(t, h.client, "ListRuns", testRef(), 2, forgeapi.WithSince(bound))
-	for name, opts := range map[string][]forgeapi.ListOption{
-		"no_bound":      {forgeapi.WithAfter(after)},
-		"another_bound": {forgeapi.WithSince(bound.Add(time.Second)), forgeapi.WithAfter(after)},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := h.client.ListRuns(t.Context(), testRef(), opts...)
-			var fe *forgeapi.Error
-			if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeCursorInvalid {
-				t.Errorf("ListRuns(a continuation minted under %v) = %v, want code %q", bound, err, forgeapi.CodeCursorInvalid)
-			}
-		})
-	}
-	if got := h.instance.count(); got != 0 {
-		t.Errorf("the refused continuations sent %d request(s), want 0", got)
 	}
 }
 
