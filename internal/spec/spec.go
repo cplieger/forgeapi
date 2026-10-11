@@ -1700,7 +1700,7 @@ var Table = []Entry{
 	{
 		Method:    "Checks.ListRuns",
 		Product:   GitHub,
-		Exercises: "GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address; a run whose conclusion is action_required, a fork's run waiting for a maintainer's approval with no job run, reads pending, the verdict the Gitea family gives the same wait",
+		Exercises: "GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address; a run whose conclusion is action_required, a fork's run waiting for a maintainer's approval with no job run, reads pending, the verdict the Gitea family gives the same wait; under a since bound, a page that reaches the 1,000-run window the route serves a created-filtered listing through, or ends short of its total with no next relation, holds back the runs of the oldest second it served, and the next page asks created=<bound>..<that second> from page 1, the inclusive range the route's created filter takes from the search syntax (https://docs.github.com/en/search-github/getting-started-with-searching-on-github/understanding-the-search-syntax#query-for-dates); where an earlier page of the range served that second, the range already ends at that second, or a page's runs of its oldest second are more than a continuation names, the next page asks created=<that second>..<that second> instead (measured: it answers that second's runs alone), drops by id the runs of it the walk answered, and the walk then goes on with created=<bound>..<the second before>, so each range a walk crosses into reads the runs of one second twice and pays once more for the pages they fill",
 		Requests:  Requests{Min: 1, Max: 3, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
@@ -1712,7 +1712,7 @@ var Table = []Entry{
 			{
 				Field: "Next, under a since bound",
 				Kind:  DiffersInShape,
-				Says:  "the route serves a filtered listing through the first whole page that reaches its 1,000th run, so up to one page less one row more than 1,000 arrives, and answers the page after it with no rows and total_count 0, so a walk ends on that page with no continuation and carries result_window where total_count states more",
+				Says:  "the route serves a filtered listing through the first whole page that reaches its 1,000th run (https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository) and answers the page after it with no rows and total_count 0 (measured: 1,000 of a repository's 1,045 runs in 72 hours), so a walk goes on below the oldest second that page served; where more runs than that window share one second, the walk goes on below that second too, and where runs of such seconds remain that neither the walk nor that second's own range served, its last page, which carries no continuation, carries result_window counting them; the call fails as a validation failure of kind upstream where no narrower range reaches the rest: a range that served no row while its total states more, or a second's own range that ends short of its total below the window",
 			},
 		},
 		Sends: []Sent{
@@ -1726,7 +1726,7 @@ var Table = []Entry{
 				Field: "created",
 				Where: InQuery,
 				Holds: HoldsSinceBound,
-				Says:  "under a since bound, >= the bound at whole seconds, the precision the route stamps created_at at, and the rows stamped before the bound's second are dropped; absent without one",
+				Says:  "under a since bound, >= the bound at whole seconds, the precision the route stamps created_at at, and the rows stamped before the bound's second are dropped; past the window, the bound to the oldest second the window served, that second alone, or the bound to the second before it, both ends included; absent without one",
 			},
 		},
 	},
