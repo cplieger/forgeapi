@@ -298,11 +298,11 @@ func TestAMalformedProxyIsRefusedRatherThanDialledDirect(t *testing.T) {
 	}
 }
 
-// TestADialRefusalIsLoggedThroughTheConnectionsLogger holds WithLogger's contract
+// TestADialFailureIsLoggedThroughTheConnectionsLogger holds WithLogger's contract
 // for the lines the transport beneath writes: a consumer running several connections
-// can only attribute a refusal it receives on that connection's logger. A name under
-// .invalid never resolves (RFC 6761 §6.4), so the dial is refused whatever the network.
-func TestADialRefusalIsLoggedThroughTheConnectionsLogger(t *testing.T) {
+// can only attribute a dial failure it receives on that connection's logger. A name
+// under .invalid never resolves (RFC 6761 §6.4), so the dial fails whatever the network.
+func TestADialFailureIsLoggedThroughTheConnectionsLogger(t *testing.T) {
 	var buf bytes.Buffer
 	c, err := Open(&forgeapi.Connection{WebBaseURL: "https://forge.invalid"}, settingsFor(
 		forgeapi.WithCredentialSource(stubCredential{}),
@@ -314,11 +314,11 @@ func TestADialRefusalIsLoggedThroughTheConnectionsLogger(t *testing.T) {
 	}
 	t.Cleanup(c.Close)
 	if _, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err == nil {
-		t.Fatal("a read from a name that cannot resolve = nil, want a refusal")
+		t.Fatal("a read from a name that cannot resolve = nil, want a dial failure")
 	}
 	got := buf.String()
-	if !strings.Contains(got, `"msg":"ssrf dial blocked"`) || !strings.Contains(got, `"connection":"hub"`) {
-		t.Errorf("the connection's logger got %q, want the dial refusal carrying connection=hub", got)
+	if !strings.Contains(got, `"msg":"ssrf dial failed"`) || !strings.Contains(got, `"connection":"hub"`) {
+		t.Errorf("the connection's logger got %q, want the dial failure carrying connection=hub", got)
 	}
 }
 
