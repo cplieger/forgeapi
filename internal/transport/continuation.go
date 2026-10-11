@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cplieger/forgeapi"
 )
@@ -22,8 +23,8 @@ const pageSeparator = "."
 const callDigestBytes = 12
 
 // PageCall is one list call as every continuation it mints names it: the family, the
-// connection, the operation, the repository, the resolved state filter and the
-// scope, folded into a fixed-length digest, and the page bound. A continuation that
+// connection, the operation, the repository, the resolved state filter, the scope and
+// any since bound, folded into a fixed-length digest, and the page bound. A continuation that
 // names another call names no position in this one, so both resume methods refuse it
 // before any request.
 type PageCall struct {
@@ -36,7 +37,7 @@ type PageCall struct {
 // the zero reference on a list no repository addresses. The repository and an owner
 // fold as the derived repository identifier folds them, and the API base folds as
 // [connectionOf] states, so two spellings of one call name one call.
-func (c *Conn) PageCall(op string, repo forgeapi.RepoRef, set forgeapi.ListSettings) PageCall {
+func (c *Conn) PageCall(op string, repo forgeapi.RepoRef, set *forgeapi.ListSettings) PageCall {
 	return newPageCall(c.family, connectionOf(c.apiBase), op, repo, set)
 }
 
@@ -57,14 +58,20 @@ func connectionOf(base *url.URL) string {
 
 // newPageCall hashes the call's fields, each length-prefixed so no two lists of
 // fields share an encoding.
-func newPageCall(family forgeapi.Family, connection, op string, repo forgeapi.RepoRef, set forgeapi.ListSettings) PageCall {
+func newPageCall(family forgeapi.Family, connection, op string, repo forgeapi.RepoRef, set *forgeapi.ListSettings) PageCall {
 	scope := "author"
 	if set.OwnerSet {
 		// The owner's shared form is ASCII, so this is the derived identifier's fold.
 		scope = "owner:" + strings.ToLower(set.Owner)
 	}
+	fields := []string{family.String(), connection, op, repo.Encode(), set.State.String(), scope}
+	if set.SinceSet {
+		// Appended only under a bound, so every continuation minted without one
+		// keeps the digest it had before the bound existed.
+		fields = append(fields, "since:"+set.Since.UTC().Format(time.RFC3339Nano))
+	}
 	var named []byte
-	for _, field := range []string{family.String(), connection, op, repo.Encode(), set.State.String(), scope} {
+	for _, field := range fields {
 		named = strconv.AppendInt(named, int64(len(field)), 10)
 		named = append(named, ':')
 		named = append(named, field...)
@@ -154,7 +161,7 @@ func (p PageCall) fields(c forgeapi.Cursor, prefix string, count int) ([]string,
 	}
 	if fields[count] != p.digest {
 		return nil, Local(forgeapi.CodeCursorInvalid,
-			"continuation was minted by another list call, of another family, connection, operation, repository, state filter or scope, so it names no position in this one")
+			"continuation was minted by another list call, of another family, connection, operation, repository, state filter, scope or since bound, so it names no position in this one")
 	}
 	return fields[:count], nil
 }

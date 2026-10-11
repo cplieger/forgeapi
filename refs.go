@@ -7,8 +7,8 @@ import (
 )
 
 // Family is one implementation package. There are three, because Gitea and
-// Forgejo share one; the four PRODUCTS an instance can be are a different
-// vocabulary, and a family serves one or two of them.
+// Forgejo share one; the four products an instance can be are [Product], and a
+// family serves one or two of them.
 type Family int
 
 // The Family members.
@@ -256,6 +256,16 @@ type PRRef struct { //nolint:govet // fieldalignment: the number leads because t
 type IssueRef struct {
 	// Number is the issue number the family's own API takes.
 	Number int
+}
+
+// RunRef identifies one CI run within its repository.
+type RunRef struct {
+	// ID is the identifier the product's own run routes take. A re-run keeps it on
+	// the products that count re-runs as attempts of one run.
+	ID int64
+	// Number is the run's place in the repository's own sequence, never negative,
+	// and zero where the product sends none.
+	Number int64
 }
 
 // Connection is one instance a client talks to: where it is, and what it is

@@ -9,6 +9,22 @@ import (
 	"github.com/cplieger/forgeapi"
 )
 
+// documentCeiling is the complexity figure both documents are asserted against, as
+// a CEILING at a stated page size rather than as an equality: a document whose cost
+// drops upstream keeps passing, and a caller raising the page size does not turn a
+// measurement into a failure. It is the limit this product's own endpoint reports
+// beside the score. Measured on gitlab.com at a page of a hundred, the list
+// document scored 94 and the read document 46.
+const documentCeiling = 200
+
+// documentPageSize is the page size the ceiling above is stated at, which is also
+// the largest first page this product's own connection accepts.
+const documentPageSize = 100
+
+// documents is every document this family ships, which is what the document
+// assertions iterate.
+var documents = []document{prList, prRead, ownerLookup}
+
 // The document answers this file drives. Each is the envelope this product's endpoint
 // actually sends for one shape, and the two error bodies are the two shapes measured
 // on gitlab.com: an unknown field answers 200 with an extensions code, and a
@@ -42,9 +58,9 @@ const (
 	docNullProject = `{"data": {"project": null}}`
 
 	// docAcceptanceAnswer is what the bounded schema question setup asks answers on
-	// an instance whose schema carries every field the two documents select: a null
-	// project, because the question resolves none, beside the complexity the endpoint
-	// charged. Both halves are the live measurement's own.
+	// an instance whose schema carries every field the two pull-request documents
+	// select: a null project, because the question resolves none, beside the
+	// complexity the endpoint charged. Both halves are the live measurement's own.
 	docAcceptanceAnswer = `{"data": {"project": null, "queryComplexity": {"score": 53, "limit": 200}}}`
 
 	docNullMergeRequest = `{"data": {"queryComplexity": {"score": 46, "limit": 200},
@@ -89,20 +105,22 @@ const (
 	listRoute = "GET /api/v4/projects/" + testEncoded + "/merge_requests"
 )
 
-// TestBothDocumentsAreNamedAndTakeTheirVariables holds the two documents to what is
-// asked of every one this library ships: a name, the variables its callers
-// fill, the field set the normalizer reads, a cursor on the list and none on the read,
-// and the complexity object this product prices a call by.
+// TestEveryDocumentIsNamedAndTakesItsVariables holds the documents to what is asked of
+// every one this library ships: a name, the variables its callers fill, the field set
+// its normalizer reads, a cursor on the list and none on the read, and the complexity
+// object this product prices a call by.
 //
 // It reads the document TEXT rather than a request, because the assertions are about
 // what this library ships rather than about one call: a document that lost a selection
 // would still execute, and what would change is the answer a consumer gets.
-func TestBothDocumentsAreNamedAndTakeTheirVariables(t *testing.T) {
+func TestEveryDocumentIsNamedAndTakesItsVariables(t *testing.T) {
 	for _, doc := range documents {
+		if !strings.Contains(doc.text, "query "+doc.name+"(") || !strings.Contains(doc.text, "queryComplexity { score limit }") {
+			t.Errorf("the %s document does not declare itself as a named operation or selects no complexity, so the endpoint cannot select it or this library cannot price it", doc.name)
+		}
+	}
+	for _, doc := range []document{prList, prRead} {
 		t.Run(doc.name, func(t *testing.T) {
-			if !strings.Contains(doc.text, "query "+doc.name+"(") {
-				t.Errorf("the %s document does not declare itself as a named operation, so the endpoint cannot select it and this library cannot name it in a log line", doc.name)
-			}
 			for _, want := range []string{
 				"$fullPath: ID!",
 				"fullPath",
@@ -112,7 +130,6 @@ func TestBothDocumentsAreNamedAndTakeTheirVariables(t *testing.T) {
 				"detailedMergeStatus",
 				"autoMergeEnabled",
 				"headPipeline { status }",
-				"queryComplexity { score limit }",
 			} {
 				if !strings.Contains(doc.text, want) {
 					t.Errorf("the %s document does not select %q, which a normalized pull request reads", doc.name, want)
@@ -137,6 +154,11 @@ func TestBothDocumentsAreNamedAndTakeTheirVariables(t *testing.T) {
 	}
 	if !strings.Contains(prRead.text, "mergedAt") || !strings.Contains(prRead.text, "state") {
 		t.Error("the PRRead document does not select the pair the merged answer is derived from, which this product has no boolean for")
+	}
+	for _, want := range []string{"group(fullPath: $fullPath) { id }", "user(username: $username) { id }"} {
+		if !strings.Contains(ownerLookup.text, want) {
+			t.Errorf("the OwnerLookup document does not select %q, which resolves an owner named by digits alone", want)
+		}
 	}
 }
 

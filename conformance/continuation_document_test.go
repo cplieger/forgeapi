@@ -269,26 +269,27 @@ func TestADocumentContinuationOnAnotherInstanceOfTheProductIsRefused(t *testing.
 }
 
 // resumeElsewhere drives one product's list on an instance of its own, handed a
-// continuation another product minted, and answers what it returned and the
-// requests its list sent: on a page-numbered list, those that reached a list route,
-// since a connection that holds no stated maximum yet reads it first.
-func resumeElsewhere(t *testing.T, p spec.Product, method string, next forgeapi.Cursor) (any, []sent, error) {
+// continuation another product minted, and answers the requests its list sent: on a
+// page-numbered list, those that reached a list route, since a connection that holds
+// no stated maximum yet reads it first.
+func resumeElsewhere(t *testing.T, p spec.Product, method string, next forgeapi.Cursor) ([]sent, error) {
 	t.Helper()
 	e := requireEntry(t, p, method)
 	s := canonicalSubject(p)
 	opts := []forgeapi.ListOption{forgeapi.WithAfter(next)}
 	if slices.Contains(documentProducts, p) && method == "PullRequests.ListPRs" {
 		di := newDocumentInstance(t, p)
-		got, window, err := callList(t, e, di.client(t, p), di.rec, s, opts...)
-		return got, window, err
+		_, window, err := callList(t, e, di.client(t, p), di.rec, s, opts...)
+		return window, err
 	}
 	if p == spec.GitHub && slices.Contains(crossRepositoryLists, method) {
 		srv, rec := newSearchServer(t, method, searchPage{rows: 1, total: 1})
-		return listOn(t, e, srv, rec, opts...)
+		_, window, err := listOn(t, e, srv, rec, opts...)
+		return window, err
 	}
 	pi := newPagedInstance(t, p, mintedRows, 50)
-	got, window, err := callList(t, e, pagedClient(t, p, pi.serve(t)), pi.rec, s, append(opts, forgeapi.WithPageBound(mintBound))...)
-	return got, pi.listRequests(window), err
+	_, window, err := callList(t, e, pagedClient(t, p, pi.serve(t)), pi.rec, s, append(opts, forgeapi.WithPageBound(mintBound))...)
+	return pi.listRequests(window), err
 }
 
 // A document continuation names the family whose client minted it, so the same list
@@ -303,7 +304,7 @@ func TestADocumentContinuationHandedToAnotherFamilyIsRefused(t *testing.T) {
 				di := newDocumentInstance(t, minter)
 				next := mintDocument(t, minter, di.client(t, minter), di, canonicalSubject(minter))
 
-				_, window, err := resumeElsewhere(t, resumer, "PullRequests.ListPRs", next)
+				window, err := resumeElsewhere(t, resumer, "PullRequests.ListPRs", next)
 				checkCursorRefused(t, "ListPRs on "+string(resumer)+" handed the document continuation "+string(minter)+" minted", err, window)
 			})
 		}
@@ -327,7 +328,7 @@ func TestAnotherFamilysContinuationHandedToADocumentListIsRefused(t *testing.T) 
 				began := newPagedInstance(t, minter, mintedRows, 50)
 				next := mintContinuation(t, e, pagedClient(t, minter, began.serve(t)), began, canonicalSubject(minter))
 
-				_, window, err := resumeElsewhere(t, resumer, "PullRequests.ListPRs", next)
+				window, err := resumeElsewhere(t, resumer, "PullRequests.ListPRs", next)
 				checkCursorRefused(t, "ListPRs on "+string(resumer)+" handed the continuation "+string(minter)+" minted", err, window)
 			})
 		}
@@ -436,7 +437,7 @@ func TestASearchContinuationHandedAcrossFamiliesIsRefused(t *testing.T) {
 				srv, rec := newSearchServer(t, method, twoSearchPages()...)
 				next := mintSearch(t, method, srv, rec)
 
-				_, window, err := resumeElsewhere(t, other, method, next)
+				window, err := resumeElsewhere(t, other, method, next)
 				checkCursorRefused(t, method+" on "+string(other)+" handed the search continuation "+string(spec.GitHub)+" minted", err, window)
 			})
 			t.Run(method+"_from_"+string(other)+"_to_"+string(spec.GitHub), func(t *testing.T) {
@@ -444,7 +445,7 @@ func TestASearchContinuationHandedAcrossFamiliesIsRefused(t *testing.T) {
 				began := newPagedInstance(t, other, mintedRows, 50)
 				next := mintContinuation(t, e, pagedClient(t, other, began.serve(t)), began, canonicalSubject(other))
 
-				_, window, err := resumeElsewhere(t, spec.GitHub, method, next)
+				window, err := resumeElsewhere(t, spec.GitHub, method, next)
 				checkCursorRefused(t, method+" on "+string(spec.GitHub)+" handed the continuation "+string(other)+" minted", err, window)
 			})
 		}

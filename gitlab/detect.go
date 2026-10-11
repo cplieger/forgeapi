@@ -44,7 +44,7 @@ const headerMeta = "X-Gitlab-Meta"
 // error mapping below this point is one family's.
 func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, error) {
 	const op = "ConnectionCaps"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	if caps := c.cachedCaps(); caps != nil {
 		return *caps, nil
 	}
@@ -58,8 +58,9 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 	}
 	rerun, ev := rerunCapability(&meta, err)
 	caps := forgeapi.ConnectionCaps{
-		Caps: map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
-		Ev:   map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
+		Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
+		Ev:      map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
+		Product: forgeapi.ProductGitLab,
 	}
 	// The schema question sits above the cache write: asked once on the connection
 	// whose family this read established, again where the caller's context ended
@@ -123,31 +124,12 @@ func (c *Client) cachedCaps() *forgeapi.ConnectionCaps {
 	return c.caps
 }
 
-// GrantCaps implements [forgeapi.Capabilities].
-//
-// It costs NO request, and that follows from its own signature rather than from a
-// choice: it names no repository, so it has no project path and no merge-request
-// number to send a document with, and the permissions it reports are selected by
-// every document a read of this product already sends. So it answers from what the
-// last document reported.
-//
-// What it publishes is the merge state's FRESHNESS, which on this product is a grant
-// fact: the field itself is selected by both documents and readable by any credential
-// that can read the merge request, while the recalculation a caller can ask for is
-// refusable below a project role. So a credential the instance reports as able to push
-// answers yes with the permission pair as its evidence, one it reports otherwise
-// answers UNKNOWN with the same pair, and a connection on which no document has run
-// answers yes from this product's own default, because reporting unknown there would
-// disable a control that works on every instance of it.
-//
-// Once any request on the connection has been refused with
-// [forgeapi.CodeScopeInsufficient], the answer is UNKNOWN with that refusal as its
-// evidence, naming the operation and what the credential lacks, whatever pair a
-// document reports after it. This product checks a token's own permissions before
-// the owner's access, and the pair reports only the owner's, so a credential missing
-// a permission reads as able where it is not. The token route that would state the
-// permission set is not read: it describes one token rather than the grant, and a
-// fine-grained token without the permission to read it is refused there too.
+// GrantCaps implements [forgeapi.Capabilities] at no request, from the permission pair
+// the last pull-request document reported: able to push answers yes, otherwise
+// UNKNOWN, and before any document has run, yes by default, since any reader can read
+// the merge state and only its recalculation is refusable by role. After a
+// [forgeapi.CodeScopeInsufficient] refusal it answers UNKNOWN: this product checks a
+// token's own permissions first, and the pair reports only the owner's.
 //
 //nolint:revive // unused-parameter: the context is the published signature's, and this accessor answers from the document every read of this product already sent, so it performs no I/O
 func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error) {
@@ -180,8 +162,8 @@ func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error) {
 // source for values the record did not supply.
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error) {
 	const op = "RepoAffordances"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.RepoAffordances{}, err
 	}
 	var record restProject

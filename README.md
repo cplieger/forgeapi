@@ -4,7 +4,7 @@
 
 forgeapi lets your Go code read and write pull requests, issues, merges, checks, releases and labels on GitHub, GitLab, Gitea and Forgejo through one set of types.
 
-It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It has no operations for comments, reviews or file contents. It needs Go 1.27.1 or later, is at v1 and is licensed under Apache-2.0. It depends only on atomicfile, httpx, jsoncap, runesafe, ssrf and urlform, six modules by the same author.
+It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It has no operations for comments, reviews or file contents. It needs Go 1.27.2 or later, is at v1 and is licensed under Apache-2.0. It depends only on atomicfile, httpx, jsoncap, runesafe, ssrf and urlform, six modules by the same author.
 
 ## Why use it
 
@@ -96,9 +96,10 @@ forgeapi leaves these out on purpose. [Non-goals](docs/non-goals.md) gives the r
 
 - [Connecting to a forge](docs/connecting.md) covers connections, forge detection, options and capabilities.
 - [Pages and continuations](docs/pagination.md) explains paging and resuming a list.
+- [Lists across repositories](docs/cross-repository-lists.md) covers `ListMyPRs` and `ListMyIssues`.
 - [Renamed and moved repositories](docs/renames.md) says what a call answers after a move.
 - [Request prices and the budget](docs/request-prices.md) covers call costs and pacing.
-- [Credentials](docs/credentials.md) covers the device flow, token refresh, the store and the git credential helper.
+- [Credentials](docs/credentials.md) covers sign-in, token refresh, the store and the git credential helper.
 - [Tested against](docs/tested-against.md) lists the measured instances and versions.
 - [Non-goals](docs/non-goals.md) explains what is left out and why.
 

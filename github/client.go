@@ -279,10 +279,10 @@ func (c *Client) isDegraded() bool {
 
 // BudgetState implements [forgeapi.Governor]. It is the read-only view of this
 // connection's governor: the remaining budget the instance last reported, when
-// it renews, and what the last call cost. On REST this product reports the
-// remaining budget and the reset through its rate-limit headers, and on a
-// document it reports all three through the rate-limit object every document
-// selects. What it reports is the USER's primary quota, drawn on by every
+// it renews, and what the last call cost. This product reports the remaining
+// budget and the reset through its rate-limit headers on both surfaces, and a
+// document's cost through the rate-limit object every query document selects.
+// What it reports is the USER's primary quota, drawn on by every
 // application acting for that credential, so the remaining budget falls while
 // this client sends nothing and the governor's reserve is held against that
 // shared pool. Both costs were measured: a document is 1 whatever it selects, at

@@ -16,8 +16,8 @@ import (
 // It is the concrete type [New] returns, so a consumer declares the narrowest
 // role interface it actually uses against it rather than receiving an interface
 // this package chose. What it holds is unexported, because the state behind an
-// operation is nobody else's contract, including which product of the two
-// answered, since a caller gates on a capability rather than on a product name.
+// operation is nobody else's contract; the stable connection facts, which product
+// of the two answered included, are published through [Client.ConnectionCaps].
 type Client struct {
 	core    *transport.Conn
 	caps    *forgeapi.ConnectionCaps
@@ -33,13 +33,15 @@ type Client struct {
 	resolve       chan struct{}
 	version       string
 	namedBy       string
-	settings      forgeapi.Settings
 	versionStatus int
 	// maxItems is the instance's stated max_response_items, zero while the
 	// connection holds none.
 	maxItems int
 	forgejo  bool
-	mu       sync.Mutex
+	// product is the one the detection witness named, unknown until the family
+	// is established.
+	product forgeapi.Product
+	mu      sync.Mutex
 }
 
 // New builds a client for one connection.
@@ -88,7 +90,7 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 	if err != nil {
 		return nil, err
 	}
-	return &Client{core: core, settings: settings, resolve: make(chan struct{}, 1)}, nil
+	return &Client{core: core, resolve: make(chan struct{}, 1)}, nil
 }
 
 // deriveAPIBase is this family's API root under the web base, used where the

@@ -2,16 +2,19 @@ package gitea
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/internal/spec"
 )
 
 // TestMapperAnswersOneCellPerStatus holds this family's error mapping to one case
@@ -112,28 +115,15 @@ func TestA409IsMappedPerOperation(t *testing.T) {
 	}
 }
 
-// TestA400IsTheUnresolvedOwnerOnTheScopedListsAlone holds the one cell this family
-// maps per operation: the issue-search route answers 400 for an owner it cannot
-// resolve, so on the two lists that read it a 400 is that owner, a not-found answer
-// under the owner code. Everywhere else a 400 has no cell and stays upstream, because
-// reading it as an owner on a call that named none would hand a caller a remedy for
-// a fault it does not have.
-func TestA400IsTheUnresolvedOwnerOnTheScopedListsAlone(t *testing.T) {
-	for _, test := range []struct {
-		op   string
-		code string
-		kind forgeapi.ErrorKind
-	}{
-		{op: "ListMyPRs", kind: forgeapi.KindNotFound, code: forgeapi.CodeOwnerUnresolved},
-		{op: "ListMyIssues", kind: forgeapi.KindNotFound, code: forgeapi.CodeOwnerUnresolved},
-		{op: "ListRepos", kind: forgeapi.KindUpstream},
-		{op: "ListRuns", kind: forgeapi.KindUpstream},
-		{op: "MergePR", kind: forgeapi.KindUpstream},
-	} {
-		t.Run(test.op, func(t *testing.T) {
-			kind, code := mapper(test.op, http.StatusBadRequest, http.Header{}, "")
-			if kind != test.kind || code != test.code {
-				t.Errorf("mapper(%s, 400) = kind %v code %q, want kind %v code %q", test.op, kind, code, test.kind, test.code)
+// TestA400HasNoCellOfItsOwn holds the mapper to what a 400 means without an owner: no
+// cell, so it stays upstream, because reading it as an owner on a call that named
+// none would hand a caller a remedy for a fault it does not have. The owner-scoped
+// issue search's 400 is the scoped request's own cell, held through the lists.
+func TestA400HasNoCellOfItsOwn(t *testing.T) {
+	for _, op := range []string{"ListMyPRs", "ListMyIssues", "ListRepos", "ListRuns", "MergePR"} {
+		t.Run(op, func(t *testing.T) {
+			if kind, code := mapper(op, http.StatusBadRequest, http.Header{}, ""); kind != forgeapi.KindUpstream || code != "" {
+				t.Errorf("mapper(%s, 400) = kind %v code %q, want kind %v and no code", op, kind, code, forgeapi.KindUpstream)
 			}
 		})
 	}
@@ -243,14 +233,12 @@ type declaredEnums struct {
 
 // declaredProduct is one document's declarations, and declaredEnum is one field's.
 type declaredProduct struct {
-	Version string       `json:"version"`
-	Status  declaredEnum `json:"commit_status_state"`
-	State   declaredEnum `json:"issue_and_pull_request_state"`
+	Status declaredEnum `json:"commit_status_state"`
+	State  declaredEnum `json:"issue_and_pull_request_state"`
 }
 
 type declaredEnum struct {
 	DeclaredBy string   `json:"declared_by"`
-	Prose      string   `json:"prose"`
 	Enum       []string `json:"enum"`
 }
 
@@ -494,6 +482,25 @@ func TestSignalReadsTheStructuredRateLimitHeader(t *testing.T) {
 			}
 			if got := time.Until(reset).Round(time.Second); got != time.Duration(test.seconds)*time.Second {
 				t.Errorf("signal(%q) = reset in %v, want %v", test.raw, got, time.Duration(test.seconds)*time.Second)
+			}
+		})
+	}
+}
+
+// TestEveryThrottleTheSpecNamesIsARateLimit holds this family's mapping to the
+// expectation table's rate-limit answers for the products it serves.
+func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
+	for _, th := range spec.Throttles {
+		if th.Product != spec.Gitea && th.Product != spec.Forgejo {
+			continue
+		}
+		t.Run(string(th.Product)+"_"+strconv.Itoa(th.Status)+"_"+th.Header, func(t *testing.T) {
+			header := http.Header{}
+			if th.Header != "" {
+				header.Set(th.Header, cmp.Or(th.Value, "60"))
+			}
+			if kind, code := mapper("ListRuns", th.Status, header, ""); kind != forgeapi.KindRateLimited || code != "" {
+				t.Errorf("mapper(ListRuns, %d, %v) = %v, %q, want %v: %s", th.Status, header, kind, code, forgeapi.KindRateLimited, th.Says)
 			}
 		})
 	}

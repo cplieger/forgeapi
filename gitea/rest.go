@@ -50,7 +50,7 @@ const (
 // checkRepo refuses a reference that is not safe to interpolate into a request
 // path, before any request: a derived identifier is consumer-controlled input on
 // its way into a URL.
-func (c *Client) checkRepo(repo forgeapi.RepoRef) error {
+func checkRepo(repo forgeapi.RepoRef) error {
 	return forgeapi.ValidateSelector(forgeapi.FamilyGitea, repo.Selector)
 }
 
@@ -88,15 +88,16 @@ func (c *Client) unpagedList[T any](here forgeapi.Cursor) (forgeapi.Page[T], boo
 // not-modified answer arriving anyway is the unexpected status the core maps, which
 // reaches this function as the error below.
 func (c *Client) readJSON(ctx context.Context, op, path string, query url.Values, out any) error {
-	_, err := c.get(ctx, op, path, query, out)
+	_, err := c.get(ctx, op, path, query, 0, out)
 	return err
 }
 
 // get is the GET both reads make, answering the response beside the decoded body
-// because [Client.readAt] reads the redirect record it carries.
-func (c *Client) get(ctx context.Context, op, path string, query url.Values, out any) (*transport.Response, error) {
+// because [Client.readAt] reads the redirect record it carries. ownerStatus is
+// [transport.Request.OwnerStatus].
+func (c *Client) get(ctx context.Context, op, path string, query url.Values, ownerStatus int, out any) (*transport.Response, error) {
 	resp, err := c.core.Do(ctx, &transport.Request{
-		Op: op, Method: http.MethodGet, Path: path, Query: query, Page: pageIn(query),
+		Op: op, Method: http.MethodGet, Path: path, Query: query, Page: pageIn(query), OwnerStatus: ownerStatus,
 	})
 	if err != nil {
 		return resp, err
@@ -172,13 +173,14 @@ const (
 	// runList is the run listing: a fixed list whose route states its own
 	// total, so its continuation is the run walk's rather than a page number.
 	runList
+	// repoList is the repository listing, which an owner scopes.
+	repoList
 )
 
 // listOptions resolves one list call's options and refuses, before any request, the
-// ones its route cannot apply. A state filter is refused with a local code on every
-// list but a stateful one, because the endpoints behind the others fix the state,
-// and an owner on every list but a scoped one, because the others address one
-// repository or the credential's own.
+// ones its route cannot apply: a state filter on every list but a stateful one, an
+// owner on every list but the scoped ones and the repository listing, and a since
+// bound on every list but the run listing.
 //
 // An owner here is ONE name, a user or an organization: neither product nests
 // owners, so a path the shared form admits is refused by [forgeapi.ValidateOwner]
@@ -192,9 +194,13 @@ func listOptions(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi
 		return set, transport.Local(forgeapi.CodeListStateInvalid,
 			op+" lists rows whose state the endpoint fixes, so a state filter cannot apply")
 	}
-	if set.OwnerSet && kind != scopedList {
+	if set.OwnerSet && kind != scopedList && kind != repoList {
 		return set, transport.Local(forgeapi.CodeListOwnerInvalid,
 			op+" lists rows no owner scopes, so an owner cannot apply")
+	}
+	if set.SinceSet && kind != runList {
+		return set, transport.Local(forgeapi.CodeListSinceInvalid,
+			op+" lists rows no creation bound narrows, so a since bound cannot apply")
 	}
 	if set.OwnerSet {
 		if err := forgeapi.ValidateOwner(forgeapi.FamilyGitea, set.Owner); err != nil {
@@ -218,7 +224,7 @@ func (c *Client) listing(op string, repo forgeapi.RepoRef, kind listKind, opts [
 	if err != nil {
 		return set, nil, pageWalk{}, err
 	}
-	walk, err := pageWalkAt(c.core.PageCall(op, repo, set), set.After)
+	walk, err := pageWalkAt(c.core.PageCall(op, repo, &set), set.After)
 	if err != nil {
 		return set, nil, pageWalk{}, err
 	}
@@ -228,7 +234,7 @@ func (c *Client) listing(op string, repo forgeapi.RepoRef, kind listKind, opts [
 		query.Set("state", listState(set.State))
 	case scopedList:
 		query.Set("state", stateOpen)
-		scope(query, set)
+		scope(query, &set)
 	}
 	return set, query, walk, nil
 }
@@ -238,7 +244,7 @@ func (c *Client) listing(op string, repo forgeapi.RepoRef, kind listKind, opts [
 // which the instance resolves against whoever the request authenticated as; an
 // owner replaces it with the owner filter both declare on the same route, so the
 // two scopes never ride one request.
-func scope(query url.Values, set forgeapi.ListSettings) {
+func scope(query url.Values, set *forgeapi.ListSettings) {
 	if set.OwnerSet {
 		query.Set("owner", set.Owner)
 		return
@@ -259,12 +265,29 @@ func listState(s forgeapi.ListState) string {
 	return stateOpen
 }
 
-// readPage reads the page a walk stands at on a list no repository addresses.
-func (c *Client) readPage(ctx context.Context, op, path string, query url.Values, walk *pageWalk, bound int, out any) error {
+// readPage reads the page a walk stands at on a list no repository addresses, whose
+// route answers ownerStatus for an owner the list was scoped to and does not resolve.
+func (c *Client) readPage(ctx context.Context, op, path string, query url.Values, ownerStatus int, walk *pageWalk, bound int, out any) error {
+	_, err := c.readPageResponse(ctx, op, path, query, ownerStatus, walk, bound, out)
+	return err
+}
+
+// readPageResponse is readPage answering the response, for a list whose continuation
+// rides a header.
+func (c *Client) readPageResponse(ctx context.Context, op, path string, query url.Values, ownerStatus int, walk *pageWalk, bound int, out any) (*transport.Response, error) {
 	if err := c.pageQuery(ctx, query, walk, bound); err != nil {
-		return err
+		return nil, err
 	}
-	return c.readJSON(ctx, op, path, query, out)
+	return c.get(ctx, op, path, query, ownerStatus, out)
+}
+
+// ownerStatus is the status a list's route answers for an owner it was scoped to and
+// does not resolve, zero where no owner scopes the call.
+func ownerStatus(set *forgeapi.ListSettings, status int) int {
+	if set.OwnerSet {
+		return status
+	}
+	return 0
 }
 
 // readPageAt reads the page a walk stands at on a list the call's repository
@@ -359,6 +382,16 @@ func (w pageWalk) here() forgeapi.Cursor {
 // above the instance's stated maximum.
 func (w pageWalk) next(rows int) forgeapi.Cursor {
 	if rows < w.limit {
+		return ""
+	}
+	return pageWalk{call: w.call, page: w.page + 1, limit: w.limit}.here()
+}
+
+// nextOfTotal is the continuation while the pages this walk has stood at cover fewer
+// rows than the stated total, for a route that pages in SQL and then drops rows, so a
+// short page is no end.
+func (w pageWalk) nextOfTotal(total int) forgeapi.Cursor {
+	if w.page*w.limit >= total {
 		return ""
 	}
 	return pageWalk{call: w.call, page: w.page + 1, limit: w.limit}.here()

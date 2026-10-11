@@ -88,30 +88,27 @@ const (
 	// of labels the call named, since that request applies them all or none.
 	// Only a product whose creation route declares no labels produces it.
 	PartialLabelsNotApplied
-	// PartialResultWindow means the route stopped serving rows while its own
-	// stated total says more exist, and no continuation reaches them, because
-	// the remainder lies outside what the route serves at all. It rides
-	// [Page.Partial] on the page where the walk ends, and it is the one
-	// response-level reason that arrives WITHOUT a [Cursor]. Its
-	// [Partial.Fetched] counts the rows the whole walk was served rather than
-	// the one page, and its [Partial.OmittedAtLeast] is the stated total less
-	// that, so the two sum to the total the route stated. A consumer renders
-	// it as a list holding more rows than the route will serve, never as a
-	// complete one. The cross-repository lists ([PullRequests.ListMyPRs],
-	// [Issues.ListMyIssues]) produce it on a product whose search serves a
-	// fixed window of results; a page whose document also answered errors
-	// carries [PartialGraphQLPartial] instead, since that says the page's own
-	// rows are in question. [Checks.ListRuns] produces it on a page that
-	// served no row while the listing's stated total says more than the walk
-	// was served.
+	// PartialResultWindow means the route stopped serving rows while its own stated
+	// total says more, and no continuation reaches them. It rides [Page.Partial] on
+	// the page where the walk ends, the one response-level reason that arrives
+	// WITHOUT a [Cursor]. [Partial.Fetched] counts the rows the whole walk was served
+	// and [Partial.OmittedAtLeast] is the stated total less that. A consumer renders
+	// it as a list holding more rows than the route serves, never as a complete one;
+	// docs/pagination.md names the lists that produce it.
 	PartialResultWindow
+	// PartialForbidden means the product refused part of an item to this
+	// credential and answered the rest of it. It rides the item's own marker,
+	// never a page's, so the list beside it is whole; the per-forge block of
+	// each operation that produces it names the field. A consumer renders that
+	// part as not readable with this credential, which a retry does not change.
+	PartialForbidden
 )
 
 // String returns the member's wire spelling: "unknown", "budget",
-// "rate_limited", "graphql_partial", "pagination_cap", "labels_not_applied"
-// or "result_window".
+// "rate_limited", "graphql_partial", "pagination_cap", "labels_not_applied",
+// "result_window" or "forbidden".
 func (p PartialReason) String() string {
-	return nameOf([]string{nameUnknown, "budget", "rate_limited", "graphql_partial", "pagination_cap", "labels_not_applied", "result_window"}, p)
+	return nameOf([]string{nameUnknown, "budget", "rate_limited", "graphql_partial", "pagination_cap", "labels_not_applied", "result_window", "forbidden"}, p)
 }
 
 var _ fmt.Stringer = PartialReason(0)

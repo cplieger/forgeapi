@@ -36,7 +36,7 @@ import (
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/httpx/v5"
 	"github.com/cplieger/jsoncap/v2"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"github.com/cplieger/ssrf/v4"
 	"github.com/cplieger/urlform"
 )
@@ -73,7 +73,7 @@ const (
 	schemeHTTP  = "http"
 )
 
-// Mapper is how a family states its own error mapping. Mapping is by family plus
+// errorMapper is how a family states its own error mapping. Mapping is by family plus
 // operation plus status plus selected headers, never by status alone, so the
 // family that knows those cells supplies the function and this package owns
 // everything around it.
@@ -81,13 +81,13 @@ const (
 // bodyError is the body's machine-readable error member, RFC 6750's `error`,
 // empty where the body carries none. It is a code the instance states, so a
 // family may map on it; the body's prose never reaches a mapper.
-type Mapper func(op string, status int, header http.Header, bodyError string) (forgeapi.ErrorKind, string)
+type errorMapper func(op string, status int, header http.Header, bodyError string) (forgeapi.ErrorKind, string)
 
-// Signal is how a family reads its product's budget signal off a response. It
+// budgetSignal is how a family reads its product's budget signal off a response. It
 // returns the remaining units, the reset instant and whether the response carried
 // a signal at all; a family whose product sends none returns false and the
 // governor then reports the neutral value.
-type Signal func(header http.Header) (remaining int, reset time.Time, ok bool)
+type budgetSignal func(header http.Header) (remaining int, reset time.Time, ok bool)
 
 // Conn is one connection's request core: one wire transport, two clients over it,
 // and its governor.
@@ -100,8 +100,8 @@ type Signal func(header http.Header) (remaining int, reset time.Time, ok bool)
 type Conn struct { //nolint:govet // fieldalignment: the field order is this type's own reading order, the logger and the credential first, and no value of it is allocated per request
 	logger     *slog.Logger
 	credential forgeapi.CredentialSource
-	mapper     Mapper
-	signal     Signal
+	mapper     errorMapper
+	signal     budgetSignal
 	apiBase    *url.URL
 	web        *url.URL
 	wire       *http.Transport
@@ -119,21 +119,17 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	lastMutate time.Time
 }
 
-// Options is what a family hands [Open]: the connection, the resolved settings,
-// the family this client serves, the API base to use when the connection names
-// none, and the two per-family functions this package cannot own.
+// Options is what a family hands [Open]: the connection, the resolved settings, the
+// family this client serves, the API base to use when the connection names none, and
+// the two per-family functions this package cannot own.
 //
-// Clock is the time source the governor's ROLLING INTERVAL is measured on,
-// [time.Now] where it is nil. It exists because the interval is the one bound
-// nothing but the clock can move: a caller cannot ask for the next window, so a
-// test of the rotation across several windows either waits out a real interval,
-// which makes its verdict a race against however loaded the machine is, or drives
-// the clock. Nothing else in this package reads it, and no exported surface carries
-// it, so a consumer cannot substitute a clock for the pacing this governor exists
-// to do.
+// Clock is the time source the governor's rolling interval and a reported reset are
+// measured on, [time.Now] where it is nil. Only a test sets it, to move a bound no
+// caller can advance; no exported surface carries it, so a consumer cannot replace
+// the pacing this governor exists to do.
 type Options struct {
-	Mapper        Mapper
-	Signal        Signal
+	Mapper        errorMapper
+	Signal        budgetSignal
 	DeriveAPIBase func(web *url.URL) string
 	Clock         func() time.Time
 	Family        forgeapi.Family
@@ -176,6 +172,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		ssrf.WithAddressPolicy(addressPolicy(set, &set.Counters, opts.Family)),
 		ssrf.WithAllowedPorts(dialablePorts(web, conn.Proxy, set)...),
 		ssrf.WithDialer(&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}),
+		ssrf.WithLogger(set.Logger),
 	)
 	wire.TLSClientConfig = tlsCfg
 	wire.TLSHandshakeTimeout = handshakeTimeout
@@ -291,22 +288,22 @@ func withRecord(ctx context.Context, op string) context.Context {
 //
 // A request issued outside a Call is priced as a call of its own, so an operation
 // that forgets to open one under-reports rather than accumulating without bound.
-func (c *Conn) Call(ctx context.Context, op string) context.Context {
+func Call(ctx context.Context, op string) context.Context {
 	return context.WithValue(withPrice(ctx), opKey{}, op)
 }
 
 // writeKey marks a call that belongs to a mutating operation.
 type writeKey struct{}
 
-// CallWrite is [Conn.Call] for a mutating operation whose call also reads: every read
+// CallWrite is [Call] for a mutating operation whose call also reads: every read
 // it makes is part of its write, so a read-only client refuses it with
 // [forgeapi.CodeMutationsDisabled] before anything is sent, and the mutation reserve,
 // held back for a write and its follow-up reads, admits it.
-func (c *Conn) CallWrite(ctx context.Context, op string) context.Context {
-	return context.WithValue(c.Call(ctx, op), writeKey{}, true)
+func CallWrite(ctx context.Context, op string) context.Context {
+	return context.WithValue(Call(ctx, op), writeKey{}, true)
 }
 
-// writes reports whether ctx belongs to a call [Conn.CallWrite] opened.
+// writes reports whether ctx belongs to a call [CallWrite] opened.
 func writes(ctx context.Context) bool {
 	marked, _ := ctx.Value(writeKey{}).(bool)
 	return marked
@@ -593,10 +590,8 @@ func proxyFor(conn *forgeapi.Connection, set *forgeapi.Settings) (func(*http.Req
 // addressPolicy is this connection's address verdict, taken at the socket inside
 // the transport's own control hook, which is where containment lives.
 //
-// It counts its own refusals, because the layer beneath logs them to the default
-// sink and exposes no logger option: a refusal reported only there lands somewhere
-// this library does not own, so the counter seam is what makes it observable to a
-// consumer at all.
+// The layer beneath logs each refusal through the connection's logger; the policy
+// also counts it, so a consumer can alert on refusals without parsing lines.
 func addressPolicy(set *forgeapi.Settings, counters *forgeapi.Counters, family forgeapi.Family) ssrf.AddressPolicy {
 	if set.PrivateAddresses {
 		return func(netip.Addr) bool { return true }
@@ -658,9 +653,6 @@ func dialablePorts(web *url.URL, proxy string, set *forgeapi.Settings) []uint16 
 // BudgetState is the governor's state for this connection, read-only and never
 // written from outside.
 func (c *Conn) BudgetState() forgeapi.BudgetState { return c.gov.state() }
-
-// Family is the family this connection serves.
-func (c *Conn) Family() forgeapi.Family { return c.family }
 
 // Logger is the injected logger, for the family's own lines.
 func (c *Conn) Logger() *slog.Logger { return c.logger }
@@ -755,6 +747,13 @@ type Request struct {
 	// names that merge's handle, which is the outcome, not a conflict.
 	Answers  []int
 	MaxBytes int64
+	// OwnerStatus is the status this request's route answers for an owner
+	// [forgeapi.WithOwner] named and the instance does not resolve, zero on a
+	// request no owner scopes. [Conn] maps exactly that status to
+	// [forgeapi.CodeOwnerUnresolved] before the family's [Mapper] is asked,
+	// because the cell is the scoped request's: the operation's default scope
+	// names no owner, and the same status there is the ordinary cell.
+	OwnerStatus int
 	// Page is which page of a paged read this request asks for, so the
 	// per-request record carries it. One where the read is not paged.
 	Page int
@@ -898,13 +897,11 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	defer c.release(req)
 
 	started := time.Now()
-	//nolint:bodyclose // the close is the defer below, which the analyzer cannot follow across the error branch
+	//nolint:bodyclose // httpx.ReadLimitedBody below always closes the body, which the analyzer cannot follow
 	resp, token, err := c.send(ctx, req, target)
 	if err != nil {
 		return refusedHop(resp), c.transportError(ctx, req, err, started)
 	}
-
-	defer httpx.DrainClose(resp.Body)
 
 	c.gov.observe(resp.Header, c.signal)
 	out := &Response{
@@ -1162,7 +1159,7 @@ func Decode(body []byte, v any) error {
 func (c *Conn) fail(op, code string, kind forgeapi.ErrorKind, status int, message string) *forgeapi.Error {
 	return &forgeapi.Error{
 		Op: op, Code: code, Family: c.family, Status: status, Kind: kind,
-		Message: message, DiagID: DiagID(),
+		Message: message, DiagID: diagID(),
 	}
 }
 
@@ -1228,7 +1225,7 @@ func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capabi
 		Family:     c.family,
 		Kind:       forgeapi.KindForbidden,
 		Message:    message,
-		DiagID:     DiagID(),
+		DiagID:     diagID(),
 		Capability: capability,
 		Evidence:   ev,
 	}
@@ -1301,7 +1298,7 @@ func (c *Conn) transportError(ctx context.Context, req *Request, err error, star
 			own.Op = req.Op
 		}
 		if own.DiagID == "" {
-			own.DiagID = DiagID()
+			own.DiagID = diagID()
 		}
 		c.log(ctx, req, exchange(req), own.Status, own.Code, own.DiagID, own.Kind, nil, started, err)
 		return own
@@ -1332,7 +1329,10 @@ func contextSentinel(err error) error {
 // plus status plus selected headers rather than by status alone.
 func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, started time.Time) *forgeapi.Error {
 	answer := readRefusal(resp.Body)
-	kind, code := c.mapper(req.Op, resp.Status, resp.Header, answer.Error)
+	kind, code := forgeapi.KindNotFound, forgeapi.CodeOwnerUnresolved
+	if req.OwnerStatus == 0 || resp.Status != req.OwnerStatus {
+		kind, code = c.mapper(req.Op, resp.Status, resp.Header, answer.Error)
+	}
 	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
 	fe.Retryable = kind == forgeapi.KindTransient
 	if kind == forgeapi.KindRateLimited {

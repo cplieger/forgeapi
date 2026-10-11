@@ -879,6 +879,7 @@ func TestTheRunListingReadsEachPipelineRow(t *testing.T) {
 	}
 	want := []forgeapi.Run{
 		{
+			Ref:       forgeapi.RunRef{ID: 77, Number: 7},
 			Repo:      testRef(),
 			Name:      "Nightly",
 			Branch:    "main",
@@ -887,8 +888,10 @@ func TestTheRunListingReadsEachPipelineRow(t *testing.T) {
 			CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 			UpdatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			State:     forgeapi.CheckFailing,
+			Trigger:   forgeapi.TriggerPush,
 		},
 		{
+			Ref:       forgeapi.RunRef{ID: 76, Number: 6},
 			Repo:      testRef(),
 			Branch:    "refs/merge-requests/1/head",
 			HeadSHA:   "0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293",
@@ -896,6 +899,7 @@ func TestTheRunListingReadsEachPipelineRow(t *testing.T) {
 			CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 			UpdatedAt: time.Date(2026, 1, 1, 0, 10, 0, 0, time.UTC),
 			State:     forgeapi.CheckPending,
+			Trigger:   forgeapi.TriggerPullRequest,
 		},
 	}
 	for i := range want {

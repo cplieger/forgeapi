@@ -125,7 +125,7 @@ func runCall(t *testing.T) transport.PageCall {
 	if err != nil {
 		t.Fatalf("Setup: ResolveList() = %v", err)
 	}
-	return newHarness(t, nil).client.core.PageCall("ListRuns", testRef(), set)
+	return newHarness(t, nil).client.core.PageCall("ListRuns", testRef(), &set)
 }
 
 // TestTheRunContinuationCarriesItsPageAndServedCount holds the continuation a run

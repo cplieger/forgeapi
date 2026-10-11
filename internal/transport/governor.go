@@ -86,7 +86,7 @@ func (g *governor) state() forgeapi.BudgetState {
 }
 
 // observe reads the product's budget signal off one response.
-func (g *governor) observe(header http.Header, signal Signal) {
+func (g *governor) observe(header http.Header, signal budgetSignal) {
 	if signal == nil {
 		return
 	}
@@ -95,6 +95,15 @@ func (g *governor) observe(header http.Header, signal Signal) {
 	if remaining, reset, ok := signal(header); ok {
 		g.remaining = remaining
 		g.reset = reset
+	}
+}
+
+// expire forgets an observation whose reported window has renewed. Only a response
+// can report the new budget, so a stale figure left in place would defer every read
+// that could refresh it. The caller holds mu.
+func (g *governor) expire() {
+	if !g.reset.IsZero() && !g.now().Before(g.reset) {
+		g.remaining, g.reset = forgeapi.BudgetRemainingUnknown, time.Time{}
 	}
 }
 
@@ -124,6 +133,7 @@ func (g *governor) price(cost int) {
 func (g *governor) admit(op string) (forgeapi.PartialReason, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.expire()
 	if g.remaining != forgeapi.BudgetRemainingUnknown && g.remaining <= g.reserve {
 		if g.counters.ReadDeferred != nil {
 			g.counters.ReadDeferred(g.family, op)
@@ -193,11 +203,11 @@ func (g *governor) rotate(cursor forgeapi.RotationCursor) {
 	g.cursor = cursor
 }
 
-// DiagID mints the diagnostic id one failed operation carries: 64 random bits
+// diagID mints the diagnostic id one failed operation carries: 64 random bits
 // rendered as base32, in the user-visible error and in every log line for that
 // operation, retained only in the log. It is not a session id, not stable across
 // retries and never a lookup key for state.
-func DiagID() string {
+func diagID() string {
 	var raw [8]byte
 	if _, err := io.ReadFull(rand.Reader, raw[:]); err != nil {
 		binary.BigEndian.PutUint64(raw[:], uint64(time.Now().UnixNano()))

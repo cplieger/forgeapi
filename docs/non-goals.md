@@ -4,7 +4,7 @@ This page lists what forgeapi leaves out on purpose, with the reason for each. R
 
 ## A generic request method
 
-It would make every route the caller's business, which is the coupling this library exists to remove. No published price or capability could describe the call. Each operation has one method, with no per-product variant and no option that changes which route it takes.
+It would make every route the caller's business, which is the coupling this library exists to remove. No published price or capability could describe the call. Each operation has one method, with no per-product variant. An option selects what the operation answers, such as one owner's items, and never names a route.
 
 ## Routes you add to a client
 

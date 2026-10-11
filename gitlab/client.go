@@ -26,8 +26,7 @@ type Client struct {
 	// none has been. It outranks the permission pair, because this product checks
 	// the token's own permission before the owner's access and the pair reports
 	// only the owner's.
-	refused  *forgeapi.Evidence
-	settings forgeapi.Settings
+	refused *forgeapi.Evidence
 	// grantPush is what the last document reported for the project permission
 	// that decides whether a caller can ask for a merge-status recalculation. It
 	// is held beside grant because the evidence names the source and this names
@@ -89,7 +88,7 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 	if err != nil {
 		return nil, err
 	}
-	return &Client{core: core, settings: settings, grantPush: forgeapi.SupportUnknown}, nil
+	return &Client{core: core, grantPush: forgeapi.SupportUnknown}, nil
 }
 
 // deriveAPIBase is this product's API root under the web base, used where the

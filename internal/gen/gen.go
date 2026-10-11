@@ -396,5 +396,30 @@ func renderSupport() []byte {
 		}
 		out.WriteString("\n")
 	}
+	renderThrottles(&out)
 	return []byte(out.String())
+}
+
+// renderThrottles writes the answers each product sends for its rate limit, which
+// every operation reports as KindRateLimited rather than the status's own kind.
+func renderThrottles(out *strings.Builder) {
+	out.WriteString("\n## Rate-limit answers\n\n")
+	out.WriteString("Every operation reports these answers as `KindRateLimited`, with `RetryAfter` set from the `Retry-After` header where the answer carries one.\n\n")
+
+	out.WriteString("| Product | Status | Header | Answer |\n| --- | --- | --- | --- |\n")
+	for _, product := range spec.Products {
+		for _, th := range spec.Throttles {
+			if th.Product != product {
+				continue
+			}
+			header := "none: the status alone"
+			switch {
+			case th.Header != "" && th.Value != "":
+				header = "`" + th.Header + ": " + th.Value + "`"
+			case th.Header != "":
+				header = "`" + th.Header + "`, any value"
+			}
+			fmt.Fprintf(out, "| %s | %d | %s | %s |\n", product, th.Status, header, th.Says)
+		}
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -31,21 +32,6 @@ const searchPrefix = "s"
 // results, and the bound keeps a forged count from overflowing the walk's sum.
 const maxSearchServed = 1 << 30
 
-// documentCost is the cost every document this family ships is asserted against, as a
-// CEILING at a stated page size rather than as an equality: a document whose cost
-// drops upstream keeps passing, and a caller raising the page size does not turn a
-// measurement into a failure.
-//
-// Measured on api.github.com: at a page of twenty both pull-request documents and the
-// cross-repository search charged one, and at a page of a hundred the list document
-// and the search charged three, which is where this ceiling comes from. The node
-// count tracks what a document REQUESTS rather than what came back, so it is not a
-// cost: the list document charged three at 2,300 requested nodes and at 10,300.
-const documentCost = 3
-
-// documentPageSize is the page size that ceiling is stated at.
-const documentPageSize = 100
-
 // foldPageSize is the contexts page a COMPLETE fold asks for, which is this
 // product's own maximum for that connection: the read that returns the check names
 // wants them, and a smaller page spends more requests for the same list.
@@ -60,10 +46,9 @@ const foldPageSize = 100
 // NAMES, and the row's own partial marker says so.
 const listFoldPageSize = 1
 
-// rateLimitSelection is the budget object every document selects, which is how this
-// product reports what a document cost and what the credential has left on the
-// document surface. The two surfaces are separate windows, so this is the document
-// window's own figure.
+// rateLimitSelection is the budget object every query document selects, which is how
+// this product reports what a document cost. What the credential has left and when
+// its window renews arrive in the response's rate-limit headers, as on REST.
 const rateLimitSelection = `
   rateLimit { cost limit nodeCount remaining resetAt used }`
 
@@ -142,9 +127,13 @@ func pullRequestFields(foldPage int, foldAfter string) string {
 // text, and whether it is a mutation, which the transport governs as a write. A
 // document is not an operation, and the operations that reach each are named in its
 // own comment below.
+//
+// absence names a nullable root field whose NOT_FOUND error is the schema's answer for
+// no such node, so an envelope carrying only that error is an answer, not a refusal.
 type document struct {
 	name     string
 	text     string
+	absence  string
 	mutation bool
 }
 
@@ -310,9 +299,31 @@ var enableAutoMerge = document{
 	mutation: true,
 }
 
-// documents is every document this family ships, which is what the document
-// assertions iterate.
-var documents = []document{prList, prRead, prMine, issueMine, commitRollup, enableAutoMerge}
+// repoOwned is one owner's repositories, whose caller is [Client.ListRepos] under an
+// owner scope. repositoryOwner resolves a user and an organization alike, and
+// ownerAffiliations is sent because the schema defaults it to [OWNER, COLLABORATOR].
+var repoOwned = document{
+	name:    "RepoOwned",
+	absence: "repositoryOwner",
+	text: `query RepoOwned($owner: String!, $first: Int!, $after: String) {` + rateLimitSelection + `
+  repositoryOwner(login: $owner) {
+    repositories(first: $first, after: $after, ownerAffiliations: [OWNER]) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        nameWithOwner description url isPrivate isArchived isFork updatedAt
+        defaultBranchRef { name }
+        hasIssuesEnabled viewerPermission mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
+      }
+    }
+  }
+}
+`,
+}
+
+// repoOwnedPageCeiling is the most rows [repoOwned] asks for on one page: this
+// product refuses a connection's first argument above 100
+// (https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api).
+const repoOwnedPageCeiling = 100
 
 // envelope is the GraphQL response envelope, decoded whenever the body is JSON
 // whatever the status: an unknown field, an unresolvable selection and a partial
@@ -335,12 +346,40 @@ func (e *envelope) carriesData() bool {
 
 // docError is one envelope error. Its path is a HETEROGENEOUS array of strings and
 // integers on this product, measured, which is why it is held as raw JSON rather than
-// as a typed list: nothing here reads it, and a typed list of either element type
-// would fail to decode the other.
+// as a typed list that would fail to decode the other element type.
 type docError struct {
 	Message string          `json:"message"`
 	Type    string          `json:"type"`
 	Path    json.RawMessage `json:"path"`
+}
+
+// notFoundType is the discriminator this product sends for a node no one holds.
+const notFoundType = "NOT_FOUND"
+
+// on reports whether this error's path starts at the root field named.
+func (e *docError) on(field string) bool {
+	var path []json.RawMessage
+	var first string
+	return json.Unmarshal(e.Path, &path) == nil && len(path) > 0 &&
+		json.Unmarshal(path[0], &first) == nil && first == field
+}
+
+// absenceOf reads an envelope's errors against the document's nullable root: whether
+// every error is a NOT_FOUND on it, and the first other error on it, which is a
+// resolver failure that nulled the root rather than an absence.
+func (d *document) absenceOf(errs []docError) (onlyNotFound bool, failure *docError) {
+	if d.absence == "" || len(errs) == 0 {
+		return false, nil
+	}
+	onlyNotFound = true
+	for i := range errs {
+		absent := errs[i].Type == notFoundType && errs[i].on(d.absence)
+		onlyNotFound = onlyNotFound && absent
+		if failure == nil && !absent && errs[i].on(d.absence) {
+			failure = &errs[i]
+		}
+	}
+	return onlyNotFound, failure
 }
 
 // docData is the decoded `data` of one document, which reports what the endpoint
@@ -356,9 +395,97 @@ type docResult struct {
 	// Refusal is the first envelope error's message, quoted, on a partial answer: a
 	// mutation whose payload is null beside an error is refused by that error.
 	Refusal string
+	// RootFailure is the quoted message of a non-NOT_FOUND error on the document's
+	// absence root, empty where none arrived: the root's null is then that failure.
+	RootFailure string
+	// errors are the envelope errors of a partial answer, which a caller places
+	// against the rows they fell in (see [docResult.placed]).
+	errors  []docError
 	Cost    int
 	Status  int
 	Partial bool
+}
+
+// forbiddenType is the discriminator this product sends for a field the credential
+// may not read, measured on a check rollup's contexts under a fine-grained token.
+const forbiddenType = "FORBIDDEN"
+
+// placement is where a partial answer's envelope errors fell, against the node at the
+// path a caller names.
+type placement struct {
+	// refused holds the row indices whose check rollup the product refused to the
+	// credential; on a read of one node the only index is zero.
+	refused map[int]bool
+	// rollup reports another error under the node's check rollup.
+	rollup bool
+	// other reports an error anywhere else, which leaves unnamed what it nulled.
+	other bool
+}
+
+// placed sorts the answer's errors against the node at prefix. rows says a row index
+// follows prefix, and present says whether that row was answered: an error inside a
+// row nothing answered is the page's, since the row itself is what it nulled.
+func (r *docResult) placed(prefix []string, rows bool, present func(int) bool) placement {
+	var out placement
+	for i := range r.errors {
+		row, rollup, ok := r.errors[i].under(prefix, rows)
+		switch {
+		case !ok || (rows && !present(row)):
+			out.other = true
+		case rollup && r.errors[i].Type == forbiddenType:
+			if out.refused == nil {
+				out.refused = map[int]bool{}
+			}
+			out.refused[row] = true
+		case rollup:
+			out.rollup = true
+		default:
+			out.other = true
+		}
+	}
+	return out
+}
+
+// unplaced reports an error no row's own marker names, which leaves its page or its
+// read partial.
+func (p *placement) unplaced() bool { return p.rollup || p.other }
+
+// whole reports a placement of no error at all.
+func (p *placement) whole() bool { return len(p.refused) == 0 && !p.unplaced() }
+
+// add folds a further page's placement into p.
+func (p *placement) add(q placement) {
+	for i := range q.refused {
+		if p.refused == nil {
+			p.refused = map[int]bool{}
+		}
+		p.refused[i] = true
+	}
+	p.rollup = p.rollup || q.rollup
+	p.other = p.other || q.other
+}
+
+// under reports whether this error's path lies inside the node at prefix, which row of
+// it where rows is set, and whether the path reaches into the node's check rollup.
+func (e *docError) under(prefix []string, rows bool) (row int, rollup, ok bool) {
+	var path []any
+	if json.Unmarshal(e.Path, &path) != nil || len(path) <= len(prefix) {
+		return 0, false, false
+	}
+	for i, want := range prefix {
+		if got, isString := path[i].(string); !isString || got != want {
+			return 0, false, false
+		}
+	}
+	rest := path[len(prefix):]
+	if rows {
+		index, isNumber := rest[0].(float64)
+		if !isNumber || index < 0 || index != float64(int(index)) {
+			return 0, false, false
+		}
+		row, rest = int(index), rest[1:]
+	}
+	return row, slices.Contains(rest, any("statusCheckRollup")), true
 }
 
 // execute sends one document and decodes its data into out.
@@ -403,8 +530,13 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	if !decoded {
 		return docResult{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), status)
 	}
+	onlyNotFound, rootFailure := doc.absenceOf(env.Errors)
 	if len(env.Errors) > 0 && !env.carriesData() {
-		return docResult{}, c.refuseDocument(ctx, op, doc, resp, env.Errors)
+		if !onlyNotFound {
+			return docResult{}, c.refuseDocument(ctx, op, doc, resp, env.Errors)
+		}
+		c.countEnvelope(env.Errors)
+		return docResult{Status: status}, nil
 	}
 	if err := transport.Decode(env.Data, out); err != nil {
 		return docResult{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), status)
@@ -416,6 +548,10 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	if result.Partial {
 		c.countEnvelope(env.Errors)
 		result.Refusal = resp.Quote(env.Errors[0].Message)
+		result.errors = env.Errors
+	}
+	if rootFailure != nil {
+		result.RootFailure = resp.Quote(rootFailure.Message)
 	}
 	return result, nil
 }
@@ -523,7 +659,7 @@ const (
 // as it resolves a user's, measured on both. Either way the query names no
 // repository, which is what makes the call's price independent of how many
 // repositories the credential can reach.
-func searchQuery(itemType string, set forgeapi.ListSettings) string {
+func searchQuery(itemType string, set *forgeapi.ListSettings) string {
 	scope := "author:@me"
 	if set.OwnerSet {
 		scope = "user:" + set.Owner
@@ -533,11 +669,11 @@ func searchQuery(itemType string, set forgeapi.ListSettings) string {
 
 // searchVariables are the variables both cross-repository documents take for one
 // page of one query.
-func searchVariables(query string, set forgeapi.ListSettings, after string) map[string]any {
+func searchVariables(query string, set *forgeapi.ListSettings, after string) map[string]any {
 	return map[string]any{
-		"q":     query,
-		"first": set.PageBound,
-		"after": nullableString(after),
+		"q":      query,
+		varFirst: set.PageBound,
+		varAfter: nullableString(after),
 	}
 }
 

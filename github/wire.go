@@ -58,8 +58,7 @@ type (
 	}
 
 	docLabels struct {
-		Nodes      []docLabel `json:"nodes"`
-		TotalCount int        `json:"totalCount"`
+		Nodes []docLabel `json:"nodes"`
 	}
 
 	// docStateCount is one member of the per-state count arrays the rollup's
@@ -88,18 +87,14 @@ type (
 		DetailsURL  string `json:"detailsUrl"`
 	}
 
-	docContexts struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the query it decodes
-		TotalCount                 int             `json:"totalCount"`
-		CheckRunCount              int             `json:"checkRunCount"`
-		StatusContextCount         int             `json:"statusContextCount"`
+	docContexts struct {
 		CheckRunCountsByState      []docStateCount `json:"checkRunCountsByState"`
 		StatusContextCountsByState []docStateCount `json:"statusContextCountsByState"`
 		PageInfo                   docPageInfo     `json:"pageInfo"`
 		Nodes                      []docContext    `json:"nodes"`
 	}
 
-	docRollup struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
-		State    string       `json:"state"`
+	docRollup struct {
 		Contexts *docContexts `json:"contexts"`
 	}
 
@@ -116,10 +111,7 @@ type (
 		Nodes []docCommitNode `json:"nodes"`
 	}
 
-	docAutoMerge struct {
-		EnabledAt   *time.Time `json:"enabledAt"`
-		MergeMethod string     `json:"mergeMethod"`
-	}
+	docAutoMerge struct{}
 
 	// armData is the arm document's payload: null where the arm was refused, and the
 	// pull request's auto-merge request where it was armed.
@@ -166,18 +158,16 @@ type (
 		NameWithOwner string `json:"nameWithOwner"`
 	}
 
-	docPullConnection struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
-		TotalCount int              `json:"totalCount"`
-		PageInfo   docPageInfo      `json:"pageInfo"`
-		Nodes      []docPullRequest `json:"nodes"`
+	docPullConnection struct {
+		PageInfo docPageInfo      `json:"pageInfo"`
+		Nodes    []docPullRequest `json:"nodes"`
 	}
 
 	docRepository struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the query it decodes
-		NameWithOwner    string             `json:"nameWithOwner"`
-		ViewerPermission string             `json:"viewerPermission"`
-		PullRequests     *docPullConnection `json:"pullRequests"`
-		PullRequest      *docPullRequest    `json:"pullRequest"`
-		Object           *docCommit         `json:"object"`
+		NameWithOwner string             `json:"nameWithOwner"`
+		PullRequests  *docPullConnection `json:"pullRequests"`
+		PullRequest   *docPullRequest    `json:"pullRequest"`
+		Object        *docCommit         `json:"object"`
 	}
 
 	// docSearch is one page of the pull-request search. Its nodes are a list of
@@ -225,13 +215,8 @@ type (
 		Nodes      []*docSearchIssue `json:"nodes"`
 	}
 
-	docRateLimit struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the query it decodes
-		Cost      int       `json:"cost"`
-		Limit     int       `json:"limit"`
-		NodeCount int       `json:"nodeCount"`
-		Remaining int       `json:"remaining"`
-		ResetAt   time.Time `json:"resetAt"`
-		Used      int       `json:"used"`
+	docRateLimit struct {
+		Cost int `json:"cost"`
 	}
 
 	// docPayload is the decoded `data` of every pull-request and commit document this
@@ -245,6 +230,43 @@ type (
 		RateLimit  *docRateLimit  `json:"rateLimit"`
 		Repository *docRepository `json:"repository"`
 		Search     *docSearch     `json:"search"`
+	}
+
+	docRefName struct {
+		Name string `json:"name"`
+	}
+
+	// docOwnedRepo is one node of an owner's repositories connection, which
+	// carries the three merge flags the REST listing row omits.
+	docOwnedRepo struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the query it decodes
+		NameWithOwner      string      `json:"nameWithOwner"`
+		Description        string      `json:"description"`
+		URL                string      `json:"url"`
+		IsPrivate          bool        `json:"isPrivate"`
+		IsArchived         bool        `json:"isArchived"`
+		IsFork             bool        `json:"isFork"`
+		UpdatedAt          time.Time   `json:"updatedAt"`
+		DefaultBranchRef   *docRefName `json:"defaultBranchRef"`
+		HasIssuesEnabled   *bool       `json:"hasIssuesEnabled"`
+		ViewerPermission   string      `json:"viewerPermission"`
+		MergeCommitAllowed *bool       `json:"mergeCommitAllowed"`
+		SquashMergeAllowed *bool       `json:"squashMergeAllowed"`
+		RebaseMergeAllowed *bool       `json:"rebaseMergeAllowed"`
+	}
+
+	docOwnedRepos struct {
+		PageInfo docPageInfo    `json:"pageInfo"`
+		Nodes    []docOwnedRepo `json:"nodes"`
+	}
+
+	// docOwnerPayload is the decoded `data` of the owner's repositories document.
+	// Its owner is a pointer because the schema declares it nullable, and null is
+	// the answer for a login no user or organization holds.
+	docOwnerPayload struct {
+		RateLimit *docRateLimit `json:"rateLimit"`
+		Owner     *struct {
+			Repositories *docOwnedRepos `json:"repositories"`
+		} `json:"repositoryOwner"`
 	}
 
 	// docIssuePayload is the decoded `data` of the cross-repository issue document,
@@ -262,6 +284,10 @@ type (
 // search at a page of a hundred, which is why the assertion on it is a ceiling at a
 // stated page size rather than an equality.
 func (p *docPayload) cost() int {
+	return p.RateLimit.charged()
+}
+
+func (p *docOwnerPayload) cost() int {
 	return p.RateLimit.charged()
 }
 
@@ -295,20 +321,12 @@ type (
 		WebURL string `json:"html_url"`
 	}
 
-	restOwner struct {
-		Login string `json:"login"`
-	}
-
 	restPermissions struct {
-		Admin bool `json:"admin"`
-		Push  bool `json:"push"`
-		Pull  bool `json:"pull"`
+		Push bool `json:"push"`
 	}
 
 	restRepo struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
 		FullName      string           `json:"full_name"`
-		Name          string           `json:"name"`
-		Owner         *restOwner       `json:"owner"`
 		Description   string           `json:"description"`
 		WebURL        string           `json:"html_url"`
 		CloneURL      string           `json:"clone_url"`
@@ -346,9 +364,7 @@ type (
 		FullName string `json:"full_name"`
 	}
 
-	restAutoMerge struct {
-		MergeMethod string `json:"merge_method"`
-	}
+	restAutoMerge struct{}
 
 	restPull struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
 		Number         int            `json:"number"`
@@ -383,9 +399,7 @@ type (
 		// PullRequest is the key that makes a row of the issues route a PULL
 		// REQUEST. It is read to DROP that row, because this route's population is
 		// issues and pull requests both and the operation publishes issues.
-		PullRequest *struct {
-			URL string `json:"url"`
-		} `json:"pull_request"`
+		PullRequest *struct{} `json:"pull_request"`
 	}
 
 	restRelease struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
@@ -396,7 +410,6 @@ type (
 		PublishedAt *time.Time `json:"published_at"`
 		Draft       bool       `json:"draft"`
 		Prerelease  bool       `json:"prerelease"`
-		Target      string     `json:"target_commitish"`
 	}
 
 	restStatus struct {
@@ -406,15 +419,13 @@ type (
 		State       string `json:"state"`
 	}
 
-	// restCombined is the combined-status endpoint's answer. Its `state` is NOT
-	// read as the verdict: measured on an Actions-only repository, that endpoint
+	// restCombined is the combined-status endpoint's answer. Its `state` is not
+	// decoded: measured on an Actions-only repository, that endpoint
 	// answers an empty statuses array byte-identically to a commit with no CI at
 	// all, so folding its state reports a green nothing earned.
-	restCombined struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
-		State      string       `json:"state"`
-		SHA        string       `json:"sha"`
-		TotalCount int          `json:"total_count"`
-		Statuses   []restStatus `json:"statuses"`
+	restCombined struct {
+		SHA      string       `json:"sha"`
+		Statuses []restStatus `json:"statuses"`
 	}
 
 	restCheckRun struct {
@@ -422,16 +433,16 @@ type (
 		Status     string `json:"status"`
 		Conclusion string `json:"conclusion"`
 		DetailsURL string `json:"details_url"`
-		HeadSHA    string `json:"head_sha"`
 	}
 
-	restCheckRuns struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
-		TotalCount int            `json:"total_count"`
-		CheckRuns  []restCheckRun `json:"check_runs"`
+	restCheckRuns struct {
+		CheckRuns []restCheckRun `json:"check_runs"`
 	}
 
 	restWorkflowRun struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
 		ID         int64     `json:"id"`
+		RunNumber  int64     `json:"run_number"`
+		Event      string    `json:"event"`
 		Name       string    `json:"name"`
 		HeadBranch string    `json:"head_branch"`
 		HeadSHA    string    `json:"head_sha"`
@@ -439,6 +450,7 @@ type (
 		Conclusion string    `json:"conclusion"`
 		WebURL     string    `json:"html_url"`
 		CreatedAt  time.Time `json:"created_at"`
+		StartedAt  time.Time `json:"run_started_at"`
 		UpdatedAt  time.Time `json:"updated_at"`
 	}
 
@@ -450,9 +462,8 @@ type (
 	// restMeta is the metadata endpoint's answer. The version member is what an
 	// APPLIANCE reports and dotcom omits, which is how the connection read tells
 	// the family's two products apart.
-	restMeta struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
+	restMeta struct {
 		InstalledVersion string `json:"installed_version"`
-		PasswordAuth     *bool  `json:"verifiable_password_authentication"`
 	}
 
 	// restMergeAnswer is the asynchronous merge's answer: its status names where
@@ -483,19 +494,13 @@ var statusStates = map[string]forgeapi.CheckState{
 	"":            forgeapi.CheckUnknown,
 }
 
-// checkRunStates is the enumeration the rollup's per-state COUNTS speak, mapped
-// totally over the fourteen members its schema declares. It is a UNION of a check
-// run's status and its conclusion, which is why status-shaped and conclusion-shaped
-// members sit in one table.
-//
-// COMPLETED is the one member that names no verdict: it is the status half saying
-// the run finished, with the conclusion that would say what it finished as living in
-// the other half, so it answers the unknown member rather than a green.
-//
-// Measured by introspection on api.github.com, 2026-09-18: CheckRunState declares
-// fourteen members, CheckConclusionState nine and CheckStatusState six, and the
-// conclusion half is what makes [forgeapi.CheckNeutral] reachable on this product at
-// all.
+// checkRunStates maps the union of a check run's status and conclusion that the
+// rollup's per-state counts speak, totally over the fourteen members CheckRunState
+// declares (introspected on api.github.com, 2026-09-18); the conclusion half is what
+// makes [forgeapi.CheckNeutral] reachable. COMPLETED names no verdict, so it is
+// unknown. ACTION_REQUIRED is failing: GitHub groups it with failure and timeout as a
+// conclusion that usually needs review before the merge,
+// https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks#check-statuses-and-conclusions
 var checkRunStates = map[string]forgeapi.CheckState{
 	"success":          forgeapi.CheckPassing,
 	"failure":          forgeapi.CheckFailing,
@@ -579,6 +584,48 @@ var issueStates = map[string]forgeapi.IssueState{
 	"open":   forgeapi.IssueStateOpen,
 	"closed": forgeapi.IssueStateClosed,
 	"":       forgeapi.IssueStateUnknown,
+}
+
+// workflowEvents maps the workflow-run event onto the trigger, totally over the events
+// https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
+// lists plus dynamic, the event GitHub-managed workflows report. issue_comment is
+// other because it fires for issues and pull requests alike.
+var workflowEvents = map[string]forgeapi.RunTrigger{
+	"push":                        forgeapi.TriggerPush,
+	"pull_request":                forgeapi.TriggerPullRequest,
+	"pull_request_target":         forgeapi.TriggerPullRequest,
+	"pull_request_review":         forgeapi.TriggerPullRequest,
+	"pull_request_review_comment": forgeapi.TriggerPullRequest,
+	"merge_group":                 forgeapi.TriggerPullRequest,
+	"schedule":                    forgeapi.TriggerSchedule,
+	"workflow_dispatch":           forgeapi.TriggerManual,
+	"repository_dispatch":         forgeapi.TriggerManual,
+	"branch_protection_rule":      forgeapi.TriggerOther,
+	"check_run":                   forgeapi.TriggerOther,
+	"check_suite":                 forgeapi.TriggerOther,
+	"create":                      forgeapi.TriggerOther,
+	"delete":                      forgeapi.TriggerOther,
+	"deployment":                  forgeapi.TriggerOther,
+	"deployment_status":           forgeapi.TriggerOther,
+	"discussion":                  forgeapi.TriggerOther,
+	"discussion_comment":          forgeapi.TriggerOther,
+	"fork":                        forgeapi.TriggerOther,
+	"gollum":                      forgeapi.TriggerOther,
+	"image_version":               forgeapi.TriggerOther,
+	"issue_comment":               forgeapi.TriggerOther,
+	"issues":                      forgeapi.TriggerOther,
+	"label":                       forgeapi.TriggerOther,
+	"milestone":                   forgeapi.TriggerOther,
+	"page_build":                  forgeapi.TriggerOther,
+	"public":                      forgeapi.TriggerOther,
+	"registry_package":            forgeapi.TriggerOther,
+	"release":                     forgeapi.TriggerOther,
+	"status":                      forgeapi.TriggerOther,
+	"watch":                       forgeapi.TriggerOther,
+	"workflow_call":               forgeapi.TriggerOther,
+	"workflow_run":                forgeapi.TriggerOther,
+	"dynamic":                     forgeapi.TriggerOther,
+	"":                            forgeapi.TriggerUnknown,
 }
 
 // mergeMethods is the closed set of merge strategies this product's own schema
@@ -694,6 +741,16 @@ func (c *Client) issueState(field, raw string) forgeapi.IssueState {
 	}
 	c.unmapped(field, raw)
 	return forgeapi.IssueStateUnknown
+}
+
+// runTrigger maps one workflow run's event, totally.
+func (c *Client) runTrigger(raw string) forgeapi.RunTrigger {
+	trigger, ok := workflowEvents[member(raw)]
+	if ok {
+		return trigger
+	}
+	c.unmapped("workflow run event (rest)", raw)
+	return forgeapi.TriggerUnknown
 }
 
 // supportOf turns a boolean this product did send into a three-valued answer.
@@ -1084,19 +1141,34 @@ func (c *Client) normalizeDocIssue(n *docIssue) forgeapi.Issue {
 // normalizeRun is the workflow-run normalizer. The run's status and conclusion are
 // this product's check-run vocabularies, which is what the runs route's own status
 // filter documents, so they fold through the table the check runs fold through and
-// a completed run's verdict is its conclusion's.
+// a completed run's verdict is its conclusion's, except where [runConclusions] says
+// a run's conclusion means something else.
 func (c *Client) normalizeRun(r *restWorkflowRun, repo forgeapi.RepoRef) forgeapi.Run {
+	state, ok := runConclusions[member(r.Conclusion)]
+	if !ok {
+		state = c.runState("workflow run (rest)", r.Status, r.Conclusion)
+	}
 	return forgeapi.Run{
+		Ref:       forgeapi.RunRef{ID: r.ID, Number: r.RunNumber},
 		Repo:      repo,
 		Name:      r.Name,
 		Branch:    r.HeadBranch,
 		HeadSHA:   r.HeadSHA,
 		WebURL:    r.WebURL,
 		CreatedAt: r.CreatedAt,
+		StartedAt: r.StartedAt,
 		UpdatedAt: r.UpdatedAt,
-		State:     c.runState("workflow run (rest)", r.Status, r.Conclusion),
+		State:     state,
+		Trigger:   c.runTrigger(r.Event),
 	}
 }
+
+// runConclusions is where a workflow run's conclusion departs from a check run's.
+// action_required on a run is a fork's run waiting for a maintainer's approval, with
+// no job run (measured: such runs answer completed beside it), so it is pending, the
+// verdict the Gitea family gives the same wait,
+// https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks
+var runConclusions = map[string]forgeapi.CheckState{"action_required": forgeapi.CheckPending}
 
 // normalizeRelease is the release normalizer. The published instant is a POINTER on
 // the wire and null on a draft, which is a release with no publication rather than
@@ -1117,7 +1189,7 @@ func normalizeRelease(r *restRelease) forgeapi.Release {
 }
 
 // normalizeRepo is the repository normalizer.
-func (c *Client) normalizeRepo(r *restRepo) forgeapi.Repository {
+func normalizeRepo(r *restRepo) forgeapi.Repository {
 	return forgeapi.Repository{
 		Ref:         repoRef(r.FullName),
 		Description: r.Description,
@@ -1155,6 +1227,62 @@ func normalizeAffordances(r *restRepo) forgeapi.RepoAffordances {
 		Ev:              ev,
 		DefaultBranch:   r.DefaultBranch,
 	}
+}
+
+// normalizeOwnedRepo is the owner-scoped listing's row. The document carries no HTTPS
+// clone field, so the clone URL is the repository URL with .git appended, the form
+// REST's clone_url takes.
+func (c *Client) normalizeOwnedRepo(r *docOwnedRepo) forgeapi.Repository {
+	var branch string
+	if r.DefaultBranchRef != nil {
+		branch = r.DefaultBranchRef.Name
+	}
+	strategies := exposedStrategies(&restRepo{
+		AllowMergeCommit: r.MergeCommitAllowed, AllowSquashMerge: r.SquashMergeAllowed, AllowRebaseMerge: r.RebaseMergeAllowed,
+	})
+	return forgeapi.Repository{
+		Ref:         repoRef(r.NameWithOwner),
+		Description: r.Description,
+		WebURL:      r.URL,
+		CloneURL:    r.URL + ".git",
+		UpdatedAt:   r.UpdatedAt,
+		Affordances: forgeapi.RepoAffordances{
+			MergeStrategies: strategies,
+			HasIssues:       supportOfPointer(r.HasIssuesEnabled),
+			CanPush:         c.viewerPush(r.ViewerPermission),
+			MergeTrain:      forgeapi.SupportUnknown,
+			Ev: map[forgeapi.Capability]forgeapi.Evidence{
+				forgeapi.CapHasIssues:  affordanceEvidence(r.HasIssuesEnabled != nil, "hasIssuesEnabled"),
+				forgeapi.CapCanPush:    affordanceEvidence(r.ViewerPermission != "", "viewerPermission"),
+				forgeapi.CapMergeTrain: {Source: forgeapi.EvidenceDefault, Detail: "a merge queue is a ruleset property on this product, so no repository record carries a key for it on either route"},
+			},
+			DefaultBranch: branch,
+		},
+		Private:  r.IsPrivate,
+		Archived: r.IsArchived,
+		Fork:     r.IsFork,
+	}
+}
+
+// viewerPermissions maps the schema's RepositoryPermission onto the push affordance,
+// totally; a null permission is unknown.
+var viewerPermissions = map[string]forgeapi.Support{
+	"admin":       forgeapi.SupportYes,
+	"maintain":    forgeapi.SupportYes,
+	"write":       forgeapi.SupportYes,
+	"triage":      forgeapi.SupportNo,
+	"triage_plus": forgeapi.SupportNo,
+	"read":        forgeapi.SupportNo,
+	"":            forgeapi.SupportUnknown,
+}
+
+func (c *Client) viewerPush(raw string) forgeapi.Support {
+	support, ok := viewerPermissions[member(raw)]
+	if ok {
+		return support
+	}
+	c.unmapped("viewer permission (document)", raw)
+	return forgeapi.SupportUnknown
 }
 
 // affordanceEvidence names where one affordance was read, which is the record's own
@@ -1290,20 +1418,13 @@ type verdict struct {
 	kind forgeapi.ErrorKind
 }
 
-// headerMapped is the part of the mapping a HEADER decides rather than the status, which
-// is two cells on this product and is why the mapper is given the headers at all.
+// headerMapped is the part of the mapping a header decides rather than the status.
 //
-// A 403 whose remaining-budget header reads zero is a THROTTLE rather than a permission,
-// which is how this product reports both its primary and its secondary limits, so
-// reading that status as forbidden alone would tell a user to fix their token while the
-// quota refills. And a 400 answering a request that CARRIED the version pin and did not
-// answer under it is that version being outside the instance's reach rather than a bad
-// request, which is the one status a dated pin can produce.
-//
-// The pin is what makes the second cell readable at all. A request that carried no pin
-// is answered under the instance's own default, so the echo names a version other than
-// the pinned one on every response including an ordinary refusal, and a mapping that
-// read the echo there would report every 400 on such a connection as the pin's own.
+// A 403 whose headers say throttle (see throttled) is a rate limit, so nobody is
+// told to fix a token while the quota refills. A 400 to a request that carried the
+// version pin and was not answered under it is that version out of the instance's
+// reach. An unpinned request's echo names the instance's default on every response,
+// so the echo is read only when pinned.
 func headerMapped(status int, header http.Header, pinned bool) (verdict, bool) {
 	switch {
 	case status == http.StatusForbidden && throttled(header):
@@ -1315,10 +1436,14 @@ func headerMapped(status int, header http.Header, pinned bool) (verdict, bool) {
 }
 
 // throttled reports whether a refusal is this product's quota rather than a
-// permission, which the remaining-budget header is what says: measured, both the
-// primary and the secondary limit answer 403 with that header at zero, where a
-// permission refusal leaves it above zero.
+// permission: the remaining-budget header at zero, the primary or a secondary limit
+// spent, or a Retry-After header, which a secondary limit sends while that header may
+// still report budget left
+// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
 func throttled(header http.Header) bool {
+	if header.Get("Retry-After") != "" {
+		return true
+	}
 	remaining, _, ok := signal(header)
 	return ok && remaining <= 0
 }

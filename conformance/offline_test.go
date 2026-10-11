@@ -277,7 +277,7 @@ func runOffline(t *testing.T, e spec.Entry, op operation) {
 func checkSends(t *testing.T, e spec.Entry, s subject, requests []sent) {
 	t.Helper()
 	for _, row := range e.Sends {
-		if row.Holds == spec.HoldsNothing {
+		if row.Holds == spec.HoldsNothing || (row.Holds == spec.HoldsSinceBound && s.since.IsZero()) {
 			if req, found := carrier(requests, &row); found {
 				t.Errorf("%s on %s sent %s in the %s of %s, want it absent: %s",
 					e.Method, e.Product, row.Field, row.Where, req, row.Says)
@@ -746,6 +746,9 @@ func TestEveryAssertableDepartureIsAsserted(t *testing.T) {
 			declared[c.path] = true
 		}
 		for _, path := range op.errorArms {
+			declared[path] = true
+		}
+		for _, path := range op.rowArms {
 			declared[path] = true
 		}
 		for _, d := range e.Departures {

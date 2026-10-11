@@ -11,20 +11,38 @@ import (
 	"github.com/cplieger/forgeapi"
 )
 
+// documentCost is the cost every document this family ships is asserted against, as a
+// CEILING at a stated page size rather than as an equality: a document whose cost
+// drops upstream keeps passing, and a caller raising the page size does not turn a
+// measurement into a failure.
+//
+// Measured on api.github.com: at a page of twenty both pull-request documents and the
+// cross-repository search charged one, and at a page of a hundred the list document
+// and the search charged three, which is where this ceiling comes from. The node
+// count tracks what a document REQUESTS rather than what came back, so it is not a
+// cost: the list document charged three at 2,300 requested nodes and at 10,300.
+const documentCost = 3
+
+// documentPageSize is the page size that ceiling is stated at.
+const documentPageSize = 100
+
+// documents is every document this family ships, which is what the document
+// assertions iterate.
+var documents = []document{prList, prRead, prMine, issueMine, commitRollup, enableAutoMerge, repoOwned}
+
 // TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn holds every document to
 // the selection their prices and their normalizers both rest on.
 //
-// The budget object is the one every document must carry, because that is where this
-// product reports what the document cost and what the window has left, and a document
-// that stopped selecting it would leave the governor reading the REST window's figure
-// for a call that drew on the other one.
+// The budget object is the one every query document must carry, because that is where
+// this product reports what the document cost, and a document that stopped selecting
+// it would leave the last call's cost at the request count rather than the billed one.
 //
 // A mutation is the exception the schema makes (ADR-0103): the Mutation root has no
 // rate-limit field, which the endpoint answers as an undefined field, so the arm
 // document opens a named mutation and selects no budget object.
 func TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn(t *testing.T) {
-	if len(documents) != 6 {
-		t.Errorf("this family ships %d document(s), want 6: the pull-request list, the single read, the two cross-repository searches, the commit rollup and the auto-merge arm", len(documents))
+	if len(documents) != 7 {
+		t.Errorf("this family ships %d document(s), want 7: the pull-request list, the single read, the two cross-repository searches, the commit rollup, the auto-merge arm and the owner's repositories", len(documents))
 	}
 	for _, doc := range documents {
 		t.Run(doc.name, func(t *testing.T) {
@@ -157,7 +175,7 @@ func TestTheSearchQueryNamesOneScopeAndTheOpenState(t *testing.T) {
 		{itemType: searchPulls, set: owned, want: "type:pr user:example-org state:open"},
 		{itemType: searchIssues, set: owned, want: "type:issue user:example-org state:open"},
 	} {
-		if got := searchQuery(test.itemType, test.set); got != test.want {
+		if got := searchQuery(test.itemType, &test.set); got != test.want {
 			t.Errorf("searchQuery(%q, owner %q set %v) = %q, want %q", test.itemType, test.set.Owner, test.set.OwnerSet, got, test.want)
 		}
 	}

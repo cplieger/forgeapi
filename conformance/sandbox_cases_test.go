@@ -40,7 +40,7 @@ type liveMutation struct {
 // TestEveryMutationHasItsLiveSetup holds in both directions.
 var liveMutations = map[string]liveMutation{
 	"Issues.CreateIssue": {
-		prepare: func(_ *testing.T, l *lane, s *subject) { titled(l, s) },
+		prepare: func(_ *testing.T, _ *lane, s *subject) { titled(s) },
 		made: func(t *testing.T, l *lane, _ subject, got any) {
 			n := got.(forgeapi.Issue).Ref.Number
 			l.later(t, "closing the issue the case opened", func(ctx context.Context) error { return l.closeIssue(ctx, n) })
@@ -53,7 +53,7 @@ var liveMutations = map[string]liveMutation{
 	},
 	"Issues.CloseIssue": {
 		prepare: func(t *testing.T, l *lane, s *subject) {
-			titled(l, s)
+			titled(s)
 			n, err := l.openIssue(t.Context(), s.prefix+issueTitle)
 			if err != nil {
 				t.Fatalf("Setup: opening the issue the case closes: %v", err)
@@ -67,9 +67,9 @@ var liveMutations = map[string]liveMutation{
 	},
 	"PullRequests.CreatePR": {
 		prepare: func(t *testing.T, l *lane, s *subject) {
-			titled(l, s)
-			s.target = mustBranch(t, l, l.name("create-pr-base"))
-			s.source, _ = mustBranchWithCommit(t, l, l.name("create-pr-head"))
+			titled(s)
+			s.target = mustBranch(t, l, laneName("create-pr-base"))
+			s.source, _ = mustBranchWithCommit(t, l, laneName("create-pr-head"))
 		},
 		made: func(t *testing.T, l *lane, _ subject, got any) {
 			n := got.(forgeapi.PullRequest).Ref.Number
@@ -117,12 +117,12 @@ var liveMutations = map[string]liveMutation{
 	},
 	"Releases.CreateRelease": {
 		prepare: func(t *testing.T, l *lane, s *subject) {
-			titled(l, s)
+			titled(s)
 			trunk, err := l.defaultBranch(t.Context())
 			if err != nil {
 				t.Fatalf("Setup: reading the sandbox's default branch: %v", err)
 			}
-			tag := l.name("release")
+			tag := laneName("release")
 			s.tag, s.target = tag, trunk
 			// The tag is known before the call, so its removal is registered
 			// before it: a creation that failed half way leaves nothing behind
@@ -212,8 +212,8 @@ func openedPullRequest(s subject, state forgeapi.PRState) map[string]any {
 
 // titled points a creation's text at this run: every title starts with the run's
 // prefix, and the label applied is the lane's.
-func titled(l *lane, s *subject) {
-	s.prefix = l.titlePrefix()
+func titled(s *subject) {
+	s.prefix = laneTitlePrefix()
 	s.label = laneLabel(s.product)
 }
 
@@ -249,9 +249,9 @@ func mustBranchWithCommit(t *testing.T, l *lane, name string) (string, string) {
 // ahead into a base the run made, and points the subject at it and its head.
 func openPullRequest(t *testing.T, l *lane, s *subject, kind string) {
 	t.Helper()
-	titled(l, s)
-	base := mustBranch(t, l, l.name(kind+"-base"))
-	head, sha := mustBranchWithCommit(t, l, l.name(kind+"-head"))
+	titled(s)
+	base := mustBranch(t, l, laneName(kind+"-base"))
+	head, sha := mustBranchWithCommit(t, l, laneName(kind+"-head"))
 	openOn(t, l, s, head, base, sha)
 }
 
@@ -286,9 +286,9 @@ func prepareRerun(t *testing.T, l *lane, s *subject) {
 	if bound == 0 {
 		t.Skipf("%s is 0, so this instance runs no CI: no run on a pull request's head ever finishes there, and a re-run of failed checks needs one that finished with a failed job", name)
 	}
-	titled(l, s)
-	base := mustBranch(t, l, l.name("rerun-base"))
-	head, sha := mustBranchWithCommit(t, l, l.ciName("rerun"))
+	titled(s)
+	base := mustBranch(t, l, laneName("rerun-base"))
+	head, sha := mustBranchWithCommit(t, l, laneCIName("rerun"))
 	openOn(t, l, s, head, base, sha)
 	v, err := l.waitForRuns(t.Context(), sha, bound)
 	switch {
@@ -443,8 +443,7 @@ func TestTheLiveLaneStatesPlaintextOnlyForALoopbackInstance(t *testing.T) {
 // The run's names all start with a mark and carry the run, so a run's objects are
 // both found by the next sweep and told apart from another run's.
 func TestEveryNameTheRunGivesCarriesTheLanesMarkAndTheRun(t *testing.T) {
-	l := newLane(spec.Gitea, "http://127.0.0.1:1", "", selector)
-	for _, got := range []string{l.name("create-pr-base"), l.ciName("rerun"), l.titlePrefix() + issueTitle} {
+	for _, got := range []string{laneName("create-pr-base"), laneCIName("rerun"), laneTitlePrefix() + issueTitle} {
 		if !laneOwned(got) {
 			t.Errorf("%q carries no lane mark at its start, want one: the next run's sweep could not find it", got)
 		}

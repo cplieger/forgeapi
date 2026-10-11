@@ -2,17 +2,20 @@ package github
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/internal/spec"
 )
 
 // TestEveryWireTypeDecodesTheRecordedBytes holds each of this family's wire types
@@ -206,7 +209,10 @@ func TestTheCombinedStatusStateIsNeverTheVerdict(t *testing.T) {
 		"rest_combined_status_on_a_commit_with_no_ci",
 	} {
 		t.Run(row, func(t *testing.T) {
-			var combined restCombined
+			var combined struct {
+				State    string       `json:"state"`
+				Statuses []restStatus `json:"statuses"`
+			}
 			recorded.row(t, row, &combined)
 			if len(combined.Statuses) != 0 {
 				t.Fatalf("the recorded %s carries %d status row(s), want none: this case is about the empty answer", row, len(combined.Statuses))
@@ -228,7 +234,6 @@ func TestTheCombinedStatusStateIsNeverTheVerdict(t *testing.T) {
 // against what the product declares rather than against what this file remembers.
 type enumerations struct {
 	Provenance string `json:"//"`
-	Source     string `json:"source"`
 	Enums      map[string]struct {
 		DeclaredBy string `json:"declared_by"`
 		Enum       []struct {
@@ -605,6 +610,50 @@ func TestTheErrorMappingReadsTheHeadersAndTheOperation(t *testing.T) {
 					test.op, test.status, header, test.pinned, kind, code, test.wantKind, test.wantCode)
 			}
 		})
+	}
+}
+
+// TestEveryThrottleTheSpecNamesIsARateLimit holds this family's mapping to the
+// expectation table's rate-limit answers for this product, on a read and on the
+// merge, whose own 403 cell would otherwise read a throttle as a permission.
+func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
+	for _, th := range spec.Throttles {
+		if th.Product != spec.GitHub {
+			continue
+		}
+		for _, op := range []string{"ListRuns", opMergePR} {
+			t.Run(strconv.Itoa(th.Status)+"_"+th.Header+"_"+op, func(t *testing.T) {
+				header := http.Header{}
+				if th.Header != "" {
+					header.Set(th.Header, cmp.Or(th.Value, "60"))
+				}
+				if kind, code := mapping(op, th.Status, header, false); kind != forgeapi.KindRateLimited || code != "" {
+					t.Errorf("mapping(%q, %d, %v) = %v, %q, want %v: %s", op, th.Status, header, kind, code, forgeapi.KindRateLimited, th.Says)
+				}
+			})
+		}
+	}
+}
+
+// TestASecondaryLimitWithBudgetLeftIsARateLimitWithItsWait drives GitHub's
+// documented secondary-limit answer end to end: a 403 carrying Retry-After while
+// X-RateLimit-Remaining still reads budget left is a throttle carrying the wait,
+// never a permission refusal.
+func TestASecondaryLimitWithBudgetLeftIsARateLimitWithItsWait(t *testing.T) {
+	header := http.Header{}
+	header.Set("Retry-After", "60")
+	header.Set("X-RateLimit-Remaining", "4000")
+	h := newRefusingHarness(t, http.StatusForbidden, header)
+	_, err := h.client.ListRuns(t.Context(), testRef())
+	var fe *forgeapi.Error
+	if !asForgeError(err, &fe) {
+		t.Fatalf("ListRuns against a secondary limit = %v, want a *forgeapi.Error", err)
+	}
+	if fe.Kind != forgeapi.KindRateLimited || fe.RetryAfter != time.Minute {
+		t.Errorf("ListRuns against a secondary limit = kind %v, retry after %v, want %v after %v", fe.Kind, fe.RetryAfter, forgeapi.KindRateLimited, time.Minute)
+	}
+	if got := h.instance.count(); got != 1 {
+		t.Errorf("ListRuns against a secondary limit sent %d request(s), want 1: a throttle is not retried", got)
 	}
 }
 

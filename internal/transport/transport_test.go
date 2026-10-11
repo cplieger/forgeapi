@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -81,23 +83,11 @@ func testSignal(header http.Header) (int, time.Time, bool) {
 	if header.Get("X-Remaining") == "" {
 		return 0, time.Time{}, false
 	}
-	remaining := 0
-	if _, err := fmtSscan(header.Get("X-Remaining"), &remaining); err != nil {
+	remaining, err := strconv.Atoi(header.Get("X-Remaining"))
+	if err != nil {
 		return 0, time.Time{}, false
 	}
 	return remaining, time.Now().Add(time.Minute), true
-}
-
-func fmtSscan(s string, out *int) (int, error) {
-	n := 0
-	for i := range len(s) {
-		if s[i] < '0' || s[i] > '9' {
-			return 0, errors.New("not a number")
-		}
-		n = n*10 + int(s[i]-'0')
-	}
-	*out = n
-	return 1, nil
 }
 
 func testOptions() Options {
@@ -308,16 +298,36 @@ func TestAMalformedProxyIsRefusedRatherThanDialledDirect(t *testing.T) {
 	}
 }
 
+// TestADialRefusalIsLoggedThroughTheConnectionsLogger holds WithLogger's contract
+// for the lines the transport beneath writes: a consumer running several connections
+// can only attribute a refusal it receives on that connection's logger. A name under
+// .invalid never resolves (RFC 6761 §6.4), so the dial is refused whatever the network.
+func TestADialRefusalIsLoggedThroughTheConnectionsLogger(t *testing.T) {
+	var buf bytes.Buffer
+	c, err := Open(&forgeapi.Connection{WebBaseURL: "https://forge.invalid"}, settingsFor(
+		forgeapi.WithCredentialSource(stubCredential{}),
+		forgeapi.WithRetries(0),
+		forgeapi.WithLogger(recordingLogger(&buf).With("connection", "hub")),
+	), testOptions())
+	if err != nil {
+		t.Fatalf("Setup: Open(https://forge.invalid): %v", err)
+	}
+	t.Cleanup(c.Close)
+	if _, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err == nil {
+		t.Fatal("a read from a name that cannot resolve = nil, want a refusal")
+	}
+	got := buf.String()
+	if !strings.Contains(got, `"msg":"ssrf dial blocked"`) || !strings.Contains(got, `"connection":"hub"`) {
+		t.Errorf("the connection's logger got %q, want the dial refusal carrying connection=hub", got)
+	}
+}
+
 // TestTheAddressPolicyRefusesAndCountsAtTheSocket holds the containment hook this
 // library installs on the transport, which is the position the address verdict is
-// taken at.
-//
-// The counter is the point. The layer beneath logs its own refusals to the default
-// sink and exposes no logger option, so a refusal reported only there lands somewhere
-// this library does not own and no consumer can see it; the hook is where this library
-// counts it for itself. The hook is a value rather than a behaviour reachable through
-// a request here, because reaching it through one needs a name that resolves privately
-// and so a resolver this test does not own.
+// taken at, and the counter it fires there for a consumer to alert on. The hook is a
+// value rather than a behaviour reachable through a request here, because reaching it
+// through one needs a name that resolves privately and so a resolver this test does
+// not own.
 func TestTheAddressPolicyRefusesAndCountsAtTheSocket(t *testing.T) {
 	spy := newCounterSpy()
 	counters := spy.counters()
@@ -326,7 +336,7 @@ func TestTheAddressPolicyRefusesAndCountsAtTheSocket(t *testing.T) {
 		t.Error("the address policy admitted a loopback address, want a refusal: private ranges are denied without the per-connection opt-in")
 	}
 	if fired := spy.times("AddressRefusal:dial"); fired != 1 {
-		t.Errorf("the refused address fired AddressRefusal %d time(s), want 1: the layer beneath logs to a sink this library does not own, so the counter is the only place a consumer sees it", fired)
+		t.Errorf("the refused address fired AddressRefusal %d time(s), want 1: a refusal counted where it is taken is one a consumer can alert on", fired)
 	}
 	if !policy(netip.MustParseAddr("93.184.216.34")) {
 		t.Error("the address policy refused a globally routable address, want it admitted")

@@ -23,7 +23,11 @@ func TestAListRefusesAnOptionItsRouteCannotApplyBeforeAnyRequest(t *testing.T) {
 			return err
 		}},
 		{name: "an_owner_on_a_list_no_owner_scopes", code: forgeapi.CodeListOwnerInvalid, call: func(h *harness) error {
-			_, err := h.client.ListRepos(t.Context(), forgeapi.WithOwner(testOwner))
+			_, err := h.client.ListIssues(t.Context(), testRef(), forgeapi.WithOwner(testOwner))
+			return err
+		}},
+		{name: "an_owner_written_as_a_path_on_the_repository_listing", code: forgeapi.CodeListOwnerInvalid, call: func(h *harness) error {
+			_, err := h.client.ListRepos(t.Context(), forgeapi.WithOwner(testOwner+"/nested"))
 			return err
 		}},
 		{name: "an_owner_written_as_a_path", code: forgeapi.CodeListOwnerInvalid, call: func(h *harness) error {

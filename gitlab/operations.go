@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/internal/transport"
@@ -39,7 +40,7 @@ const keyLabelDetails = "with_labels_details"
 // would answer a different question from the one this field asks.
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 	const op = "Whoami"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	var user restUser
 	if _, err := c.readJSON(ctx, op, "/user", nil, &user); err != nil {
 		return forgeapi.Account{}, err
@@ -54,20 +55,23 @@ func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 
 // ListRepos implements [forgeapi.Repos].
 //
-// It asks for the projects the credential is a MEMBER of, which is this operation's
-// published question read against a product whose unfiltered project list is every
-// project the instance makes visible. On a hosted instance that list is millions of
+// Without an owner scope it asks for the projects the credential is a MEMBER of, which
+// is this operation's published question read against a product whose unfiltered
+// project list is every project the instance makes visible. On a hosted instance that list is millions of
 // rows in no order a consumer asked for, so sending no filter would answer a
 // different question at a price no page bound reaches; the sibling family answers the
 // same operation from the credential's own repositories for the same reason.
 func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Repository], error) {
 	const op = "ListRepos"
-	ctx = c.core.Call(ctx, op)
-	set, err := listing(op, fixedList, opts)
+	ctx = transport.Call(ctx, op)
+	set, err := listing(op, repoList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Repository]{}, err
 	}
-	query, walk, err := c.restQuery(op, forgeapi.RepoRef{}, set, fixedList)
+	if set.OwnerSet {
+		return c.ownedProjects(ctx, op, &set)
+	}
+	query, walk, err := c.restQuery(op, forgeapi.RepoRef{}, &set, repoList)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Repository]{}, err
 	}
@@ -75,8 +79,117 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	if bounded, ok := c.unpagedList[forgeapi.Repository](walk.here()); ok {
 		return bounded, nil
 	}
+	return c.projectPage(ctx, op, "/projects", query, &set, walk)
+}
+
+// ownedProjects is the project listing under an owner scope: a group's projects and
+// its subgroups', never the ones shared into it, or, where a one-segment owner names
+// no group, the user's personal namespace. The group route answers 404 for a user, so
+// only a first page spends the second request, and the continuation names the route.
+func (c *Client) ownedProjects(ctx context.Context, op string, set *forgeapi.ListSettings) (forgeapi.Page[forgeapi.Repository], error) {
+	walk, err := ownedWalkAt(c.core.PageCall(op, forgeapi.RepoRef{}, set), set.After)
+	if err != nil {
+		return forgeapi.Page[forgeapi.Repository]{}, err
+	}
+	if bounded, ok := c.unpagedList[forgeapi.Repository](walk.here()); ok {
+		return bounded, nil
+	}
+	owner, err := c.ownerRoutes(ctx, op, set.Owner)
+	if err != nil {
+		return forgeapi.Page[forgeapi.Repository]{}, err
+	}
+	query := url.Values{keyPage: {strconv.Itoa(walk.page)}, keyPerPage: {strconv.Itoa(set.PageBound)}}
+	if owner.group == "" && walk.page == 1 {
+		walk.prefix = userCursorPrefix
+	}
+	if walk.prefix == userCursorPrefix {
+		return c.userProjects(ctx, op, owner, query, set, walk)
+	}
+	if owner.group == "" {
+		return forgeapi.Page[forgeapi.Repository]{}, c.ownerUnresolved(ctx, op)
+	}
+	query.Set("include_subgroups", "true")
+	query.Set("with_shared", "false")
+	page, err := c.projectPage(ctx, op, "/groups/"+owner.group+"/projects", query, set, walk)
+	var fe *forgeapi.Error
+	if walk.page != 1 || owner.user == "" || !asForgeError(err, &fe) || fe.Code != forgeapi.CodeOwnerUnresolved {
+		return page, err
+	}
+	walk.prefix = userCursorPrefix
+	return c.userProjects(ctx, op, owner, url.Values{keyPage: {"1"}, keyPerPage: {strconv.Itoa(set.PageBound)}}, set, walk)
+}
+
+// userProjects reads one page of the owner's personal namespace.
+func (c *Client) userProjects(ctx context.Context, op string, owner ownerRoutes, query url.Values, set *forgeapi.ListSettings, walk restWalk) (forgeapi.Page[forgeapi.Repository], error) {
+	if owner.user == "" {
+		return forgeapi.Page[forgeapi.Repository]{}, c.ownerUnresolved(ctx, op)
+	}
+	return c.projectPage(ctx, op, "/users/"+owner.user+"/projects", query, set, walk)
+}
+
+// ownerRoutes is where an owner-scoped list addresses its owner: the group route's
+// escaped :id and the user route's :user_id, each empty where no such namespace can
+// hold the name.
+type ownerRoutes struct {
+	group, user string
+}
+
+// ownerRoutes addresses an owner. A name with any letter in it is its own address on
+// both routes, the user route only for one segment. A name of digits alone, which both
+// routes read as a numeric id, is resolved by name first, at one request more, and a
+// lookup answered only in part chooses no route: a resolver error nulls its member.
+func (c *Client) ownerRoutes(ctx context.Context, op, owner string) (ownerRoutes, error) {
+	if strings.Trim(owner, "0123456789") != "" {
+		routes := ownerRoutes{group: url.PathEscape(owner)}
+		if !strings.Contains(owner, "/") {
+			routes.user = routes.group
+		}
+		return routes, nil
+	}
+	var payload ownerPayload
+	result, err := c.execute(ctx, op, ownerLookup, map[string]any{varFullPath: owner, "username": owner}, &payload)
+	if err != nil {
+		return ownerRoutes{}, err
+	}
+	if result.Partial {
+		return ownerRoutes{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream,
+			result.Status, "the OwnerLookup document answered in part: "+result.Refusal)
+	}
+	group, groupRead := globalID(payload.Group)
+	user, userRead := globalID(payload.User)
+	if !groupRead || !userRead {
+		return ownerRoutes{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status)
+	}
+	if group == "" && user == "" {
+		return ownerRoutes{}, c.ownerUnresolved(ctx, op)
+	}
+	return ownerRoutes{group: group, user: user}, nil
+}
+
+// globalID is the numeric id a node's global id ends in ("gid://gitlab/Group/42"),
+// empty for a null node, and false for one that ends in no positive id.
+func globalID(n *docGlobalID) (string, bool) {
+	if n == nil {
+		return "", true
+	}
+	tail := n.ID[strings.LastIndexByte(n.ID, '/')+1:]
+	id, err := strconv.ParseInt(tail, 10, 64)
+	if !strings.HasPrefix(n.ID, "gid://gitlab/") || err != nil || id <= 0 {
+		return "", false
+	}
+	return strconv.FormatInt(id, 10), true
+}
+
+// ownerUnresolved is the answer for an owner no namespace the route needs holds.
+func (c *Client) ownerUnresolved(ctx context.Context, op string) error {
+	return c.core.Fail(ctx, op, transport.Document(http.MethodPost), forgeapi.CodeOwnerUnresolved, forgeapi.KindNotFound,
+		http.StatusOK, "no namespace this list reads holds that owner")
+}
+
+// projectPage reads one page of a project listing route.
+func (c *Client) projectPage(ctx context.Context, op, route string, query url.Values, set *forgeapi.ListSettings, walk restWalk) (forgeapi.Page[forgeapi.Repository], error) {
 	var rows []restProject
-	header, err := c.readJSON(ctx, op, "/projects", query, &rows)
+	header, err := c.readListed(ctx, op, route, query, set, &rows)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.Repository](err); ok {
 			return page, nil
@@ -85,7 +198,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	}
 	items := make([]forgeapi.Repository, 0, len(rows))
 	for i := range rows {
-		items = append(items, c.normalizeRepo(&rows[i]))
+		items = append(items, normalizeRepo(&rows[i]))
 	}
 	next := walk.next(header)
 	return forgeapi.Page[forgeapi.Repository]{
@@ -127,8 +240,8 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 // [forgeapi.PullRequest.HeadSHA], which reads the diff head instead.
 func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = "ListPRs"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	set, err := listing(op, statefulList, opts)
@@ -136,9 +249,9 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	if c.isDegraded() {
-		return c.degradedPullPage(ctx, op, repo, set)
+		return c.degradedPullPage(ctx, op, repo, &set)
 	}
-	call := c.core.PageCall(op, repo, set)
+	call := c.core.PageCall(op, repo, &set)
 	after, err := decodeAfter(call, set.After)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -148,10 +261,10 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	}
 	var payload docPayload
 	result, err := c.execute(ctx, op, prList, map[string]any{
-		"fullPath": repo.Selector,
-		"state":    listState(set.State),
-		"first":    set.PageBound,
-		"after":    nullableString(after),
+		varFullPath: repo.Selector,
+		"state":     listState(set.State),
+		"first":     set.PageBound,
+		"after":     nullableString(after),
 	}, &payload)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
@@ -171,7 +284,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	}
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
-		items = append(items, c.normalizeDocPull(&rows.Nodes[i], c.documentRepo(payload.Project, repo)))
+		items = append(items, c.normalizeDocPull(&rows.Nodes[i], documentRepo(payload.Project, repo)))
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items}
 	if rows.PageInfo.HasNextPage {
@@ -202,7 +315,7 @@ func nullableString(s string) any {
 // not published on this arm, because a repository-addressed list of this product
 // answers no successor for the caller to re-point to; the difference reaches the
 // caller as the row's own reference.
-func (c *Client) documentRepo(project *docProject, asked forgeapi.RepoRef) forgeapi.RepoRef {
+func documentRepo(project *docProject, asked forgeapi.RepoRef) forgeapi.RepoRef {
 	if project.FullPath == "" || project.FullPath == asked.Selector {
 		return asked
 	}
@@ -222,7 +335,7 @@ func (c *Client) recordPermissions(project *docProject) {
 // falls back to. It reads the REST list and marks the two fields that read would have
 // to be trusted on, because this product documents that list as able to serve a merge
 // status nothing refreshed.
-func (c *Client) degradedPullPage(ctx context.Context, op string, repo forgeapi.RepoRef, set forgeapi.ListSettings) (forgeapi.Page[forgeapi.PullRequest], error) {
+func (c *Client) degradedPullPage(ctx context.Context, op string, repo forgeapi.RepoRef, set *forgeapi.ListSettings) (forgeapi.Page[forgeapi.PullRequest], error) {
 	query, walk, err := c.restQuery(op, repo, set, statefulList)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -251,47 +364,35 @@ func (c *Client) degradedPullPage(ctx context.Context, op string, repo forgeapi.
 	}, nil
 }
 
-// ListMyPRs implements [forgeapi.PullRequests].
-//
-// This is a REST read on this product, the instance-wide merge-request list scoped to
-// what the credential created and to the open state, and it takes no project path at
-// all: it is scoped by the credential, so its rows span projects and each carries its
-// own [forgeapi.PullRequest.Repo], recovered from the row's own full reference rather
-// than from the numeric project id beside it, which is not a canonical selector.
-//
-// Under [forgeapi.WithOwner] it reads that group's own merge-request list instead,
-// subgroups included, with the same open state and the same row, so the call is still
-// one request per page and the group is resolved by the instance rather than by a read
-// of its own. A group the instance does not resolve, and a user's own namespace, which
-// has no listing route on this product, both answer 404, which this family reports as
-// [forgeapi.CodeOwnerUnresolved].
-//
-// It does NOT read a document, so what a row can carry is what the REST row carries.
-// That row carries no head pipeline, so the folded verdict is unknown and the six
-// per-state counts stay zero. It names a row's source project by id alone, so each
-// distinct fork on the page costs one GET /projects/:id ([Client.resolveForks]); a
-// same-project row and a deleted fork cost nothing. Every row's block reason is
-// unknown, under either scope, because this product documents that listing may not
-// refresh the merge status; [Client.ReadPR] names it on a connection whose documents
-// answer.
+// ListMyPRs implements [forgeapi.PullRequests] over REST: the instance-wide
+// merge-request list narrowed to what the credential created, or under
+// [forgeapi.WithOwner] that group's own, subgroups included, addressed as
+// [Client.scopedRoute] answers. Rows span projects, so each row's
+// [forgeapi.PullRequest.Repo] comes from its own full reference, and each distinct
+// fork costs one GET /projects/:id ([Client.resolveForks]). A REST row carries no
+// head pipeline and a merge status listing may leave stale, so its verdict and block
+// reason are unknown; [Client.ReadPR] names them where documents answer.
 func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
-	const op = opListMyPRs
-	ctx = c.core.Call(ctx, op)
+	const op = "ListMyPRs"
+	ctx = transport.Call(ctx, op)
 	set, err := listing(op, scopedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	query, walk, err := c.restQuery(op, forgeapi.RepoRef{}, set, scopedList)
+	query, walk, err := c.restQuery(op, forgeapi.RepoRef{}, &set, scopedList)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	route := scopedRoute(set, query, "merge_requests")
-	query.Set(keyLabelDetails, "true")
 	if bounded, ok := c.unpagedList[forgeapi.PullRequest](walk.here()); ok {
 		return bounded, nil
 	}
+	route, err := c.scopedRoute(ctx, op, &set, query, "merge_requests")
+	if err != nil {
+		return forgeapi.Page[forgeapi.PullRequest]{}, err
+	}
+	query.Set(keyLabelDetails, "true")
 	var rows []restMergeRequest
-	header, err := c.readJSON(ctx, op, route, query, &rows)
+	header, err := c.readListed(ctx, op, route, query, &set, &rows)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
 			return page, nil
@@ -387,7 +488,7 @@ func (c *Client) projectByID(ctx context.Context, op string, id int64) (forgeapi
 // than this call's.
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
 	const op = "ReadPR"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	read, err := c.readMergeRequest(ctx, op, repo, pr)
 	if err != nil {
 		return forgeapi.PullRequest{}, err
@@ -410,7 +511,7 @@ type mergeRequestRead struct {
 // readMergeRequest is the single-merge-request read two operations share: the document
 // where this connection's documents work, and the REST read where they do not.
 func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef) (mergeRequestRead, error) {
-	if err := c.checkRepo(repo); err != nil {
+	if err := checkRepo(repo); err != nil {
 		return mergeRequestRead{}, err
 	}
 	if pr.Number <= 0 {
@@ -421,8 +522,8 @@ func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.
 	}
 	var payload docPayload
 	if _, err := c.execute(ctx, op, prRead, map[string]any{
-		"fullPath": repo.Selector,
-		"iid":      strconv.Itoa(pr.Number),
+		varFullPath: repo.Selector,
+		"iid":       strconv.Itoa(pr.Number),
 	}, &payload); err != nil {
 		return mergeRequestRead{}, err
 	}
@@ -439,7 +540,7 @@ func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.
 			"the document resolved the project and no merge request with that number")
 	}
 	return mergeRequestRead{
-		item:   c.normalizeDocPull(node, c.documentRepo(payload.Project, repo)),
+		item:   c.normalizeDocPull(node, documentRepo(payload.Project, repo)),
 		merged: c.mergedSupport("merge request state (document)", node.State, node.MergedAt),
 	}, nil
 }
@@ -471,8 +572,8 @@ func (c *Client) degradedRead(ctx context.Context, op string, repo forgeapi.Repo
 //nolint:gocritic // hugeParam: the record is the published signature's own parameter
 func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewPullRequest) (forgeapi.PullRequest, error) {
 	const op = "CreatePR"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
 	title := req.Title
@@ -509,8 +610,8 @@ func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeap
 // a state EVENT rather than the target state, which is why the two transitions send
 // different words from the ones the state enumeration spells.
 func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, event string) (forgeapi.PullRequest, error) {
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
 	if pr.Number <= 0 {
@@ -550,8 +651,8 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 //nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own pipeline, which the head SHA pins
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
-	ctx = c.core.CallWrite(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return err
 	}
 	if headSHA != "" {
@@ -621,15 +722,15 @@ func (c *Client) readPipelines(ctx context.Context, op string, repo forgeapi.Rep
 // carries the route.
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error) {
 	const op = "ListRuns"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	set, err := listing(op, fixedList, opts)
+	set, err := listing(op, runList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	query, walk, err := c.restQuery(op, repo, set, fixedList)
+	query, walk, err := c.restQuery(op, repo, &set, runList)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
@@ -643,9 +744,9 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 		}
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	items := make([]forgeapi.Run, 0, len(rows))
-	for i := range rows {
-		items = append(items, c.normalizeRun(&rows[i], repo))
+	items, err := c.pipelinesSince(ctx, op, rows, repo, &set)
+	if err != nil {
+		return forgeapi.Page[forgeapi.Run]{}, err
 	}
 	next := walk.next(header)
 	return forgeapi.Page[forgeapi.Run]{
@@ -653,6 +754,32 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 		Next:    next,
 		Partial: c.pagePartial(len(rows), next, walk.page),
 	}, nil
+}
+
+// pipelinesSince normalizes one page's pipelines and drops those created before the
+// call's since bound. A row with no id or a negative iid, or with no creation time
+// under a bound, is refused rather than published or read as older.
+func (c *Client) pipelinesSince(ctx context.Context, op string, rows []restPipeline, repo forgeapi.RepoRef, set *forgeapi.ListSettings) ([]forgeapi.Run, error) {
+	items := make([]forgeapi.Run, 0, len(rows))
+	for i := range rows {
+		switch {
+		case rows[i].ID <= 0:
+			return nil, c.refusePipeline(ctx, op, "the pipeline listing answered a pipeline with no id, which is the pipeline's identity")
+		case rows[i].IID < 0:
+			return nil, c.refusePipeline(ctx, op, "the pipeline listing answered a negative iid, which is no place in the project's pipeline sequence")
+		case set.SinceSet && rows[i].CreatedAt.IsZero():
+			return nil, c.refusePipeline(ctx, op, "the pipeline listing answered a pipeline with no creation time, so it cannot be held to the since bound")
+		case set.SinceSet && rows[i].CreatedAt.Before(set.Since):
+			continue
+		}
+		items = append(items, c.normalizeRun(&rows[i], repo))
+	}
+	return items, nil
+}
+
+// refusePipeline is the failure a pipeline row this family will not publish answers.
+func (c *Client) refusePipeline(ctx context.Context, op, message string) error {
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation, forgeapi.KindUpstream, http.StatusOK, message)
 }
 
 // MergePR implements [forgeapi.Merges].
@@ -679,8 +806,8 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 // family cannot read is reported as an unknown outcome rather than as a merge.
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error) {
 	const op = opMergePR
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
 	if pr.Number <= 0 {
@@ -758,7 +885,7 @@ func (c *Client) mergeOutcome(r *restMergeRequest) forgeapi.MergeOutcomeState {
 // a train at all is a repository affordance, read by [Client.RepoAffordances].
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error) {
 	const op = "MergeStatus"
-	ctx = c.core.Call(ctx, op)
+	ctx = transport.Call(ctx, op)
 	read, err := c.readMergeRequest(ctx, op, repo, pr)
 	if err != nil {
 		return forgeapi.MergeStatus{}, err
@@ -785,8 +912,8 @@ func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forg
 // contexts keep the order upstream first mentioned them in.
 func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref string) (forgeapi.CommitChecks, error) {
 	const op = "CommitStatus"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.CommitChecks{}, err
 	}
 	if err := forgeapi.ValidateRef(ref); err != nil {
@@ -929,15 +1056,15 @@ func count(out *forgeapi.CommitChecks) {
 // carries a colour and a description a consumer renders.
 func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error) {
 	const op = opListIssues
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
 	set, err := listing(op, statefulList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
-	query, walk, err := c.restQuery(op, repo, set, statefulList)
+	query, walk, err := c.restQuery(op, repo, &set, statefulList)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
@@ -945,7 +1072,7 @@ func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...
 	if bounded, ok := c.unpagedList[forgeapi.Issue](walk.here()); ok {
 		return bounded, nil
 	}
-	return c.readIssuePage(ctx, op, projectRoute(repo, "/issues"), query, repo, walk)
+	return c.readIssuePage(ctx, op, projectRoute(repo, "/issues"), query, &set, repo, walk)
 }
 
 // ListMyIssues implements [forgeapi.Issues].
@@ -957,30 +1084,33 @@ func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...
 // own [forgeapi.Issue.Repo], recovered from the row's own full reference, because the
 // rows span projects and the numeric project id beside it is not a canonical selector.
 func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Issue], error) {
-	const op = opListMyIssues
-	ctx = c.core.Call(ctx, op)
+	const op = "ListMyIssues"
+	ctx = transport.Call(ctx, op)
 	set, err := listing(op, scopedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
-	query, walk, err := c.restQuery(op, forgeapi.RepoRef{}, set, scopedList)
+	query, walk, err := c.restQuery(op, forgeapi.RepoRef{}, &set, scopedList)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
-	route := scopedRoute(set, query, "issues")
-	query.Set(keyLabelDetails, "true")
 	if bounded, ok := c.unpagedList[forgeapi.Issue](walk.here()); ok {
 		return bounded, nil
 	}
-	return c.readIssuePage(ctx, op, route, query, forgeapi.RepoRef{}, walk)
+	route, err := c.scopedRoute(ctx, op, &set, query, "issues")
+	if err != nil {
+		return forgeapi.Page[forgeapi.Issue]{}, err
+	}
+	query.Set(keyLabelDetails, "true")
+	return c.readIssuePage(ctx, op, route, query, &set, forgeapi.RepoRef{}, walk)
 }
 
 // readIssuePage is the read both issue lists share: one page of the route, each row
 // normalized against the repository the call addressed, or against the row's own
 // where the call addressed none, and the continuation the next-page header names.
-func (c *Client) readIssuePage(ctx context.Context, op, route string, query url.Values, repo forgeapi.RepoRef, walk restWalk) (forgeapi.Page[forgeapi.Issue], error) {
+func (c *Client) readIssuePage(ctx context.Context, op, route string, query url.Values, set *forgeapi.ListSettings, repo forgeapi.RepoRef, walk restWalk) (forgeapi.Page[forgeapi.Issue], error) {
 	var rows []restIssue
-	header, err := c.readJSON(ctx, op, route, query, &rows)
+	header, err := c.readListed(ctx, op, route, query, set, &rows)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.Issue](err); ok {
 			return page, nil
@@ -1003,8 +1133,8 @@ func (c *Client) readIssuePage(ctx context.Context, op, route string, query url.
 // takes label NAMES, so nothing has to resolve them to identifiers first.
 func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewIssue) (forgeapi.Issue, error) {
 	const op = "CreateIssue"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	body := map[string]any{"title": req.Title, keyDescription: req.Body}
@@ -1021,8 +1151,8 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 // CloseIssue implements [forgeapi.Issues].
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
 	const op = "CloseIssue"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	if issue.Number <= 0 {
@@ -1039,15 +1169,15 @@ func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue fo
 // ListReleases implements [forgeapi.Releases].
 func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Release], error) {
 	const op = "ListReleases"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
 	set, err := listing(op, fixedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
-	query, walk, err := c.restQuery(op, repo, set, fixedList)
+	query, walk, err := c.restQuery(op, repo, &set, fixedList)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Release]{}, err
 	}
@@ -1082,8 +1212,8 @@ func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts .
 // publishes.
 func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewRelease) (forgeapi.Release, error) {
 	const op = "CreateRelease"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Release{}, err
 	}
 	body := map[string]any{
@@ -1104,15 +1234,15 @@ func (c *Client) CreateRelease(ctx context.Context, repo forgeapi.RepoRef, req f
 // ListLabels implements [forgeapi.Labels].
 func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Label], error) {
 	const op = "ListLabels"
-	ctx = c.core.Call(ctx, op)
-	if err := c.checkRepo(repo); err != nil {
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
 	set, err := listing(op, fixedList, opts)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
-	query, walk, err := c.restQuery(op, repo, set, fixedList)
+	query, walk, err := c.restQuery(op, repo, &set, fixedList)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}

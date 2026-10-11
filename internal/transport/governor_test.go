@@ -35,7 +35,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		defer srv.Close()
 		c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL})
 		for call := 1; call <= 3; call++ {
-			ctx := c.Call(t.Context(), "Whoami")
+			ctx := Call(t.Context(), "Whoami")
 			if _, err := c.Do(ctx, &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err != nil {
 				t.Fatalf("call %d = %v, want nil", call, err)
 			}
@@ -61,7 +61,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		}))
 		defer srv.Close()
 		c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL}, forgeapi.WithRetries(2))
-		ctx := c.Call(t.Context(), "Whoami")
+		ctx := Call(t.Context(), "Whoami")
 		if _, err := c.Do(ctx, &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err != nil {
 			t.Fatalf("a read whose first attempt answered 502 = %v, want nil after the retry", err)
 		}
@@ -81,7 +81,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		var wg sync.WaitGroup
 		for range 2 {
 			wg.Go(func() {
-				ctx := c.Call(t.Context(), "Whoami")
+				ctx := Call(t.Context(), "Whoami")
 				if _, err := c.Do(ctx, &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err != nil {
 					t.Errorf("a concurrent call = %v, want nil", err)
 				}
@@ -101,7 +101,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		}))
 		defer srv.Close()
 		c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL})
-		ctx := c.Call(t.Context(), "ListPRs")
+		ctx := Call(t.Context(), "ListPRs")
 		for range 3 {
 			if _, err := c.Do(ctx, &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"}); err != nil {
 				t.Fatalf("a request of the call = %v, want nil", err)
@@ -120,7 +120,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		// call is its own context and not the governor: the two arms are separate
 		// cases and each has to be reached by the thing it names.
 		c := answeringConn(t, "Whoami", "9999")
-		done, cancel := context.WithCancel(c.Call(t.Context(), "Whoami"))
+		done, cancel := context.WithCancel(Call(t.Context(), "Whoami"))
 		cancel()
 		if _, err := c.Do(done, &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); !errors.Is(err, context.Canceled) {
 			t.Fatalf("a read on a cancelled context = %v, want the context sentinel: this call is stopped by its own context rather than by the governor", err)
@@ -134,7 +134,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 		if got := c.BudgetState().LastCost; got != 1 {
 			t.Fatalf("Setup: LastCost = %d, want 1: the first call is what reads the remaining signal", got)
 		}
-		ctx := c.Call(t.Context(), "ListPRs")
+		ctx := Call(t.Context(), "ListPRs")
 		if _, err := c.Do(ctx, &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"}); !IsDeferred(err) {
 			t.Fatalf("a read past the mutation reserve = %v, want the deferral", err)
 		}
@@ -153,7 +153,7 @@ func TestTheLastCostIsTheCallsOwnPrice(t *testing.T) {
 // cause must not surface as an empty slot between the operation and the message.
 func TestTheDeferralRendersWithNoGapWhereACauseWouldBe(t *testing.T) {
 	c := answeringConn(t, "ListPRs", "1", forgeapi.WithMutationReserve(1))
-	ctx := c.Call(t.Context(), "ListPRs")
+	ctx := Call(t.Context(), "ListPRs")
 	_, err := c.Do(ctx, &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"})
 	var fe *forgeapi.Error
 	if !asError(err, &fe) {
@@ -183,7 +183,7 @@ func answeringConn(t *testing.T, op, remaining string, extra ...forgeapi.Option)
 	}))
 	t.Cleanup(srv.Close)
 	c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL}, extra...)
-	ctx := c.Call(t.Context(), op)
+	ctx := Call(t.Context(), op)
 	if _, err := c.Do(ctx, &Request{Op: op, Method: http.MethodGet, Path: "/user"}); err != nil {
 		t.Fatalf("Setup: the first call = %v, want nil", err)
 	}
@@ -234,8 +234,8 @@ func TestADiagnosticIDRendersBitsFromTheRandomSource(t *testing.T) {
 	source := rand.Reader
 	t.Cleanup(func() { rand.Reader = source })
 	rand.Reader = bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})
-	if got, want := DiagID(), "AAAQEAYEAUDAO"; got != want {
-		t.Errorf("DiagID() over the bytes 0 to 7 = %q, want %q", got, want)
+	if got, want := diagID(), "AAAQEAYEAUDAO"; got != want {
+		t.Errorf("diagID() over the bytes 0 to 7 = %q, want %q", got, want)
 	}
 }
 
@@ -266,6 +266,47 @@ func foldConn(t *testing.T, clock *fakeClock, reads int) *Conn {
 		forgeapi.WithStatusReadsPerInterval(reads),
 		forgeapi.WithStatusTimePerInterval(time.Minute),
 	)
+}
+
+// TestADeferralEndsWhenTheReportedWindowRenews holds the reserve to the window the
+// instance named: a read deferred at the reserve stays deferred until Reset, and from
+// Reset on it is sent, because only a response can report the renewed budget.
+func TestADeferralEndsWhenTheReportedWindowRenews(t *testing.T) {
+	clock := newFakeClock()
+	sent := &atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		sent.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	defer srv.Close()
+	opts := testOptions()
+	opts.Clock = clock.read
+	opts.Signal = func(http.Header) (int, time.Time, bool) { return 1, clock.read().Add(time.Minute), true }
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, forgeapi.WithMutationReserve(1))
+	read := func() error {
+		_, err := c.Do(Call(t.Context(), "ListPRs"), &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"})
+		return err
+	}
+	if err := read(); err != nil {
+		t.Fatalf("Setup: the first read = %v, want nil", err)
+	}
+	clock.advance(59 * time.Second)
+	if err := read(); !IsDeferred(err) {
+		t.Fatalf("a read at the reserve one second before Reset = %v, want the deferral", err)
+	}
+	clock.advance(time.Second)
+	if err := read(); err != nil {
+		t.Fatalf("a read at Reset = %v, want it sent: the window it was deferred against has renewed", err)
+	}
+	if got := sent.Load(); got != 2 {
+		t.Errorf("the instance saw %d request(s), want 2: the deferred read sends nothing and the read at Reset is sent", got)
+	}
+	if got, want := c.BudgetState(), clock.read().Add(time.Minute); got.Remaining != 1 || !got.Reset.Equal(want) {
+		t.Errorf("BudgetState after the read at Reset = (Remaining %d, Reset %v), want (1, %v): its response reports the renewed window", got.Remaining, got.Reset, want)
+	}
 }
 
 func TestAFoldedReadPastTheCountCapWaitsForTheNextInterval(t *testing.T) {

@@ -541,6 +541,7 @@ const (
 // one commit's runs.
 func TestTheRunListingReadsEachProductsOwnRunRow(t *testing.T) {
 	want := forgeapi.Run{
+		Ref:       forgeapi.RunRef{ID: 1},
 		Repo:      testRef(),
 		Name:      "example",
 		Branch:    "example-feature",
