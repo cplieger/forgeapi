@@ -114,16 +114,17 @@ func (p PageCall) MintWide(prefix string, position ...int64) forgeapi.Cursor {
 // message names the bound the walk began at, since that bound alone resumes it.
 // Whether each number is one the family mints is the family's to judge.
 func (p PageCall) Resume(c forgeapi.Cursor, prefix string, count int) ([]int, error) {
-	wide, err := p.ResumeWide(c, prefix, count)
+	fields, err := p.positionFields(c, prefix, count)
 	if err != nil {
 		return nil, err
 	}
 	position := make([]int, count)
-	for i, n := range wide {
-		if int64(int(n)) != n {
+	for i := range count {
+		n, err := strconv.Atoi(fields[i])
+		if err != nil {
 			return nil, Local(forgeapi.CodeCursorInvalid, "continuation is not one of this library's own")
 		}
-		position[i] = int(n)
+		position[i] = n
 	}
 	return position, nil
 }
@@ -131,6 +132,24 @@ func (p PageCall) Resume(c forgeapi.Cursor, prefix string, count int) ([]int, er
 // ResumeWide is [PageCall.Resume] over 64-bit numbers, reading what
 // [PageCall.MintWide] minted.
 func (p PageCall) ResumeWide(c forgeapi.Cursor, prefix string, count int) ([]int64, error) {
+	fields, err := p.positionFields(c, prefix, count)
+	if err != nil {
+		return nil, err
+	}
+	position := make([]int64, count)
+	for i := range count {
+		n, err := strconv.ParseInt(fields[i], 10, 64)
+		if err != nil {
+			return nil, Local(forgeapi.CodeCursorInvalid, "continuation is not one of this library's own")
+		}
+		position[i] = n
+	}
+	return position, nil
+}
+
+// positionFields is the count position fields of a page-numbered continuation this
+// call minted under prefix, once its page bound is the call's own.
+func (p PageCall) positionFields(c forgeapi.Cursor, prefix string, count int) ([]string, error) {
 	fields, err := p.fields(c, prefix, count+1)
 	if err != nil {
 		return nil, err
@@ -144,15 +163,7 @@ func (p PageCall) ResumeWide(c forgeapi.Cursor, prefix string, count int) ([]int
 			"continuation was minted at a page bound of "+strconv.Itoa(bound)+
 				", and a page number counts pages of one size, so it resumes at that bound alone; a walk at another bound starts again from the first page")
 	}
-	position := make([]int64, count)
-	for i := range count {
-		n, err := strconv.ParseInt(fields[i], 10, 64)
-		if err != nil {
-			return nil, Local(forgeapi.CodeCursorInvalid, "continuation is not one of this library's own")
-		}
-		position[i] = n
-	}
-	return position, nil
+	return fields[:count], nil
 }
 
 // MintPosition is the continuation resuming this call at an upstream connection's own

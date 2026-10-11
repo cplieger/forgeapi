@@ -81,12 +81,14 @@ func runWalkAt(call transport.PageCall, set *forgeapi.ListSettings) (runWalk, er
 func walkFrom(call transport.PageCall, p []int64, since int64) (runWalk, bool) {
 	page, window, fetched, omitted, n := p[0], p[1], p[4], p[6], p[7]
 	ids, ok := idsFrom(p[runWalkFixed:])
-	w := runWalk{
+	if !ok || n != int64(len(ids)) || min(page, window, fetched, omitted) < 0 ||
+		page > math.MaxInt || window > math.MaxInt || fetched > math.MaxInt || omitted > math.MaxInt {
+		return runWalk{}, false
+	}
+	return runWalk{
 		call: call, ids: ids, kind: p[2], upper: p[3], seen: p[5], since: since,
 		page: int(page), window: int(window), fetched: int(fetched), omitted: int(omitted),
-	}
-	return w, ok && n == int64(len(ids)) && int64(w.page) == page && int64(w.window) == window &&
-		int64(w.fetched) == fetched && int64(w.omitted) == omitted
+	}, true
 }
 
 // ranged reports whether w's range stands where mint puts one: the open range on every
