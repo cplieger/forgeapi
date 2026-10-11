@@ -74,7 +74,7 @@ var ferr *forgeapi.Error
 if errors.As(err, &ferr) && ferr.Code == forgeapi.CodeRepoRefStale { ... }
 ```
 
-`Error` carries an `ErrorKind` and a `Code`, because one HTTP status means different things per product and per operation. `Error.Message` is the forge's own text, so never branch on it. `Error` wraps no other error, and the library declares no sentinel errors of its own.
+`Error` carries an `ErrorKind` and a `Code`, because one HTTP status means different things per product and per operation. `Error.Retryable` says whether another attempt may succeed: a network failure, a throttle, and a 408, 429 or 5xx status. `Error.Message` is the forge's own text, so never branch on it. `Error` wraps no other error, and the library declares no sentinel errors of its own.
 
 A cancelled or expired context returns Go's own `context.Canceled` or `context.DeadlineExceeded` unchanged, so `errors.Is` works on it. Each operation also runs under its own deadline, `Budget.OperationTimeout`, 20 seconds by default, which expires as `context.DeadlineExceeded` too. To tell whether your own context ended, check `ctx.Err()`. The `creds` file store and the `gitcred` helper return ordinary Go errors when a read or write fails.
 

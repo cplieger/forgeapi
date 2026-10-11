@@ -111,7 +111,9 @@ func NewSource(store Store, key string, conn forgeapi.Connection, opts ...forgea
 // mark the store could not take is written by the next call for the key whose
 // write succeeds.
 func (s *Source) Token(ctx context.Context) (string, error) {
-	rot := s.store.rotation(s.key)
+	rot := s.store.acquire(s.key)
+	gone := false
+	defer func() { s.store.release(rot, gone) }()
 	rot.settle()
 	if err := s.storeHeld(ctx, rot); err != nil {
 		return "", err
@@ -121,6 +123,7 @@ func (s *Source) Token(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		gone = !ok
 		switch st := s.standing(rot, &rec, ok, time.Now()); st {
 		case standValid:
 			return rec.Token, nil
@@ -136,7 +139,7 @@ func (s *Source) Token(ctx context.Context) (string, error) {
 		}
 	}
 	return "", &forgeapi.Error{
-		Kind: forgeapi.KindTransient, Retryable: true,
+		Kind: forgeapi.KindTransient, Retryable: transport.Retryable(forgeapi.KindTransient, 0),
 		Message: "the credential was replaced during each refresh of it",
 	}
 }
@@ -160,7 +163,7 @@ func (s *Source) State() forgeapi.CredState {
 	if err != nil {
 		return forgeapi.CredUnknown
 	}
-	rot := s.store.rotation(s.key)
+	rot := s.store.peek(s.key)
 	switch s.standing(rot, &rec, ok, time.Now()) {
 	case standValid:
 		return forgeapi.CredValid
@@ -472,7 +475,8 @@ func (s *Source) outcome(rec *Record, reached forgeapi.CredState, status int, fa
 func reconnect(rec *Record, status int, message string) error {
 	return &forgeapi.Error{
 		Code: forgeapi.CodeReconnectRequired, Family: rec.Family, Status: status,
-		Kind: forgeapi.KindUnauthorized, Message: message,
+		Kind: forgeapi.KindUnauthorized, Retryable: transport.Retryable(forgeapi.KindUnauthorized, status),
+		Message: message,
 	}
 }
 

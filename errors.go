@@ -186,11 +186,24 @@ const (
 	// its own code so a redirect loop is distinguishable from an operation
 	// that merely ran out of time.
 	CodeRedirectHopCap = "redirect_hop_cap"
-	// CodeRedirectPortRefused is a redirect hop to a port outside the
-	// connection's allowlist. It is refused in this library's own redirect
-	// policy so it carries a code and a counter, rather than arriving as a
-	// transport error the retry layer would treat as transient.
+	// CodeRedirectPortRefused is a redirect hop or a dial to a port outside
+	// the connection's allowlist. It carries a code, and a hop a counter, rather
+	// than arriving as a transport error the retry layer would treat as
+	// transient.
 	CodeRedirectPortRefused = "redirect_port_refused"
+	// CodeTLSRefused is a handshake that cannot succeed as configured: the
+	// instance's certificate did not verify, the peer does not speak TLS, or
+	// the peer sent a fatal alert. It is not retryable, because each needs a
+	// changed trust store, address or client certificate.
+	CodeTLSRefused = "tls_refused"
+	// CodeUnreachable is an instance the request could not reach or that
+	// dropped the connection before answering: a failed lookup, a refused or
+	// unroutable connection, a dial timeout. It is retryable, and its message
+	// names the host.
+	CodeUnreachable = "instance_unreachable"
+	// CodeResponseTooLarge is an answer whose body passed this library's bound
+	// for it. It carries the status the instance answered with.
+	CodeResponseTooLarge = "response_too_large"
 
 	// The codes below are this library's OWN refusals, answered before any
 	// request. They are in the same namespace as the codes above because the
@@ -223,9 +236,10 @@ const (
 	// request travel in cleartext on that network.
 	CodePlaintextRefused = "plaintext_refused"
 	// CodePrivateAddressRefused is a private-range or single-label host built
-	// without [WithPrivateAddresses]. It is its own code because the consumer's
-	// remedy is one deliberate statement per instance, which it cannot offer
-	// without knowing that this was the refusal.
+	// without [WithPrivateAddresses], or a hop or a dial whose address the
+	// connection's address policy refused. It is its own code because the
+	// consumer's remedy is one deliberate statement per instance, which it
+	// cannot offer without knowing that this was the refusal.
 	CodePrivateAddressRefused = "private_address_refused"
 	// CodeBudgetInvalid is a NEGATIVE value passed to one of the budget
 	// options, [WithMutationReserve] and [WithRefreshLead] included, the second
@@ -434,7 +448,9 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	Status int
 	// Kind is the class of failure.
 	Kind ErrorKind
-	// Retryable reports whether this library considers another attempt useful.
+	// Retryable reports whether another attempt may succeed, not that this
+	// library made one: a transport failure, a throttle, and a 408, 429 or
+	// 5xx status. Whether to try again, and when, is the caller's decision.
 	Retryable bool
 	// Message is upstream's own message, with the request's credential and the
 	// connection's own header values redacted out of it, sanitized and bounded.

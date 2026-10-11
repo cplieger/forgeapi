@@ -376,17 +376,28 @@ func attempts(ctx context.Context) int {
 	return 1
 }
 
-// retryCheck is this library's own retry predicate. It covers transient transport
-// errors and the gateway statuses and NEVER 429: the default sleeps a parsed
-// retry-after after draining the response that carried it, so a throttle would
-// reach the caller as a deadline cancellation rather than as a rate-limited error
-// with its duration.
+// retryCheck is this library's own retry predicate: a transport failure
+// [Retryable] calls retryable, and the gateway statuses. It does not retry:
+//   - a 429, because the default sleeps a parsed retry-after after draining the
+//     response that carried it, so a throttle would reach the caller as a deadline
+//     cancellation rather than as a rate-limited error with its duration;
+//   - a 408 or a 5xx other than 502, 503 and 504, which the instance itself
+//     answered after reading the request, so the caller decides from Retryable;
+//   - a dial timeout, because a second attempt that also times out ends as the
+//     operation's own deadline and loses the host the first one names.
 func retryCheck(ctx context.Context, resp *http.Response, err error) (bool, error) {
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
 	if err != nil {
-		return httpx.IsTransient(err), nil
+		if own, ok := errors.AsType[*forgeapi.Error](err); ok {
+			return own.Retryable, nil
+		}
+		if contextSentinel(err) != nil {
+			return false, nil
+		}
+		_, kind := failureOf(err)
+		return Retryable(kind, 0), nil
 	}
 	switch resp.StatusCode {
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
@@ -914,7 +925,7 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	}
 	body, readErr := httpx.ReadLimitedBody(resp.Body, limit)
 	if readErr != nil {
-		return nil, c.transportError(ctx, req, readErr, started)
+		return nil, c.bodyError(ctx, req, resp.StatusCode, readErr, started)
 	}
 	out.Body = body
 	if resp.StatusCode >= 300 && !slices.Contains(req.Answers, resp.StatusCode) {
@@ -1003,7 +1014,7 @@ func (c *Conn) send(ctx context.Context, req *Request, target string) (*http.Res
 	r.Header.Set("User-Agent", userAgent)
 	token, err := c.credential.Token(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, "", credentialError(err)
 	}
 	// Bearer is the one scheme every product reads for every kind of token it
 	// issues; gitlab.com refuses the token scheme the others also accept.
@@ -1025,6 +1036,19 @@ func (c *Conn) send(ctx context.Context, req *Request, target string) (*http.Res
 	}
 	resp, err := client.Do(r)
 	return resp, token, err
+}
+
+// credentialError keeps a credential source's own failure from reading as an
+// unreachable instance: the source is the consumer's, so its error may be any
+// type, and nothing was sent.
+func credentialError(err error) error {
+	if _, ok := errors.AsType[*forgeapi.Error](err); ok || contextSentinel(err) != nil {
+		return err
+	}
+	return &forgeapi.Error{
+		Kind: forgeapi.KindTransient, Retryable: true,
+		Message: "the credential source failed: " + sanitize(err.Error()),
+	}
 }
 
 func bodyReader(payload []byte) io.Reader {
@@ -1159,7 +1183,7 @@ func Decode(body []byte, v any) error {
 func (c *Conn) fail(op, code string, kind forgeapi.ErrorKind, status int, message string) *forgeapi.Error {
 	return &forgeapi.Error{
 		Op: op, Code: code, Family: c.family, Status: status, Kind: kind,
-		Message: message, DiagID: diagID(),
+		Retryable: Retryable(kind, status), Message: message, DiagID: diagID(),
 	}
 }
 
@@ -1244,10 +1268,8 @@ func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capabi
 // consumer tells the two apart by that status and by the remaining figure the
 // governor reports, which a deferral leaves above zero.
 func (c *Conn) deferred(op string) *forgeapi.Error {
-	fe := c.fail(op, "", forgeapi.KindRateLimited, 0,
+	return c.fail(op, "", forgeapi.KindRateLimited, 0,
 		"this read was deferred to hold the mutation reserve")
-	fe.Retryable = true
-	return fe
 }
 
 // IsDeferred reports whether an error is the governor's deferral rather than an
@@ -1278,37 +1300,6 @@ func local(code, message string) *forgeapi.Error {
 	return &forgeapi.Error{Code: code, Kind: forgeapi.KindUnknown, Message: message}
 }
 
-// transportError maps a failure that never reached a status. A context sentinel is
-// returned UNCHANGED, which is the third arm of the three-way error contract.
-//
-// A refusal this library itself produced below the call is recovered rather than
-// rebuilt. The redirect policy answers a *forgeapi.Error, net/http wraps whatever
-// a policy returns in *url.Error, and stringifying that chain would hand the caller
-// an empty code, a transient kind and a retryable true for a permanent containment
-// refusal: the four refusal codes the redirect policy owns would be unreachable
-// through the field a consumer branches on, and a stale reference would lose its
-// successor.
-func (c *Conn) transportError(ctx context.Context, req *Request, err error, started time.Time) error {
-	if ctxErr := contextSentinel(err); ctxErr != nil {
-		c.log(ctx, req, exchange(req), 0, "", "", forgeapi.KindUnknown, nil, started, ctxErr)
-		return ctxErr
-	}
-	if own, ok := errors.AsType[*forgeapi.Error](err); ok {
-		if own.Op == "" {
-			own.Op = req.Op
-		}
-		if own.DiagID == "" {
-			own.DiagID = diagID()
-		}
-		c.log(ctx, req, exchange(req), own.Status, own.Code, own.DiagID, own.Kind, nil, started, err)
-		return own
-	}
-	fe := c.fail(req.Op, "", forgeapi.KindTransient, 0, sanitize(httpx.LogSafeError(err).Error()))
-	fe.Retryable = true
-	c.log(ctx, req, exchange(req), 0, fe.Code, fe.DiagID, fe.Kind, nil, started, err)
-	return fe
-}
-
 // ContextSentinel re-exports the context-sentinel test for a package that reads a
 // transport failure before choosing its own answer.
 func ContextSentinel(err error) error { return contextSentinel(err) }
@@ -1334,7 +1325,6 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 		kind, code = c.mapper(req.Op, resp.Status, resp.Header, answer.Error)
 	}
 	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
-	fe.Retryable = kind == forgeapi.KindTransient
 	if kind == forgeapi.KindRateLimited {
 		fe.RetryAfter = httpx.ParseRetryAfter(resp.Header.Get("Retry-After"))
 		if c.counters.RateLimited != nil {

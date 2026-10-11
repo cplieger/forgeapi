@@ -60,19 +60,29 @@ var (
 // one line to diag unless no connection owns the origin.
 type Helper struct {
 	store    creds.Store
+	keys     func() ([]string, error)
 	logger   *slog.Logger
 	counters forgeapi.Counters
 }
 
-// New builds the helper over store, reading the logger and the counters from
-// opts. It reads nothing until [Helper.Serve].
+// New builds the helper over every record in store: it is [NewFor] with
+// store.Keys as the key list.
 func New(store creds.Store, opts ...forgeapi.Option) *Helper {
+	return NewFor(store, store.Keys, opts...)
+}
+
+// NewFor builds the helper over the records whose keys keys answers, called on
+// every [Helper.Serve], reading the logger and the counters from opts. A store
+// holding several records for one origin needs it, because only its consumer
+// knows which of them git may be handed. A key keys answers that the store does
+// not hold is skipped; a failing keys is declined as an unreadable store.
+func NewFor(store creds.Store, keys func() ([]string, error), opts ...forgeapi.Option) *Helper {
 	set := forgeapi.Resolve(opts...)
 	logger := set.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Helper{store: store, logger: logger, counters: set.Counters}
+	return &Helper{store: store, keys: keys, logger: logger, counters: set.Counters}
 }
 
 // Serve answers one git invocation: action is git's operation argument, in is
@@ -149,10 +159,11 @@ func (h *Helper) owner(attrs attributes) (creds.Record, bool, error) {
 	if !ok {
 		return creds.Record{}, false, nil
 	}
-	keys, err := h.store.Keys()
+	listed, err := h.keys()
 	if err != nil {
 		return creds.Record{}, false, err
 	}
+	keys := slices.Clone(listed)
 	slices.Sort(keys)
 	for _, key := range keys {
 		rec, found, err := h.store.Load(key)
