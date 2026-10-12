@@ -10,6 +10,11 @@ type Account struct {
 	WebURL string
 	Scopes []string
 }
+type AccountKind int
+func (a AccountKind) String() string
+const AccountKindBot AccountKind = iota + 2
+const AccountKindUnknown AccountKind = iota
+const AccountKindUser AccountKind = iota + 1
 type ActionState struct {
 	Mergeable Support
 	Checks CheckState
@@ -260,6 +265,7 @@ type Issue struct {
 	Title string
 	Body string
 	Author string
+	AuthorKind AccountKind
 	WebURL string
 	Labels []Label
 	CreatedAt time.Time
@@ -429,6 +435,7 @@ type PullRequest struct {
 	Title string
 	Body string
 	Author string
+	AuthorKind AccountKind
 	SourceBranch string
 	SourceRepo RepoRef
 	TargetBranch string

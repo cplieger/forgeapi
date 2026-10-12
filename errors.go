@@ -399,7 +399,7 @@ const DiagIDLength = 13
 // this library's own dependency rule refuses, and the mapping is a translation
 // at the boundary rather than a pass-through. So the chain terminates here, and
 // a consumer branches on Code and Kind and never on Message.
-type Error struct { //nolint:govet // fieldalignment: field order here is declared order, and it is API for an unkeyed composite literal
+type Error struct { //nolint:govet // fieldalignment: field order here is declared order, which api/forgeapi.txt records
 	// Op is the role method that failed, spelled as the method that names it:
 	// "ListPRs", "ListMyPRs", "ReadPR", "MergeStatus", "MergePR" and so on, one
 	// of TWENTY-ONE. The spelling is fixed here rather than left to each family

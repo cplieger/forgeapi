@@ -148,8 +148,16 @@ type PullRequests interface {
 	//	Items[].Action.QueuePosition                 cannot supply        no position; train index null
 	//	Successor                                    cannot supply        nil: GraphQL sends no successor
 	//
-	// Gitea and Forgejo depart from the normalized contract:
+	// Gitea departs from the normalized contract:
 	//
+	//	Items[].Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
+	//	Items[].Action.QueueState      cannot supply  QueueNone always
+	//	Items[].Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	Items[].AuthorKind             cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
 	//	Items[].Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
 	//	Items[].Action.QueueState      cannot supply  QueueNone always
 	//	Items[].Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
@@ -193,8 +201,24 @@ type PullRequests interface {
 	//	error, owner unresolved                                    cannot supply        404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds
 	//	Items[], from an archived repository under an owner scope  cannot supply        none: the group route's non_archived defaults to true
 	//
-	// Gitea and Forgejo depart from the normalized contract:
+	// Gitea departs from the normalized contract:
 	//
+	//	Items[].SourceBranch, Items[].SourceRepo     cannot supply     no head key on an issue-search row
+	//	Items[].TargetBranch                         cannot supply     no base key on an issue-search row
+	//	Items[].HeadSHA                              cannot supply     no head key on an issue-search row
+	//	Items[].Action.Mergeable                     cannot supply     no mergeable key on an issue-search row
+	//	Items[].Action.Checks                        cannot supply     CheckUnknown: no head commit on an issue-search row, so no status read addresses it
+	//	Items[].Action.ChecksPassing .. ChecksTotal  cannot supply     zero: no fold runs on a row that carries no head commit
+	//	Items[].Action.AutoMergeArmed                cannot supply     no auto-merge key on an issue-search row
+	//	Items[].Action.QueueState                    cannot supply     QueueNone always
+	//	Items[].Action.QueuePosition                 cannot supply     QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                  cannot supply     no merge-blocked key on an issue-search row
+	//	Items[].Partial                              cannot supply     nil: no fold runs on a row that carries no head commit, so none can stop short
+	//	Items[].Draft                                differs in shape  draft on the pull_request object, not at the row's top level
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	Items[].AuthorKind                           cannot supply     AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
 	//	Items[].SourceBranch, Items[].SourceRepo     cannot supply     no head key on an issue-search row
 	//	Items[].TargetBranch                         cannot supply     no base key on an issue-search row
 	//	Items[].HeadSHA                              cannot supply     no head key on an issue-search row
@@ -274,8 +298,16 @@ type PullRequests interface {
 	//	Action.QueueState                    cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
 	//	Action.QueuePosition                 cannot supply        no position; train index null
 	//
-	// Gitea and Forgejo depart from the normalized contract:
+	// Gitea departs from the normalized contract:
 	//
+	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
+	//	Action.QueueState      cannot supply  QueueNone always
+	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
 	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
 	//	Action.QueueState      cannot supply  QueueNone always
 	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
@@ -312,8 +344,17 @@ type PullRequests interface {
 	//	Action.MergeBlocked                  cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the creation lands, preparing on every creation measured
 	//	State                                differs in spelling  state string, opened
 	//
-	// Gitea and Forgejo depart from the normalized contract:
+	// Gitea departs from the normalized contract:
 	//
+	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
+	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
+	//	Action.QueueState      cannot supply  QueueNone always
+	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
 	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
 	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
 	//	Action.QueueState      cannot supply  QueueNone always
@@ -365,8 +406,17 @@ type PullRequests interface {
 	//	Action.QueuePosition                 cannot supply        QueuePositionUnknown: no merge-train key on the answer
 	//	Action.MergeBlocked                  cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the close lands: preparing before the check settles, not_open after it, checking after a reopen
 	//
-	// Gitea and Forgejo depart from the normalized contract:
+	// Gitea departs from the normalized contract:
 	//
+	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
+	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
+	//	Action.QueueState      cannot supply  QueueNone always
+	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
 	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
 	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
 	//	Action.QueueState      cannot supply  QueueNone always
@@ -414,6 +464,7 @@ type PullRequests interface {
 	//
 	// Forgejo departs from the normalized contract:
 	//
+	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
 	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the reopen lands, false on one reopen measured and true on the others
 	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
 	//	Action.QueueState      cannot supply  QueueNone always
@@ -692,9 +743,14 @@ type Issues interface {
 	// GitLab departs from the normalized contract:
 	//
 	//	Items[].Ref             differs in spelling  iid int
+	//	Items[].AuthorKind      cannot supply        AccountKindUnknown on every row: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it
 	//	Items[].Labels[].Color  differs in spelling  color string, leading #
 	//	Items[].State           differs in spelling  state string, opened
 	//	Successor               cannot supply        nil: no successor key
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	Items[].AuthorKind  cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
 	ListIssues(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Issue], error)
 
 	// ListMyIssues lists OPEN issues across every repository the credential can
@@ -720,10 +776,15 @@ type Issues interface {
 	// GitLab departs from the normalized contract:
 	//
 	//	Items[].Ref                           differs in spelling  iid int, on the group route's 2 of 2 rows
+	//	Items[].AuthorKind                    cannot supply        AccountKindUnknown on every row: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it
 	//	Items[].Labels[].Color                differs in spelling  color string, leading #, on 16 of 16, upper-case hex on 1
 	//	Items[].State                         differs in spelling  state string, opened on 2 of 2: the state parameter fixes it
 	//	error, owner unresolved               cannot supply        404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds
 	//	Items[], from an archived repository  cannot supply        none on either route: non_archived defaults to true
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	Items[].AuthorKind  cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
 	ListMyIssues(ctx context.Context, opts ...ListOption) (Page[Issue], error)
 
 	// CreateIssue files an issue and returns the created object.
@@ -738,9 +799,14 @@ type Issues interface {
 	// GitLab departs from the normalized contract:
 	//
 	//	Ref                   differs in spelling  iid int, the project's own sequence
+	//	AuthorKind            cannot supply        AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it
 	//	Labels[].Color        cannot supply        no colour on the answer: its labels arrive as name strings
 	//	Labels[].Description  cannot supply        no description on the answer: its labels arrive as name strings
 	//	State                 differs in spelling  state string, opened
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	AuthorKind  cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
 	//
 	// GitHub sends this, where a wrong default would change the request silently:
 	//
@@ -767,8 +833,13 @@ type Issues interface {
 	// GitLab departs from the normalized contract:
 	//
 	//	Ref                   differs in spelling  iid int, the project's own sequence
+	//	AuthorKind            cannot supply        AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it
 	//	Labels[].Color        cannot supply        no colour on the answer: its labels arrive as name strings
 	//	Labels[].Description  cannot supply        no description on the answer: its labels arrive as name strings
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	AuthorKind  cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
 	CloseIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
 }
 

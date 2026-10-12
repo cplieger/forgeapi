@@ -68,7 +68,7 @@ const BudgetRemainingUnknown = -1
 // the client backs off when anyone has drained the account rather than only when
 // it has drained it itself, and it costs nothing, because the number is already
 // in hand on every response.
-type BudgetState struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, remaining first, and it is API for an unkeyed composite literal
+type BudgetState struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, remaining first
 	// Remaining is the budget left in the current window, in the instance's own units:
 	// requests on a REST endpoint, points on a document endpoint, and on a product with
 	// one pool per surface the pool the last response drew on. It is

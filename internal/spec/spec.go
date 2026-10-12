@@ -1,16 +1,13 @@
-// Code generated from the measured per-product cells by phase 0's derivation. DO NOT EDIT.
-
 // Package spec is forgeapi's expectation table: what each operation does on each
-// product, held once.
+// product, held once, each entry stating what a forge was measured or documented
+// to do.
 //
 // Three consumers read it and nothing else states these facts. The generator
 // under internal/gen renders the per-forge block of every role method's godoc
 // and the support matrix in SUPPORT.md; gen_test.go fails when either would
 // change; and the conformance suite iterates one case per entry.
 //
-// The cells and the derivation are kept together outside this tree. Edit the
-// derivation and re-run it rather than this file, so the table and the cells it
-// came from cannot disagree.
+//nolint:goconst // each entry spells its method and route literally, so a row reads whole without a constant to look up
 package spec
 
 // Product is one of the four forge products, spelled as every rendering spells it.
@@ -170,11 +167,11 @@ type Entry struct {
 	Method     string
 	Product    Product
 	Exercises  string
-	Requests   Requests
 	Needs      string
 	Support    Support
 	Departures []Departure
 	Sends      []Sent
+	Requests   Requests
 }
 
 // Fields counts the output fields each operation publishes, which is one row of
@@ -183,21 +180,21 @@ type Entry struct {
 var Fields = map[string]int{
 	"Identity.Whoami":                5,
 	"Repos.ListRepos":                17,
-	"PullRequests.ListPRs":           29,
-	"PullRequests.ListMyPRs":         29,
-	"PullRequests.ReadPR":            26,
-	"PullRequests.CreatePR":          26,
-	"PullRequests.ClosePR":           26,
-	"PullRequests.ReopenPR":          26,
+	"PullRequests.ListPRs":           30,
+	"PullRequests.ListMyPRs":         30,
+	"PullRequests.ReadPR":            27,
+	"PullRequests.CreatePR":          27,
+	"PullRequests.ClosePR":           27,
+	"PullRequests.ReopenPR":          27,
 	"PullRequests.RerunFailedChecks": 2,
 	"Merges.MergePR":                 4,
 	"Merges.MergeStatus":             4,
 	"Checks.CommitStatus":            10,
 	"Checks.ListRuns":                15,
-	"Issues.ListIssues":              16,
-	"Issues.ListMyIssues":            16,
-	"Issues.CreateIssue":             13,
-	"Issues.CloseIssue":              13,
+	"Issues.ListIssues":              17,
+	"Issues.ListMyIssues":            17,
+	"Issues.CreateIssue":             14,
+	"Issues.CloseIssue":              14,
 	"Capabilities.ConnectionCaps":    4,
 	"Capabilities.GrantCaps":         2,
 	"Capabilities.RepoAffordances":   6,
@@ -462,6 +459,11 @@ var Table = []Entry{
 		Support:   Supported,
 		Departures: []Departure{
 			{
+				Field: "Items[].AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+			{
 				Field: "Items[].Action.AutoMergeArmed",
 				Kind:  CannotSupply,
 				Says:  "no auto_merge key: unknown",
@@ -658,6 +660,11 @@ var Table = []Entry{
 		Support:   Supported,
 		Departures: []Departure{
 			{
+				Field: "Items[].AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+			{
 				Field: "Items[].SourceBranch",
 				Kind:  CannotSupply,
 				Says:  "no head key on an issue-search row",
@@ -819,6 +826,11 @@ var Table = []Entry{
 		Requests:  Requests{Min: 2, Max: 4},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
 			{
 				Field: "Action.AutoMergeArmed",
 				Kind:  CannotSupply,
@@ -1010,6 +1022,11 @@ var Table = []Entry{
 		Support:   Supported,
 		Departures: []Departure{
 			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+			{
 				Field: "Action.Mergeable",
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured",
@@ -1174,6 +1191,11 @@ var Table = []Entry{
 		Support:   Supported,
 		Departures: []Departure{
 			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+			{
 				Field: "Action.Mergeable",
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured",
@@ -1334,6 +1356,11 @@ var Table = []Entry{
 		Requests:  Requests{Min: 1, Max: 1},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
 			{
 				Field: "Action.Mergeable",
 				Kind:  CannotSupply,
@@ -1875,6 +1902,11 @@ var Table = []Entry{
 				Says:  "iid int",
 			},
 			{
+				Field: "Items[].AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown on every row: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it",
+			},
+			{
 				Field: "Items[].Labels[].Color",
 				Kind:  DiffersInSpelling,
 				Says:  "color string, leading #",
@@ -1904,6 +1936,13 @@ var Table = []Entry{
 		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues, filtered to issues, because this route's population is issues and pull requests both, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
 		Requests:  Requests{Min: 1, Max: 2, Paged: true},
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "Items[].AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+		},
 	},
 	{
 		Method:    "Issues.ListMyIssues",
@@ -1935,6 +1974,11 @@ var Table = []Entry{
 				Field: "Items[].Ref",
 				Kind:  DiffersInSpelling,
 				Says:  "iid int, on the group route's 2 of 2 rows",
+			},
+			{
+				Field: "Items[].AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown on every row: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it",
 			},
 			{
 				Field: "Items[].Labels[].Color",
@@ -1971,6 +2015,13 @@ var Table = []Entry{
 		Exercises: "GET /api/v1/repos/issues/search filtered to issues and to the rows the authenticated credential created, or by owner={owner} in place of created=true under an owner scope",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "Items[].AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+		},
 	},
 	{
 		Method:    "Issues.CreateIssue",
@@ -1998,6 +2049,11 @@ var Table = []Entry{
 				Field: "Ref",
 				Kind:  DiffersInSpelling,
 				Says:  "iid int, the project's own sequence",
+			},
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it",
 			},
 			{
 				Field: "Labels[].Color",
@@ -2045,6 +2101,13 @@ var Table = []Entry{
 		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues",
 		Requests:  Requests{Min: 1, Max: 2},
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+		},
 		Sends: []Sent{
 			{
 				Field: "labels",
@@ -2074,6 +2137,11 @@ var Table = []Entry{
 				Says:  "iid int, the project's own sequence",
 			},
 			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it",
+			},
+			{
 				Field: "Labels[].Color",
 				Kind:  CannotSupply,
 				Says:  "no colour on the answer: its labels arrive as name strings",
@@ -2098,6 +2166,13 @@ var Table = []Entry{
 		Exercises: "PATCH /api/v1/repos/{owner}/{repo}/issues/{number}",
 		Requests:  Requests{Min: 1, Max: 1},
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+		},
 	},
 	{
 		Method:    "Capabilities.ConnectionCaps",

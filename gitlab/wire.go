@@ -80,6 +80,7 @@ type (
 	}
 
 	docAuthor struct {
+		Bot      *bool  `json:"bot"`
 		Username string `json:"username"`
 	}
 
@@ -145,6 +146,9 @@ func (p *docPayload) complexity() int {
 // The REST wire shapes.
 type (
 	restUser struct {
+		// Bot is absent on an issue row's author, measured on gitlab.com
+		// 2026-10-11, and present on a merge request row's.
+		Bot      *bool  `json:"bot"`
 		Username string `json:"username"`
 		Name     string `json:"name"`
 		Email    string `json:"email"`
@@ -612,9 +616,9 @@ func (c *Client) labelCut(in *docLabels) *forgeapi.Partial {
 // deprecated merge-train connection the schema gate refuses.
 func (c *Client) normalizeDocPull(n *docMergeRequest, repo forgeapi.RepoRef) forgeapi.PullRequest {
 	number, _ := strconv.Atoi(n.IID)
-	author := ""
+	author, kind := "", forgeapi.AccountKindUnknown
 	if n.Author != nil {
-		author = n.Author.Username
+		author, kind = n.Author.Username, accountKind(n.Author.Bot)
 	}
 	checks := forgeapi.CheckUnknown
 	if n.HeadPipeline != nil {
@@ -626,6 +630,7 @@ func (c *Client) normalizeDocPull(n *docMergeRequest, repo forgeapi.RepoRef) for
 		Title:        n.Title,
 		Body:         n.Description,
 		Author:       author,
+		AuthorKind:   kind,
 		SourceBranch: n.SourceBranch,
 		SourceRepo:   sourcePath(n.SourceProject, repo),
 		TargetBranch: n.TargetBranch,
@@ -681,10 +686,7 @@ func (c *Client) normalizeRESTPull(r *restMergeRequest, repo forgeapi.RepoRef, p
 	if repo.Selector == "" {
 		repo = referencedRepo(r.References, sigil)
 	}
-	author := ""
-	if r.Author != nil {
-		author = r.Author.Username
-	}
+	author, kind := restAuthor(r.Author)
 	checks := forgeapi.CheckUnknown
 	if r.HeadPipeline != nil {
 		checks = c.checkState("pipeline status (rest)", r.HeadPipeline.Status)
@@ -709,6 +711,7 @@ func (c *Client) normalizeRESTPull(r *restMergeRequest, repo forgeapi.RepoRef, p
 		Title:        r.Title,
 		Body:         r.Description,
 		Author:       author,
+		AuthorKind:   kind,
 		SourceBranch: r.SourceBranch,
 		SourceRepo:   sameProject(r, repo),
 		TargetBranch: r.TargetBranch,
@@ -773,22 +776,41 @@ func (c *Client) normalizeIssue(i *restIssue, repo forgeapi.RepoRef) forgeapi.Is
 	if repo.Selector == "" {
 		repo = referencedRepo(i.References, issueSigil)
 	}
-	author := ""
-	if i.Author != nil {
-		author = i.Author.Username
-	}
+	author, kind := restAuthor(i.Author)
 	return forgeapi.Issue{
-		Ref:       forgeapi.IssueRef{Number: i.IID},
-		Repo:      repo,
-		Title:     i.Title,
-		Body:      i.Description,
-		Author:    author,
-		WebURL:    i.WebURL,
-		Labels:    normalizeRESTLabels(i.Labels),
-		CreatedAt: i.CreatedAt,
-		UpdatedAt: i.UpdatedAt,
-		State:     c.issueState(i.State),
+		Ref:        forgeapi.IssueRef{Number: i.IID},
+		Repo:       repo,
+		Title:      i.Title,
+		Body:       i.Description,
+		Author:     author,
+		AuthorKind: kind,
+		WebURL:     i.WebURL,
+		Labels:     normalizeRESTLabels(i.Labels),
+		CreatedAt:  i.CreatedAt,
+		UpdatedAt:  i.UpdatedAt,
+		State:      c.issueState(i.State),
 	}
+}
+
+// accountKind is the kind a user's bot flag states, unknown where the answer
+// carries no flag.
+func accountKind(bot *bool) forgeapi.AccountKind {
+	switch {
+	case bot == nil:
+		return forgeapi.AccountKindUnknown
+	case *bot:
+		return forgeapi.AccountKindBot
+	}
+	return forgeapi.AccountKindUser
+}
+
+// restAuthor is a REST row's author username and kind, empty and unknown where the
+// row names no author.
+func restAuthor(u *restUser) (string, forgeapi.AccountKind) {
+	if u == nil {
+		return "", forgeapi.AccountKindUnknown
+	}
+	return u.Username, accountKind(u.Bot)
 }
 
 // normalizeRun is the run normalizer, over one pipeline of the project the listing
