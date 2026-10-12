@@ -43,7 +43,8 @@ const (
 // transports decodes neither.
 type (
 	docActor struct {
-		Login string `json:"login"`
+		Typename string `json:"__typename"`
+		Login    string `json:"login"`
 	}
 
 	docPageInfo struct {
@@ -319,6 +320,7 @@ type (
 		Name   string `json:"name"`
 		Email  string `json:"email"`
 		WebURL string `json:"html_url"`
+		Type   string `json:"type"`
 	}
 
 	restPermissions struct {
@@ -652,6 +654,49 @@ func (c *Client) unmapped(field, value string) {
 // is the lower-snake one both transports share.
 func member(raw string) string { return strings.ToLower(strings.TrimSpace(raw)) }
 
+// accountKinds maps an author's account type, which the document answers as the
+// Actor's __typename over the five types implementing that interface, introspected
+// 2026-10-11, and REST as the user's type in the same spelling. A mannequin stands
+// in for an imported account and an organization is neither a person nor a bot.
+var accountKinds = map[string]forgeapi.AccountKind{
+	"user":                  forgeapi.AccountKindUser,
+	"enterpriseuseraccount": forgeapi.AccountKindUser,
+	"bot":                   forgeapi.AccountKindBot,
+	"mannequin":             forgeapi.AccountKindUnknown,
+	"organization":          forgeapi.AccountKindUnknown,
+}
+
+// accountKind maps one author type, totally; an answer naming none is unknown and
+// uncounted, because no type is no member at all.
+func (c *Client) accountKind(field, raw string) forgeapi.AccountKind {
+	if raw == "" {
+		return forgeapi.AccountKindUnknown
+	}
+	kind, ok := accountKinds[member(raw)]
+	if !ok {
+		c.unmapped(field, raw)
+	}
+	return kind
+}
+
+// docAuthor is a document row's author login and kind, both empty-valued where the
+// row names no author, as for a deleted account.
+func (c *Client) docAuthor(a *docActor) (string, forgeapi.AccountKind) {
+	if a == nil {
+		return "", forgeapi.AccountKindUnknown
+	}
+	return a.Login, c.accountKind("author type (document)", a.Typename)
+}
+
+// restAuthor is a REST row's author login and kind, read as [Client.docAuthor] reads
+// a document row's.
+func (c *Client) restAuthor(u *restUser) (string, forgeapi.AccountKind) {
+	if u == nil {
+		return "", forgeapi.AccountKindUnknown
+	}
+	return u.Login, c.accountKind("author type (rest)", u.Type)
+}
+
 // checkState maps one status-context state onto the folded verdict, totally.
 func (c *Client) checkState(field, raw string) forgeapi.CheckState {
 	state, ok := statusStates[member(raw)]
@@ -973,10 +1018,7 @@ func isCheckRun(node *docContext) bool { return node.Typename == "CheckRun" }
 // only arm that carries mergeability, the merge state, the queue entry and a folded
 // verdict at all.
 func (c *Client) normalizeDocPull(n *docPullRequest, repo forgeapi.RepoRef) forgeapi.PullRequest {
-	author := ""
-	if n.Author != nil {
-		author = n.Author.Login
-	}
+	author, kind := c.docAuthor(n.Author)
 	checks := c.foldRollup(rollupOf(n))
 	action := forgeapi.ActionState{
 		Mergeable:      c.mergeableSupport("mergeable (document)", n.Mergeable),
@@ -1004,6 +1046,7 @@ func (c *Client) normalizeDocPull(n *docPullRequest, repo forgeapi.RepoRef) forg
 		Title:        n.Title,
 		Body:         n.Body,
 		Author:       author,
+		AuthorKind:   kind,
 		SourceBranch: n.HeadRefName,
 		SourceRepo:   sourceRepo(n.HeadRepository.name(), repo),
 		TargetBranch: n.BaseRefName,
@@ -1043,10 +1086,7 @@ func rollupOf(n *docPullRequest) *docRollup {
 // does carry is the merge-state field under this product's OWN REST spelling, whose
 // member set is the document enumeration's lower-snake form.
 func (c *Client) normalizeRESTPull(r *restPull, repo forgeapi.RepoRef) forgeapi.PullRequest {
-	author := ""
-	if r.User != nil {
-		author = r.User.Login
-	}
+	author, kind := c.restAuthor(r.User)
 	head, base := "", ""
 	sha, source := "", ""
 	if r.Head != nil {
@@ -1064,6 +1104,7 @@ func (c *Client) normalizeRESTPull(r *restPull, repo forgeapi.RepoRef) forgeapi.
 		Title:        r.Title,
 		Body:         r.Body,
 		Author:       author,
+		AuthorKind:   kind,
 		SourceBranch: head,
 		SourceRepo:   sourceRepo(source, repo),
 		TargetBranch: base,
@@ -1099,42 +1140,38 @@ func (c *Client) normalizeMutatedPull(r *restPull, repo forgeapi.RepoRef) forgea
 
 // normalizeIssue is the issue normalizer.
 func (c *Client) normalizeIssue(i *restIssue, repo forgeapi.RepoRef) forgeapi.Issue {
-	author := ""
-	if i.User != nil {
-		author = i.User.Login
-	}
+	author, kind := c.restAuthor(i.User)
 	return forgeapi.Issue{
-		Ref:       forgeapi.IssueRef{Number: i.Number},
-		Repo:      repo,
-		Title:     i.Title,
-		Body:      i.Body,
-		Author:    author,
-		WebURL:    i.WebURL,
-		Labels:    normalizeLabels(i.Labels),
-		CreatedAt: i.CreatedAt,
-		UpdatedAt: i.UpdatedAt,
-		State:     c.issueState("issue state (rest)", i.State),
+		Ref:        forgeapi.IssueRef{Number: i.Number},
+		Repo:       repo,
+		Title:      i.Title,
+		Body:       i.Body,
+		Author:     author,
+		AuthorKind: kind,
+		WebURL:     i.WebURL,
+		Labels:     normalizeLabels(i.Labels),
+		CreatedAt:  i.CreatedAt,
+		UpdatedAt:  i.UpdatedAt,
+		State:      c.issueState("issue state (rest)", i.State),
 	}
 }
 
 // normalizeDocIssue is the issue normalizer for the document arm, whose row carries
 // its own repository because the call that read it addressed none.
 func (c *Client) normalizeDocIssue(n *docIssue) forgeapi.Issue {
-	author := ""
-	if n.Author != nil {
-		author = n.Author.Login
-	}
+	author, kind := c.docAuthor(n.Author)
 	return forgeapi.Issue{
-		Ref:       forgeapi.IssueRef{Number: n.Number},
-		Repo:      rowRepo(n.Repository),
-		Title:     n.Title,
-		Body:      n.Body,
-		Author:    author,
-		WebURL:    n.URL,
-		Labels:    normalizeDocLabels(n.Labels),
-		CreatedAt: n.CreatedAt,
-		UpdatedAt: n.UpdatedAt,
-		State:     c.issueState("issue state (document)", n.State),
+		Ref:        forgeapi.IssueRef{Number: n.Number},
+		Repo:       rowRepo(n.Repository),
+		Title:      n.Title,
+		Body:       n.Body,
+		Author:     author,
+		AuthorKind: kind,
+		WebURL:     n.URL,
+		Labels:     normalizeDocLabels(n.Labels),
+		CreatedAt:  n.CreatedAt,
+		UpdatedAt:  n.UpdatedAt,
+		State:      c.issueState("issue state (document)", n.State),
 	}
 }
 

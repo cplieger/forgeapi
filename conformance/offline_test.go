@@ -341,7 +341,7 @@ func carried(req sent, row *spec.Sent) string {
 // decides are the operations whose REQUEST carries a decision at 1.0: the merge, the
 // two creations, the re-run, and the run listing, which reads the re-run's own route
 // and must leave off the head filter the re-run sends there. It is the gate over the
-// table's own completeness, because a Sends row deleted from the derivation would
+// table's own completeness, because a Sends row deleted from the table would
 // leave every case green while the property it held went unchecked, which is the
 // shape of defect this column was added for.
 var decides = map[string]bool{

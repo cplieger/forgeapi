@@ -226,7 +226,7 @@ type Counters struct {
 //
 // A consumer cannot construct an [Option], so it cannot reach these fields
 // except through the With* functions. A new field is additive.
-type Settings struct { //nolint:govet // fieldalignment: the field order is this record's own reading order and it is API for an unkeyed composite literal
+type Settings struct { //nolint:govet // fieldalignment: the field order is this record's own reading order
 	// Logger receives the library's own lines. Nil means slog.Default.
 	Logger *slog.Logger
 	// Credential is the token source every request authenticates with. Nil
@@ -525,7 +525,7 @@ func WithPlaintextHTTP(allowed bool) Option {
 }
 
 // ListSettings is the resolved per-call option state for a list operation.
-type ListSettings struct { //nolint:govet // fieldalignment: each field was appended in turn, and the order is API for an unkeyed composite literal
+type ListSettings struct { //nolint:govet // fieldalignment: each field was appended in turn, and api/forgeapi.txt records that order
 	// After is the continuation to resume from, empty for a first page.
 	After Cursor
 	// Owner is the owner scope [WithOwner] named, empty where it named none.

@@ -746,6 +746,67 @@ func TestTheRESTArmAnswersNoCheckStateAtAll(t *testing.T) {
 	}
 }
 
+// TestTheAuthorKindIsTheAccountsOwnType holds both arms to the account type each
+// answers, as measured on github.com 2026-10-11: a GitHub App's pull request named
+// author {__typename: "Bot", login: "tribble-trouble"} on the document arm, with no
+// "[bot]" suffix, and user {login: "tribble-trouble[bot]", type: "Bot"} on REST.
+func TestTheAuthorKindIsTheAccountsOwnType(t *testing.T) {
+	h := newHarness(t, nil)
+	for _, tc := range []struct {
+		doc, rest string
+		want      forgeapi.AccountKind
+	}{
+		{doc: `{"__typename":"Bot","login":"tribble-trouble"}`, rest: `{"login":"tribble-trouble[bot]","type":"Bot"}`, want: forgeapi.AccountKindBot},
+		{doc: `{"__typename":"User","login":"example-user"}`, rest: `{"login":"example-user","type":"User"}`, want: forgeapi.AccountKindUser},
+		{doc: `{"__typename":"Mannequin","login":"imported"}`, rest: `{"login":"example-org","type":"Organization"}`, want: forgeapi.AccountKindUnknown},
+		{doc: `{"login":"example-user"}`, rest: `{"login":"example-user"}`, want: forgeapi.AccountKindUnknown},
+		{doc: `null`, rest: `null`, want: forgeapi.AccountKindUnknown},
+	} {
+		var docPull docPullRequest
+		var docRow docIssue
+		var restRow restPull
+		var restRowIssue restIssue
+		for _, decode := range []struct {
+			into any
+			body string
+		}{
+			{&docPull, `{"number":1,"author":` + tc.doc + `}`},
+			{&docRow, `{"number":1,"author":` + tc.doc + `}`},
+			{&restRow, `{"number":1,"user":` + tc.rest + `}`},
+			{&restRowIssue, `{"number":1,"user":` + tc.rest + `}`},
+		} {
+			if err := json.Unmarshal([]byte(decode.body), decode.into); err != nil {
+				t.Fatalf("Setup: decode %s: %v", decode.body, err)
+			}
+		}
+		for name, got := range map[string]forgeapi.AccountKind{
+			"normalizeDocPull":  h.client.normalizeDocPull(&docPull, testRef()).AuthorKind,
+			"normalizeDocIssue": h.client.normalizeDocIssue(&docRow).AuthorKind,
+			"normalizeRESTPull": h.client.normalizeRESTPull(&restRow, testRef()).AuthorKind,
+			"normalizeIssue":    h.client.normalizeIssue(&restRowIssue, testRef()).AuthorKind,
+		} {
+			if got != tc.want {
+				t.Errorf("%s(author %s / %s).AuthorKind = %v, want %v", name, tc.doc, tc.rest, got, tc.want)
+			}
+		}
+	}
+	if n := h.spy.times("UnknownEnumValue:author type (document)") + h.spy.times("UnknownEnumValue:author type (rest)"); n != 0 {
+		t.Errorf("the documented account types counted %d unmapped value(s), want 0", n)
+	}
+	var odd docIssue
+	if err := json.Unmarshal([]byte(`{"number":1,"author":{"__typename":"Robot","login":"x"}}`), &odd); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if got := h.client.normalizeDocIssue(&odd).AuthorKind; got != forgeapi.AccountKindUnknown || h.spy.times("UnknownEnumValue:author type (document)") != 1 {
+		t.Errorf("normalizeDocIssue(an undocumented author type).AuthorKind = %v, counted %d, want unknown, counted once", got, h.spy.times("UnknownEnumValue:author type (document)"))
+	}
+	for _, d := range []document{prList, prRead, prMine, issueMine} {
+		if !strings.Contains(d.text, "author { __typename login }") {
+			t.Errorf("document %s selects no author type, so its rows answer AccountKindUnknown", d.name)
+		}
+	}
+}
+
 // TestAMutationsUnmappedMergeStateIsCountedAndNamed holds the totality table's
 // unknown arm on the path that discards what the table answers: a mutation's own
 // answer names no block reason whatever merge state it carries, and a member the table

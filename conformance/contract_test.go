@@ -258,6 +258,7 @@ var operations = []operation{
 	{
 		method:    "PullRequests.ListPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
+		rowArms:   []string{rowAuthorKind},
 		errorArms: []string{rowChecksUnderFineGrained},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
@@ -279,6 +280,7 @@ var operations = []operation{
 	{
 		method:    "PullRequests.ListMyPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
+		rowArms:   []string{rowAuthorKind},
 		errorArms: []string{rowChecksUnderFineGrained, ownerUnresolved, scopeInsufficient, archivedRowsForOwner},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
@@ -300,6 +302,7 @@ var operations = []operation{
 	{
 		method:    "PullRequests.ReadPR",
 		zero:      forgeapi.PullRequest{},
+		rowArms:   []string{authorKind},
 		errorArms: []string{checksUnderFineGrained},
 		readsPR:   true,
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
@@ -316,6 +319,7 @@ var operations = []operation{
 	{
 		method:   "PullRequests.CreatePR",
 		zero:     forgeapi.PullRequest{},
+		rowArms:  []string{authorKind},
 		mutation: true,
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
@@ -337,6 +341,7 @@ var operations = []operation{
 	{
 		method:   "PullRequests.ClosePR",
 		zero:     forgeapi.PullRequest{},
+		rowArms:  []string{authorKind},
 		mutation: true,
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
@@ -352,6 +357,7 @@ var operations = []operation{
 	{
 		method:   "PullRequests.ReopenPR",
 		zero:     forgeapi.PullRequest{},
+		rowArms:  []string{authorKind},
 		mutation: true,
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
@@ -503,8 +509,9 @@ var operations = []operation{
 		},
 	},
 	{
-		method: "Issues.ListIssues",
-		zero:   forgeapi.Page[forgeapi.Issue]{},
+		method:  "Issues.ListIssues",
+		zero:    forgeapi.Page[forgeapi.Issue]{},
+		rowArms: []string{rowAuthorKind},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.Issues)
 			if !ok {
@@ -525,6 +532,7 @@ var operations = []operation{
 	{
 		method:    "Issues.ListMyIssues",
 		zero:      forgeapi.Page[forgeapi.Issue]{},
+		rowArms:   []string{rowAuthorKind},
 		errorArms: []string{ownerUnresolved, archivedRows},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			if _, ok := c.(forgeapi.Issues); !ok {
@@ -549,6 +557,7 @@ var operations = []operation{
 	{
 		method:   "Issues.CreateIssue",
 		zero:     forgeapi.Issue{},
+		rowArms:  []string{authorKind},
 		mutation: true,
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.Issues)
@@ -568,6 +577,7 @@ var operations = []operation{
 	{
 		method:   "Issues.CloseIssue",
 		zero:     forgeapi.Issue{},
+		rowArms:  []string{authorKind},
 		mutation: true,
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.Issues)

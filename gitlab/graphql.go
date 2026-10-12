@@ -37,7 +37,7 @@ const mergeRequestFields = `
       iid
       title
       description
-      author { username }
+      author { username bot }
       sourceBranch
       sourceProject { fullPath }
       targetBranch

@@ -133,7 +133,7 @@ type Partial struct {
 // with no way to ask for it has only one recourse, which is to re-run the same
 // capped call, and adding the continuation after the tag would mean a second
 // role interface for an operation that already has one.
-type Page[T any] struct { //nolint:govet // fieldalignment: the items come first because that is the reading order this type documents, and field order is API for an unkeyed composite literal
+type Page[T any] struct { //nolint:govet // fieldalignment: the items come first because that is the reading order this type documents
 	// Items are the rows read, in the order upstream returned them.
 	Items []T
 	// Next is the continuation, empty when the list is complete.
