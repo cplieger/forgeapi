@@ -15,6 +15,7 @@ forgeapi is built for Go tools that span several forges.
 - It serves github.com, gitlab.com, and Gitea and Forgejo instances. GitHub Enterprise Server and self-managed GitLab run the same code but were not [measured](docs/tested-against.md).
 - A client [paces itself to the rate limit](docs/request-prices.md), [revalidates what it read before](docs/read-cache.md) where the forge sends validators, so an unchanged REST list on GitHub costs no request when the request carries an `Authorization` header (GraphQL documents are never cached), and [reports a repository that moved](docs/renames.md).
 - `creds` runs the OAuth device flow on GitHub and GitLab and refreshes tokens. `gitcred` hands them to git.
+- `readcache` puts the same read cache on an HTTP client of your own, for routes no operation covers.
 
 Consider [go-github](https://github.com/google/go-github) if you target GitHub alone and want services that mirror its API documentation. Consider [go-scm](https://github.com/drone/go-scm) if you need Bitbucket, Gitee or Gogs, or comment and file endpoints. Consider [git-pkgs/forge](https://github.com/git-pkgs/forge) if you need reviews, branches, Bitbucket Cloud or Gerrit, or a command-line tool.
 
@@ -99,7 +100,7 @@ forgeapi leaves these out on purpose. [Non-goals](docs/non-goals.md) gives the r
 - [Lists across repositories](docs/cross-repository-lists.md) covers `ListMyPRs` and `ListMyIssues`.
 - [Renamed and moved repositories](docs/renames.md) says what a call answers after a move.
 - [Request prices and the budget](docs/request-prices.md) covers call costs and pacing.
-- [The read cache](docs/read-cache.md) covers revalidated reads and the memory bound.
+- [The read cache](docs/read-cache.md) covers revalidated reads, the memory bound and `readcache` for your own requests.
 - [Credentials](docs/credentials.md) covers sign-in, token refresh, the store and the git credential helper.
 - [Tested against](docs/tested-against.md) lists the measured instances and versions.
 - [Non-goals](docs/non-goals.md) explains what is left out and why.

@@ -3,9 +3,11 @@ package transport
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,21 +31,24 @@ const (
 	entryShare = 4
 )
 
-// readCache is one connection's read cache, a byte-bounded LRU in memory, and its
-// counters. An entry is immutable once kept, so a reader holds it past the lock.
+// readCache is one read cache, a byte-bounded LRU in memory, and its counters,
+// owned by one [Conn] or one [CacheTransport]. An entry is immutable once kept, so
+// a reader holds it past the lock.
 //
 // gen is the generation [readCache.clear] ends: an exchange begun in an earlier one
 // keeps no entry, so a read in flight across [Conn.Close] leaves nothing held.
 type readCache struct {
-	index  map[string]*list.Element
-	order  *list.List
-	max    int64
-	bytes  int64
-	gen    uint64
-	hits   atomic.Int64
-	misses atomic.Int64
-	saved  atomic.Int64
-	mu     sync.Mutex
+	index      map[string]*list.Element
+	order      *list.List
+	held       heldTable
+	max        int64
+	bytes      int64
+	gen        uint64
+	hits       atomic.Int64
+	misses     atomic.Int64
+	saved      atomic.Int64
+	mu         sync.Mutex
+	freeNotMod bool
 }
 
 // cacheEntry is one kept entry with what it is charged.
@@ -53,16 +58,23 @@ type cacheEntry struct {
 	cost int64
 }
 
-// heldFields are the only header fields an entry keeps: those a family reads from a
-// served answer. Every other field of a served answer, the rate headers included, is
-// the live 304's own. A field the 304 carries replaces the held value. One it omits
-// keeps the held value, unless required is set: then a held value the 304 omits
-// makes the entry unservable, and the read is sent once more without a validator.
-// GitHub's 304 omits Link (measured); [Response.Revalidated] tells the family so.
-var heldFields = [...]struct {
+// heldField is one header field an entry keeps. A field the 304 carries replaces
+// the held value. One it omits keeps the held value, unless required is set: then a
+// held value the 304 omits makes the entry unservable, and the read is sent once
+// more without a validator.
+type heldField struct {
 	name     string
 	required bool
-}{
+}
+
+// heldTable is the only header fields a cache's entries keep: those its owner reads
+// from a served answer. Every other field of a served answer, the rate headers
+// included, is the live 304's own.
+type heldTable []heldField
+
+// familyFields are the fields a family reads from a served answer. GitHub's 304
+// omits Link (measured); [Response.Revalidated] tells the family so.
+var familyFields = heldTable{
 	{name: "Link"},
 	{name: "X-Next-Page", required: true},
 	{name: "X-Total-Count", required: true},
@@ -71,32 +83,41 @@ var heldFields = [...]struct {
 	{name: "X-Forgejo-Version", required: true},
 }
 
-// pageEntry is one revalidatable answer: the family's decoded projection of a 200
-// body, its [heldFields] in that order, and the validator the instance sent. Every
-// string is its own copy, so [pageCost] charges all the entry holds.
+// pageEntry is one revalidatable answer: the body its owner keeps, the lines of its
+// held fields in its cache's [heldTable] order, and the validator the instance sent.
+// Every string is its own copy, so [pageCost] charges all the entry holds.
 type pageEntry struct {
 	ETag         string
 	LastModified string
-	Fields       [len(heldFields)]string
+	Fields       [][]string
 	Body         []byte
 }
 
-// holdFields copies an answer's [heldFields] into storage of their own, each
-// field's lines combined into one value (RFC 9110 section 5.3).
-func holdFields(h http.Header) [len(heldFields)]string {
-	var out [len(heldFields)]string
-	for i, f := range heldFields {
-		out[i] = strings.Clone(strings.Join(h.Values(f.name), ", "))
+// hold copies each held field's lines into storage of their own, nil for a field
+// with no text. The lines stay apart: a field such as Set-Cookie cannot be combined
+// into one (RFC 9110 section 5.3).
+func (t heldTable) hold(h http.Header) [][]string {
+	out := make([][]string, len(t))
+	for i, f := range t {
+		lines := h.Values(f.name)
+		if !hasText(lines) {
+			continue
+		}
+		out[i] = make([]string, len(lines))
+		for j, line := range lines {
+			out[i][j] = strings.Clone(line)
+		}
 	}
 	return out
 }
 
 // refreshed is the entry a not-modified answer leaves: each held field it carries
 // replaced (RFC 9111 section 4.3.4), the body and validators unchanged.
-func (p *pageEntry) refreshed(h http.Header) *pageEntry {
-	fresh := holdFields(h)
+func (p *pageEntry) refreshed(t heldTable, h http.Header) *pageEntry {
+	fresh := t.hold(h)
 	out := *p
-	for i, f := range heldFields {
+	out.Fields = slices.Clone(p.Fields)
+	for i, f := range t {
 		if len(h.Values(f.name)) > 0 {
 			out.Fields[i] = fresh[i]
 		}
@@ -106,11 +127,11 @@ func (p *pageEntry) refreshed(h http.Header) *pageEntry {
 
 // served is the header a served answer carries: the live 304's, and each held
 // field it omits.
-func (p *pageEntry) served(live http.Header) http.Header {
+func (p *pageEntry) served(t heldTable, live http.Header) http.Header {
 	out := live.Clone()
-	for i, f := range heldFields {
-		if len(out.Values(f.name)) == 0 && p.Fields[i] != "" {
-			out.Set(f.name, p.Fields[i])
+	for i, f := range t {
+		if len(out.Values(f.name)) == 0 && len(p.Fields[i]) > 0 {
+			out[f.name] = slices.Clone(p.Fields[i])
 		}
 	}
 	return out
@@ -120,10 +141,10 @@ func (p *pageEntry) served(live http.Header) http.Header {
 // must name the held representation: its ETag weakly equal to the held one (RFC
 // 9110 section 8.8.3.2), or none well-formed where none is held, and its
 // Last-Modified the held date (RFC 9111 section 4.3.4). It must also carry every
-// required [heldFields] value the entry holds.
-func (p *pageEntry) answers(h http.Header) bool {
-	for i, f := range heldFields {
-		if f.required && p.Fields[i] != "" && len(h.Values(f.name)) == 0 {
+// required held field the entry holds.
+func (p *pageEntry) answers(t heldTable, h http.Header) bool {
+	for i, f := range t {
+		if f.required && len(p.Fields[i]) > 0 && len(h.Values(f.name)) == 0 {
 			return false
 		}
 	}
@@ -143,32 +164,37 @@ func (p *pageEntry) answers(h http.Header) bool {
 	return err == nil && heldErr == nil && fresh.Equal(held)
 }
 
-// newReadCache builds a connection's cache, nil where its bound switches it off.
-func newReadCache(set *forgeapi.Settings) *readCache {
-	if set.ReadCacheBytes <= 0 {
+// newReadCache builds a cache holding at most maxBytes and the fields held names,
+// nil where maxBytes switches it off. freeNotMod says the product bills nothing for
+// a not-modified answer to an authorized conditional request, which [readCache.serve]
+// counts as saved.
+func newReadCache(maxBytes int64, held heldTable, freeNotMod bool) *readCache {
+	if maxBytes <= 0 {
 		return nil
 	}
-	return &readCache{index: map[string]*list.Element{}, order: list.New(), max: set.ReadCacheBytes}
+	return &readCache{
+		index: map[string]*list.Element{}, order: list.New(), max: maxBytes, held: held, freeNotMod: freeNotMod,
+	}
 }
 
-// key is one request's key. The credential is folded as its digest, never as
-// itself, and every header the request carries that varies the answer is folded
-// in: the credential, the validators and the constant User-Agent are not.
-// [wireGuard] holds the request that reaches the wire to the one keyed here.
-func (*readCache) key(token, shape, target string, header http.Header) string {
-	fields := make([]string, 0, 4+2*len(header))
-	fields = append(fields, digest([]byte(token)), http.MethodGet, target, shape)
-	names := make([]string, 0, len(header))
-	for name := range header {
-		switch http.CanonicalHeaderKey(name) {
-		case "Authorization", "If-None-Match", "If-Modified-Since", "User-Agent":
+// key is one GET's key: the credential (token) folded as its digest, never as
+// itself, the shape, and everything of r that reaches the wire but the validators
+// and the credential's own lines: its effective host, its URL and each header line
+// under the name it is sent by. [wireGuard] holds the request that reaches the wire
+// to the one keyed here.
+func (*readCache) key(token, shape string, r *http.Request) string {
+	fields := make([]string, 0, 5+2*len(r.Header))
+	fields = append(fields, digest([]byte(token)), http.MethodGet, effectiveHost(r), r.URL.String(), shape)
+	names := make([]string, 0, len(r.Header))
+	for name := range r.Header {
+		if isValidator(name) || http.CanonicalHeaderKey(name) == "Authorization" {
 			continue
 		}
 		names = append(names, name)
 	}
 	slices.Sort(names)
 	for _, name := range names {
-		fields = append(fields, http.CanonicalHeaderKey(name), strings.Join(header.Values(name), "\n"))
+		fields = append(fields, name, strings.Join(r.Header[name], "\n"))
 	}
 	return digest([]byte(lengthPrefixed(fields...)))
 }
@@ -211,6 +237,42 @@ func (rc *readCache) lookup(key string) *cacheEntry {
 	}
 	e, _ := el.Value.(*cacheEntry)
 	return e
+}
+
+// settle is the one outcome of an exchange, called once when it ends, whether it
+// succeeded (ok) or not: it keeps the entry the exchange vouched for and forgets the
+// key on every other outcome, a disowned resend's included, and counts an answered
+// read. It reports whether the held answer served the exchange. A nil cache settles
+// nothing.
+func (rc *readCache) settle(rv *revalidation, kept *pageEntry, ok bool) bool {
+	if rc == nil {
+		return false
+	}
+	if rv.disowned || !ok {
+		kept = nil
+	}
+	if rv.key != "" {
+		rc.finish(rv.key, rv.gen, kept)
+	}
+	if !rv.answered {
+		return false
+	}
+	hit := rv.verdict == verdictServe && ok
+	rc.tally(hit)
+	return hit
+}
+
+// conclude ends an exchange whose answer its owner has read: a context ended by
+// then fails the exchange, which keeps nothing whatever the verdict, and its error
+// is answered for the owner to report; [readCache.settle] then settles it. It
+// reports whether the held answer served the exchange. A nil cache settles nothing
+// and still answers the context's error.
+func (rc *readCache) conclude(ctx context.Context, rv *revalidation, kept *pageEntry, ok bool) (bool, error) {
+	err := ctx.Err()
+	if err != nil {
+		ok = false
+	}
+	return rc.settle(rv, kept, ok), err
 }
 
 // finish is the one change a cacheable exchange makes to the cache: it keeps the
@@ -297,12 +359,22 @@ func (rc *readCache) state() forgeapi.ReadCacheState {
 	}
 }
 
+// The sizes of the descriptors a held field's storage is made of.
+var (
+	linesSize  = int(reflect.TypeFor[[]string]().Size())
+	stringSize = int(reflect.TypeFor[string]().Size())
+)
+
 // pageCost is what a page entry is charged: its key, its body's backing array, its
-// validators and held fields, and the fixed overhead.
+// validators, its held fields' slots, line descriptors and bytes, and the fixed
+// overhead.
 func pageCost(key string, p *pageEntry) int64 {
-	n := len(key) + cap(p.Body) + len(p.ETag) + len(p.LastModified) + entryOverhead
-	for _, v := range p.Fields {
-		n += len(v)
+	n := len(key) + cap(p.Body) + len(p.ETag) + len(p.LastModified) + entryOverhead + cap(p.Fields)*linesSize
+	for _, lines := range p.Fields {
+		n += cap(lines) * stringSize
+		for _, line := range lines {
+			n += len(line)
+		}
 	}
 	return int64(n)
 }
