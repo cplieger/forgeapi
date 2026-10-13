@@ -36,6 +36,7 @@ func OpenEndpoint(conn *forgeapi.Connection, set *forgeapi.Settings, family forg
 	c.APIBaseURL = c.WebBaseURL
 	s := *set
 	s.Credential = endpointCredential{}
+	s.ReadCacheBytes = 0
 	return Open(&c, &s, Options{Family: family})
 }
 

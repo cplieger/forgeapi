@@ -26,51 +26,12 @@ type Header struct {
 }
 
 // ReservedHeaders returns the request header names a [Connection] may not set
-// through [Connection.Headers]: the ones something beneath the consumer already
-// writes, which is this library for its credential injection, its API-version pin
-// and the three it sends on every request, and Go's HTTP stack for the names it
-// controls itself; plus the two request validators, which this library never
-// writes, because every read it issues is unconditional, and which it refuses for
-// the reason the next paragraphs give.
-//
-// The set is DERIVED rather than curated, and the instrument is one bounded
-// observation: a request driven through this library's own transport to a test
-// server, whose ARRIVING header set is what this list is held to. It reads an
-// OUTPUT because the alternative, that no code anywhere in this module writes a
-// header, is an unbounded claim over the language and cannot be gated.
-//
-// Three of the names are not observable, for two different reasons. The
-// API-version pin belongs to one family's requests and is sent only to an instance
-// known to carry that version, so it becomes observable when that family lands.
-// The two request validators never become observable: conditional requests are a
-// transport LAYER this library does not build, so no read of its own carries one.
-// They are reserved anyway, because a validator a CONSUMER set would be answered
-// with a not-modified status, which this library maps as the unexpected status it
-// is rather than as an answer, so the header could only ever break the read it was
-// set on. Refusing it by name at connect time says so where an operator reads it,
-// and the refusal stays correct on the day the caching layer above exists, since
-// that layer would write the same two names itself.
-//
-// The stack's half is three plus two. Accept-Encoding, Content-Length and
-// User-Agent arrive as header-map entries, and the first of those is the one a
-// consumer could otherwise pass through and break every response with: the
-// transport writes it to negotiate compression and decodes the body
-// transparently, so a caller-set value turns that decoding off and hands the
-// decoder gzip bytes. Host and Transfer-Encoding never arrive as headers at all,
-// reaching a server through fields of its own request, so they are here for the
-// stated reason that a caller setting either would be silently IGNORED rather
-// than honoured, which is worse than a refusal. Connection is here on the same
-// ground and arrives on neither shape of request.
-//
-// Nothing on the set is a judgement about what a gateway may legitimately need.
-// Everything not on it passes through, which is the point of a denylist over an
-// allowlist here: a public library cannot foresee its users' gateways, and a
-// release per unforeseen header is the wrong trade.
-//
-// The names are in canonical MIME header case where that case is the
-// conventional one, and a connection's entry is compared against them
-// case-insensitively. Each call returns a fresh slice, so a caller may keep or
-// sort it.
+// through [Connection.Headers], because something beneath the consumer writes them:
+// this library (the credential, the API-version pin, Accept, Content-Type,
+// User-Agent and the read cache's two validators), or Go's HTTP stack, which a
+// caller-set Accept-Encoding, Connection, Content-Length, Host or Transfer-Encoding
+// would break or be ignored by. Every other name passes through. Names compare
+// case-insensitively, and each call returns a fresh slice.
 func ReservedHeaders() []string {
 	return []string{
 		"Accept",

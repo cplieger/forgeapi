@@ -36,16 +36,18 @@ func (testCredential) Kind() forgeapi.CredKind               { return forgeapi.C
 func (testCredential) State() forgeapi.CredState             { return forgeapi.CredValid }
 
 // instance is one test's stand-in for a Gitea-family instance: the requests that
-// arrived, the credential each carried, and the bodies of the mutations.
+// arrived, the credential each carried, the requests that carried a validator, and
+// the bodies of the mutations.
 type instance struct {
-	server   *httptest.Server
-	headers  http.Header
-	bodies   map[string]string
-	queries  map[string]url.Values
-	routes   map[string]string
-	requests []string
-	tokens   []string
-	mu       sync.Mutex
+	server      *httptest.Server
+	headers     http.Header
+	bodies      map[string]string
+	queries     map[string]url.Values
+	routes      map[string]string
+	requests    []string
+	tokens      []string
+	conditional []string
+	mu          sync.Mutex
 }
 
 // newInstance is an instance with nothing recorded and no answer header set.
@@ -105,6 +107,13 @@ func (in *instance) answerHeader(name, value string) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	in.headers.Set(name, value)
+}
+
+// revalidated is every request that carried a validator, as method and escaped path.
+func (in *instance) revalidated() []string {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return append([]string(nil), in.conditional...)
 }
 
 // count is how many requests arrived, which is what a published price is measured
@@ -218,6 +227,9 @@ func newClockedHarness(t *testing.T, clock func() time.Time, routes map[string]s
 		in.mu.Lock()
 		in.requests = append(in.requests, key)
 		in.tokens = append(in.tokens, r.Header.Get("Authorization"))
+		if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
+			in.conditional = append(in.conditional, key)
+		}
 		in.queries[key] = r.URL.Query()
 		if body != "" {
 			in.bodies[key] = body

@@ -146,10 +146,11 @@ type PullRequest struct { //nolint:govet // fieldalignment: field order is the r
 	// SourceRepo is the repository SourceBranch lives in: Repo for a pull
 	// request opened inside its repository, the fork for one opened from a
 	// fork. It is the zero RepoRef where the answer names no head repository
-	// the credential can read: a deleted fork on every family, a fork the
-	// credential cannot see and, where a product's table says so, a route whose
-	// answer does not carry it; a consumer joining a local clone matches it
-	// beside Repo.
+	// the credential can read (a deleted fork on every family, a fork the
+	// credential cannot see, a route whose answer does not carry it where a
+	// product's table says so) and where [PullRequest.Partial] marks GitLab's
+	// fork lookup undone. A consumer joining a local clone matches it beside
+	// Repo.
 	SourceRepo RepoRef
 	// TargetBranch is the branch it merges into.
 	TargetBranch string
@@ -168,18 +169,14 @@ type PullRequest struct { //nolint:govet // fieldalignment: field order is the r
 	// Action is everything its own controls need, and it rides the item
 	// because every field in it is a property of this pull request.
 	Action ActionState
-	// Partial is non-nil when something this pull request needed stopped short, and
-	// nil on every complete row. It carries [PartialPaginationCap] where the check
-	// fold or, on GitLab, the labels stopped short (that member names each path), and
-	// beside it [ActionState.Checks] stays exact where the product counted the whole
-	// collection, only the check names short, and is [CheckUnknown] where it did not;
-	// [PartialBudget] where the per-interval folded-status cap left the fold unissued;
-	// [PartialRateLimited] where a read the row needed was deferred or throttled, the
-	// Gitea family's folded status or GitLab's fork lookup, [PullRequest.SourceRepo]
-	// then the zero reference on GitLab;
-	// [PartialLabelsNotApplied] on a creation's pull request where its labels were not
-	// applied; [PartialForbidden] where the credential may not read the checks, then
-	// [CheckUnknown] with no count; and on a single read [PartialGraphQLPartial].
+	// Partial is nil on a complete row, else what stopped short:
+	// [PartialPaginationCap], the check fold or GitLab's labels, with
+	// [ActionState.Checks] exact where the product counted them all, else
+	// [CheckUnknown]; [PartialBudget], a read the per-interval cap or the
+	// operation's bound left undone; [PartialRateLimited], one deferred or
+	// throttled (the Gitea fold, GitLab's fork lookup); [PartialForbidden],
+	// unreadable checks, [CheckUnknown] with no count; [PartialLabelsNotApplied],
+	// a creation's labels; [PartialGraphQLPartial], a single read.
 	Partial *Partial
 	// State is open, closed or merged.
 	State PRState

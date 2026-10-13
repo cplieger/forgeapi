@@ -205,25 +205,28 @@ func (c *Client) cachedGrant() *forgeapi.GrantCaps {
 	return c.grant
 }
 
-// readUser is the identity read two operations share: the account body and the scopes
-// its response header carries.
-//
-// The scopes are a HEADER on this product rather than a body field, which was measured
-// on a classic credential, so a grant capability here rests on evidence rather than on
-// inference. The account body's own email is the PUBLIC profile one and is null where
-// the profile carries none.
+// readUser is the identity read two operations share: the account body, whose email
+// is the PUBLIC profile one and null where the profile carries none, and the scopes,
+// which this product sends in a response HEADER (measured on a classic credential).
+// It names no [transport.Request.Into], so it is never revalidated: this product's
+// 304 omits that header (measured), and the cache holds no scopes to serve.
 func (c *Client) readUser(ctx context.Context, op string) (restUser, []string, error) {
-	var user restUser
-	resp, err := c.readJSON(ctx, op, "/user", nil, &user)
+	resp, err := c.core.Do(ctx, &transport.Request{
+		Op: op, Method: http.MethodGet, Path: "/user", Page: 1, Headers: c.restHeaders(),
+	})
+	c.noteResponse(resp)
 	if err != nil {
 		return restUser{}, nil, err
+	}
+	var user restUser
+	if err := transport.Decode(resp.Body, &user); err != nil {
+		return restUser{}, nil, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
 	}
 	return user, scopesOf(resp.Header), nil
 }
 
-// scopesOf reads the credential's own scopes off the response header that carries
-// them, which is a comma-separated list this product writes on every authenticated
-// response.
+// scopesOf reads the comma-separated scope list from an authenticated identity
+// response's X-OAuth-Scopes header.
 func scopesOf(header http.Header) []string {
 	raw := strings.TrimSpace(header.Get("X-OAuth-Scopes"))
 	if raw == "" {
@@ -238,22 +241,14 @@ func scopesOf(header http.Header) []string {
 	return out
 }
 
-// RepoAffordances implements [forgeapi.Capabilities].
-//
-// The repository's own authenticated record is what fills these values wherever it
-// answers, which is the second-cheapest evidence source and the one that needs no
-// probe. It is read on every call rather than held, because a repository cache would
-// be a fourth kind of per-connection state and the closed list has three.
-//
-// The measurement found that it answers [forgeapi.RepoAffordances.MergeTrain] nowhere:
-// a merge queue is a ruleset property on this product, so the record carries no field
-// for it on either route, and the only read that would answer costs one request per
-// ruleset on top. Until the budget prices that, this value is
-// [forgeapi.SupportUnknown] with default evidence. The same measurement found the
-// listing row carries none of the merge-strategy flags either, so a repository reached
-// through a listing has an empty
-// [forgeapi.RepoAffordances.MergeStrategies] with its evidence saying why, and a
-// caller that needs the strategies pays this read.
+// RepoAffordances implements [forgeapi.Capabilities] from the repository's own
+// record, read on every call and revalidated while the read cache is on, so an
+// unchanged record's not-modified answer bills nothing when the request carries an
+// Authorization header. A merge queue is a ruleset property here, which the record
+// carries on neither route and which costs a request per ruleset to read, so
+// [forgeapi.RepoAffordances.MergeTrain] is [forgeapi.SupportUnknown] with default
+// evidence. A listing row carries no merge-strategy flags (measured), so a caller
+// that needs [forgeapi.RepoAffordances.MergeStrategies] pays this read.
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error) {
 	const op = "RepoAffordances"
 	ctx = transport.Call(ctx, op)

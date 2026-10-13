@@ -8,16 +8,16 @@ This page lists the instances the library's per-product behaviour was measured o
 | --- | --- | --- | --- | --- |
 | GitHub | github.com | REST API version `2026-03-10`, the version the library pins | `2026-03-10` and `2022-11-28` offered, `2026-03-10` selected for a request that asks for it | [`/versions`](https://api.github.com/versions) |
 | GitLab | gitlab.com | `19.5.0-pre`, over REST v4 and the GraphQL endpoint | `19.5.0-pre` | `/api/v4/metadata` on gitlab.com, which refuses an anonymous caller, so it has no link |
-| Gitea | gitea.com | `1.27.0+dev-954-g1f3981a301`, and `1.27.0+dev-955-g37488799e1` for the owner scope and the cross-repository issue list | `1.27.0+dev-1118-ge629c4fdc2`, a newer build | [`/api/v1/version`](https://gitea.com/api/v1/version) |
+| Gitea | gitea.com | `1.27.0+dev-954-g1f3981a301`, `1.27.0+dev-955-g37488799e1` for the owner scope and the cross-repository issue list, and a `29.0.0+dev` build, on 2026-10-11, for the conditional reads | `1.27.0+dev-1118-ge629c4fdc2`, newer than the two `1.27.0` builds | [`/api/v1/version`](https://gitea.com/api/v1/version) |
 | Gitea | a local instance | `28.0.0`, for the run listing, which gitea.com refuses an anonymous caller, and for what the writes answer | Not checked, a pinned image | [`live.yaml`](../.github/workflows/live.yaml) |
-| Forgejo | codeberg.org | `16.0.0-dev-753-6bcc6da0+gitea-1.22.0`, whose `+gitea-` marker is what separates this product from Gitea | The same build | [`/api/v1/version`](https://codeberg.org/api/v1/version) |
+| Forgejo | codeberg.org | `16.0.0-dev-753-6bcc6da0+gitea-1.22.0`, whose `+gitea-` marker is what separates this product from Gitea, and a `16.0.0-dev` build, on 2026-10-11, for the conditional reads | `16.0.0-dev-753-6bcc6da0+gitea-1.22.0`, the first build named | [`/api/v1/version`](https://codeberg.org/api/v1/version) |
 | Forgejo | local instances | `16.0.5+gitea-1.22.0` and `15.0.9+gitea-1.22.0`, for how the run listing pages and for what the writes answer | Not checked, pinned images | [`live.yaml`](../.github/workflows/live.yaml) |
 
 github.com echoes the selected REST API version back as `X-Github-Api-Version-Selected` on every REST response. A GraphQL response carries no API version header.
 
 The hosted instances update on their own schedule, so they can report a newer version than the one checked here. The local instances are the images [`live.yaml`](../.github/workflows/live.yaml) pins.
 
-This table is the one place a version appears. The per-product facts in the godoc and in SUPPORT.md name no version, so a product's new release changes this table and no other line.
+This table is the one place a measured build appears. The per-product facts in the godoc and in SUPPORT.md name none. A source link there names the release tag whose code it quotes, so a link stays true when the product ships a new release, and a new measurement changes this table and no other line.
 
 ## The weekly live run
 

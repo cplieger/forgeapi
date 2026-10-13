@@ -53,7 +53,7 @@ type Repos interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   GET /user/repos; under an owner scope the RepoOwned document, repositoryOwner(login: {owner}) with ownerAffiliations [OWNER], which resolves a user and an organization alike, 1 request per page
+	//	GitHub   GET /user/repos; under an owner scope the RepoOwned document, repositoryOwner(login: {owner}) with ownerAffiliations [OWNER], which resolves a user and an organization alike, 0 to 1 request per page
 	//	GitLab   GET /api/v4/projects; under an owner scope GET /api/v4/groups/{owner}/projects with include_subgroups=true and with_shared=false, and where that answers 404 for a one-segment owner, GET /api/v4/users/{owner}/projects, the user's personal namespace, on the first page alone, since the continuation names the route; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page, the group or the user it names read with no fallback, 1 to 2 requests per page
 	//	Gitea    GET /api/v1/user/repos; under an owner scope GET /api/v1/users/{owner}/repos, which resolves a user and an organization alike and pages before it drops the rows the caller has no unit access to, so its walk continues while the pages read cover fewer rows than X-Total-Count, 1 request per page
 	//	Forgejo  GET /api/v1/user/repos; under an owner scope GET /api/v1/users/{owner}/repos, which resolves a user and an organization alike and pages before it drops the rows the caller has no unit access to, so its walk continues while the pages read cover fewer rows than X-Total-Count, 1 request per page
@@ -279,7 +279,7 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address, 1 to 3 requests
+	//	GitHub   the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address, 0 to 3 requests
 	//	GitLab   the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused, 1 request; needs read_merge_state
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 2 to 4 requests
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 2 to 4 requests
@@ -621,7 +621,7 @@ type Merges interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRRead document, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, then one read against the id-addressed location to resolve the successor where that record answered from another address, 1 to 3 requests
+	//	GitHub   the PRRead document, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, then one read against the id-addressed location to resolve the successor where that record answered from another address, 0 to 3 requests
 	//	GitLab   the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused, 1 request; needs read_merge_state
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{number}, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{number}, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests
@@ -660,7 +660,7 @@ type Checks interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the CommitRollup document, the one source on this product that tells a commit with no CI from a commit whose checks all passed, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers, 1 to 5 requests
+	//	GitHub   the CommitRollup document, the one source on this product that tells a commit with no CI from a commit whose checks all passed, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers, 0 to 5 requests
 	//	GitLab   GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, 1 to 3 requests
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 4 requests
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 4 requests
@@ -684,7 +684,7 @@ type Checks interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address; a run whose conclusion is action_required, a fork's run waiting for a maintainer's approval with no job run, reads pending, the verdict the Gitea family gives the same wait; under a since bound, a page that reaches the 1,000-run window the route serves a created-filtered listing through, or ends short of its total with no next relation, holds back the runs of the oldest second it served, and the next page asks created=<bound>..<that second> from page 1, the inclusive range the route's created filter takes from the search syntax (https://docs.github.com/en/search-github/getting-started-with-searching-on-github/understanding-the-search-syntax#query-for-dates); where an earlier page of the range served that second, the range already ends at that second, or a page's runs of its oldest second are more than a continuation names, the next page asks created=<that second>..<that second> instead (measured: it answers that second's runs alone), drops by id the runs of it the walk answered, and the walk then goes on with created=<bound>..<the second before>, so each range a walk crosses into reads the runs of one second twice and pays once more for the pages they fill, 1 to 3 requests per page
+	//	GitHub   GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address; a run whose conclusion is action_required, a fork's run waiting for a maintainer's approval with no job run, reads pending, the verdict the Gitea family gives the same wait; under a since bound, a page that reaches the 1,000-run window the route serves a created-filtered listing through, or ends short of its total with no next relation, holds back the runs of the oldest second it served, and the next page asks created=<bound>..<that second> from page 1, the inclusive range the route's created filter takes from the search syntax (https://docs.github.com/en/search-github/getting-started-with-searching-on-github/understanding-the-search-syntax#query-for-dates); where an earlier page of the range served that second, the range already ends at that second, or a page's runs of its oldest second are more than a continuation names, the next page asks created=<that second>..<that second> instead (measured: it answers that second's runs alone), drops by id the runs of it the walk answered, and the walk then goes on with created=<bound>..<the second before>, so each range a walk crosses into reads the runs of one second twice and pays once more for the pages they fill, 0 to 3 requests per page
 	//	GitLab   GET /api/v4/projects/{id}/pipelines, the route the re-run resolves its pipeline on, with the page bound as its page size and no head filter, 1 request per page
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor; under a since bound no time filter, the route declaring none, so each page's rows created before the bound's second are dropped; the route answers runs by id descending, or from v28 by repository index descending, co-monotonic with id (models/actions/run_list.go, FindRunOptions.ToOrders), and stamps a run's creation once, at insert (models/actions/run.go, its Created field), so a page whose every run was created more than a minute before the bound, the step a host clock can take back between two inserts, ends the walk with no continuation, 1 to 2 requests per page
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/actions/runs, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, since the route sends no paging header and an instance whose maximum was lowered after the connection read it still serves a page of its own maximum, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor; under a since bound no time filter, the route declaring none, so each page's rows created before the bound's second are dropped; the route answers runs by id descending (models/actions/run_list.go, FindRunOptions.ToOrders) and stamps a run's creation once, at insert (models/actions/run.go, its Created field), so a page whose every run was created more than a minute before the bound, the step a host clock can take back between two inserts, ends the walk with no continuation, 1 to 2 requests per page
@@ -735,7 +735,7 @@ type Issues interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   GET /repos/{owner}/{repo}/issues, whose population is issues and pull requests both, so a row carrying a pull-request key is dropped, then one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 3 requests per page
+	//	GitHub   GET /repos/{owner}/{repo}/issues, whose population is issues and pull requests both, so a row carrying a pull-request key is dropped, then one read against the id-addressed location to resolve the successor where it answered from another address, 0 to 3 requests per page
 	//	GitLab   GET /api/v4/projects/{id}/issues, 1 request per page
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/issues, filtered to issues, because this route's population is issues and pull requests both, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/issues, filtered to issues, because this route's population is issues and pull requests both, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page
@@ -898,7 +898,7 @@ type Capabilities interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   GET /repos/{owner}/{repo}, then one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 3 requests
+	//	GitHub   GET /repos/{owner}/{repo}, then one read against the id-addressed location to resolve the successor where it answered from another address, 0 to 3 requests
 	//	GitLab   GET /api/v4/projects/{id}, 1 request
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 1 to 2 requests
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 1 to 2 requests
@@ -974,7 +974,7 @@ type Releases interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   GET /repos/{owner}/{repo}/releases, then one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 3 requests per page
+	//	GitHub   GET /repos/{owner}/{repo}/releases, then one read against the id-addressed location to resolve the successor where it answered from another address, 0 to 3 requests per page
 	//	GitLab   GET /api/v4/projects/{id}/releases, 1 request per page
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/releases, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/releases, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page
@@ -1012,7 +1012,7 @@ type Labels interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   GET /repos/{owner}/{repo}/labels, then one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 3 requests per page
+	//	GitHub   GET /repos/{owner}/{repo}/labels, then one read against the id-addressed location to resolve the successor where it answered from another address, 0 to 3 requests per page
 	//	GitLab   GET /api/v4/projects/{id}/labels, 1 request per page
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page

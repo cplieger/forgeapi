@@ -78,18 +78,22 @@ func TestTheRecordDescribesTheStatusTheInstanceAnswered(t *testing.T) {
 		cache  string
 	}{
 		{name: "an_answer", status: http.StatusOK, level: "DEBUG", cache: "miss"},
-		{name: "a_not_modified_answer", status: http.StatusNotModified, level: "DEBUG", cache: "not_modified"},
+		{name: "a_not_modified_answer_nothing_asked_for", status: http.StatusNotModified, level: "DEBUG", cache: "miss"},
 		{name: "the_first_client_error", status: http.StatusBadRequest, level: "WARN", cache: "miss"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(test.status)
+				if test.status == http.StatusOK {
+					_, _ = io.WriteString(w, `{}`)
+				}
 			}))
 			defer srv.Close()
 			var buf bytes.Buffer
 			c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL}, forgeapi.WithLogger(recordingLogger(&buf)))
-			_, _ = c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"})
+			var into map[string]any
+			_, _ = c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user", Into: &into})
 			line := onlyRecord(t, &buf)
 			if got := line["level"]; got != test.level {
 				t.Errorf("the record of a %d = level %v, want %s", test.status, got, test.level)

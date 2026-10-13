@@ -1,6 +1,7 @@
 package gitea
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -928,6 +929,78 @@ func TestAThrottledFoldMarksTheRowsItCouldNotFold(t *testing.T) {
 	if folds != 1 {
 		t.Errorf("the list issued %d fold(s) after the throttle, want 1: a throttle ends the work for that instance rather than being asked again per row", folds)
 	}
+}
+
+// TestAFoldTheOperationsBoundEndsMarksTheRowsItLeftUnread holds the other stop a
+// fold absorbs. Every fold of a list runs inside the one bound its operation
+// started, so a list whose folds outlast it returns its rows: the row folded in time
+// keeps its verdict, and the rest carry the budget reason, which names a
+// per-operation bound stopping the work. The caller's own deadline is not that
+// bound, and still fails the call.
+func TestAFoldTheOperationsBoundEndsMarksTheRowsItLeftUnread(t *testing.T) {
+	// stalledFolds answers the first fold at once and holds every later one until
+	// its request ends.
+	stalledFolds := func(t *testing.T) *instance {
+		t.Helper()
+		rows := "[" + strings.Join([]string{pullRow(1), pullRow(2), pullRow(3)}, ",") + "]"
+		in := newInstance()
+		folds := 0
+		in.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := r.Method + " " + r.URL.EscapedPath()
+			in.mu.Lock()
+			in.requests = append(in.requests, key)
+			if key == statusPath {
+				folds++
+			}
+			stall := key == statusPath && folds > 1
+			in.mu.Unlock()
+			if stall {
+				<-r.Context().Done()
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			answer := rows
+			if key == statusPath {
+				answer = statusOK
+			}
+			if _, err := w.Write([]byte(answer)); err != nil {
+				t.Errorf("Setup: writing the answer: %v", err)
+			}
+		}))
+		t.Cleanup(in.server.Close)
+		return in
+	}
+
+	t.Run("the_operations_bound", func(t *testing.T) {
+		h := newHarnessOver(t, stalledFolds(t), time.Now, forgeapi.WithOperationTimeout(time.Second))
+		page, err := h.client.ListPRs(t.Context(), testRef())
+		if err != nil {
+			t.Fatalf("ListPRs whose second fold outlasts the operation's bound = %v, want the rows with the unread ones marked", err)
+		}
+		if len(page.Items) != 3 {
+			t.Fatalf("ListPRs returned %d row(s), want 3", len(page.Items))
+		}
+		if got := page.Items[0]; got.Partial != nil || got.Action.Checks != forgeapi.CheckPassing {
+			t.Errorf("row 0 = verdict %v partial %v, want the passing verdict its fold answered in time", got.Action.Checks, got.Partial)
+		}
+		for i, row := range page.Items[1:] {
+			if row.Partial == nil || row.Partial.Reason != forgeapi.PartialBudget {
+				t.Errorf("row %d = partial %v, want the budget reason: the operation's bound ended its fold", i+1, row.Partial)
+			}
+			if row.Action.Checks != forgeapi.CheckUnknown {
+				t.Errorf("row %d = verdict %v, want %v", i+1, row.Action.Checks, forgeapi.CheckUnknown)
+			}
+		}
+	})
+
+	t.Run("the_callers_deadline", func(t *testing.T) {
+		h := newHarnessOver(t, stalledFolds(t), time.Now)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		if _, err := h.client.ListPRs(ctx, testRef()); !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("ListPRs whose caller's context ends during a fold = %v, want context.DeadlineExceeded", err)
+		}
+	})
 }
 
 // TestTheFoldIsComputedOverTheRowsRatherThanTakenFromTheEndpoint holds the one

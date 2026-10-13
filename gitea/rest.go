@@ -74,19 +74,8 @@ func (c *Client) unpagedList[T any](here forgeapi.Cursor) (forgeapi.Page[T], boo
 }
 
 // readJSON performs one GET and decodes it, which is the shape of every read this
-// family makes.
-//
-// The read is UNCONDITIONAL, as every read this library issues is, and that is a
-// consequence of two things settled rather than an omission. A validator only pays
-// where the sender can answer a not-modified response from something it holds, and
-// this client holds no response body: a decoded list kept per connection would be
-// the repository cache the boundary rules out. Nor can the answer be handed on: the
-// published return is the value itself, with no member that says "unchanged", so a
-// not-modified answer has nowhere to go but into a zero-valued one that silently
-// replaces whatever the caller had. Conditional requests are therefore a transport
-// LAYER this library does not build, so nothing here sends a validator and a
-// not-modified answer arriving anyway is the unexpected status the core maps, which
-// reaches this function as the error below.
+// family makes. [transport.Conn.Do] states when the read cache revalidates the read;
+// neither product sends a validator on its JSON routes: spec.Revalidations.
 func (c *Client) readJSON(ctx context.Context, op, path string, query url.Values, out any) error {
 	_, err := c.get(ctx, op, path, query, 0, out)
 	return err
@@ -98,14 +87,9 @@ func (c *Client) readJSON(ctx context.Context, op, path string, query url.Values
 func (c *Client) get(ctx context.Context, op, path string, query url.Values, ownerStatus int, out any) (*transport.Response, error) {
 	resp, err := c.core.Do(ctx, &transport.Request{
 		Op: op, Method: http.MethodGet, Path: path, Query: query, Page: pageIn(query), OwnerStatus: ownerStatus,
+		Into: out,
 	})
-	if err != nil {
-		return resp, err
-	}
-	if err := transport.Decode(resp.Body, out); err != nil {
-		return resp, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
-	}
-	return resp, nil
+	return resp, err
 }
 
 // pageIn is the page a read asks for, so the per-request record carries it. It reads

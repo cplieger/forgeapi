@@ -61,28 +61,22 @@ const (
 	NotMeasured       Kind = "not measured"
 )
 
-// Requests is one call's price, in requests the library sends, failed attempts
-// included, because a refused request spends the user's quota as an answered one
-// does.
-//
-// Min and Max are equal where this table states one figure and differ where it
-// states a range; a range's arms are a degradation path or a fold's pages rather
-// than an estimate. PerItem counts the further requests each row of the answer
-// costs, which is zero everywhere except the Gitea family's lists, whose rows
-// carry no check state and whose folded status is therefore one read per row.
-// PerItemCeiling counts the further requests a row may cost beyond that, at most,
-// which is zero everywhere except GitLab's cross-repository list, whose rows name a
-// fork by id alone and cost one project lookup per distinct fork, so its page runs
-// from no lookup to one a row.
-// Paged says the figure is per page of a continued list rather than per call, so
-// what a whole list costs is this figure times the pages the caller takes, capped
-// by Budget.ListPages.
+// Requests is one call's price in requests the instance bills: every request sent,
+// failed attempts included, less a not-modified answer a product prices at zero in
+// Revalidations. Min and Max are equal for one figure and differ for a range, whose
+// arms are a degradation path or a fold's pages rather than an estimate.
 type Requests struct {
-	Min            int
-	Max            int
-	PerItem        int
+	Min int
+	Max int
+	// PerItem counts the further requests each row costs: the Gitea family's
+	// folded status, one read per row.
+	PerItem int
+	// PerItemCeiling counts the further requests a row may cost beyond PerItem:
+	// GitLab's fork lookup on its cross-repository list, one per distinct fork.
 	PerItemCeiling int
-	Paged          bool
+	// Paged says the figure is per page of a continued list, capped by
+	// Budget.ListPages.
+	Paged bool
 }
 
 // Departure is one field a product does not deliver as the contract states.
@@ -198,7 +192,7 @@ var Fields = map[string]int{
 	"Capabilities.ConnectionCaps":    4,
 	"Capabilities.GrantCaps":         2,
 	"Capabilities.RepoAffordances":   6,
-	"Governor.BudgetState":           4,
+	"Governor.BudgetState":           5,
 	"Releases.ListReleases":          10,
 	"Releases.CreateRelease":         7,
 	"Labels.ListLabels":              6,
@@ -266,7 +260,7 @@ var Table = []Entry{
 		Method:    "Repos.ListRepos",
 		Product:   GitHub,
 		Exercises: "GET /user/repos; under an owner scope the RepoOwned document, repositoryOwner(login: {owner}) with ownerAffiliations [OWNER], which resolves a user and an organization alike",
-		Requests:  Requests{Min: 1, Max: 1, Paged: true},
+		Requests:  Requests{Min: 0, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -735,7 +729,7 @@ var Table = []Entry{
 		Method:    "PullRequests.ReadPR",
 		Product:   GitHub,
 		Exercises: "the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address",
-		Requests:  Requests{Min: 1, Max: 3},
+		Requests:  Requests{Min: 0, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1626,7 +1620,7 @@ var Table = []Entry{
 		Method:    "Merges.MergeStatus",
 		Product:   GitHub,
 		Exercises: "the PRRead document, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, then one read against the id-addressed location to resolve the successor where that record answered from another address",
-		Requests:  Requests{Min: 1, Max: 3},
+		Requests:  Requests{Min: 0, Max: 3},
 		Support:   Supported,
 	},
 	{
@@ -1686,7 +1680,7 @@ var Table = []Entry{
 		Method:    "Checks.CommitStatus",
 		Product:   GitHub,
 		Exercises: "the CommitRollup document, the one source on this product that tells a commit with no CI from a commit whose checks all passed, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers",
-		Requests:  Requests{Min: 1, Max: 5},
+		Requests:  Requests{Min: 0, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1728,7 +1722,7 @@ var Table = []Entry{
 		Method:    "Checks.ListRuns",
 		Product:   GitHub,
 		Exercises: "GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address; a run whose conclusion is action_required, a fork's run waiting for a maintainer's approval with no job run, reads pending, the verdict the Gitea family gives the same wait; under a since bound, a page that reaches the 1,000-run window the route serves a created-filtered listing through, or ends short of its total with no next relation, holds back the runs of the oldest second it served, and the next page asks created=<bound>..<that second> from page 1, the inclusive range the route's created filter takes from the search syntax (https://docs.github.com/en/search-github/getting-started-with-searching-on-github/understanding-the-search-syntax#query-for-dates); where an earlier page of the range served that second, the range already ends at that second, or a page's runs of its oldest second are more than a continuation names, the next page asks created=<that second>..<that second> instead (measured: it answers that second's runs alone), drops by id the runs of it the walk answered, and the walk then goes on with created=<bound>..<the second before>, so each range a walk crosses into reads the runs of one second twice and pays once more for the pages they fill",
-		Requests:  Requests{Min: 1, Max: 3, Paged: true},
+		Requests:  Requests{Min: 0, Max: 3, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1886,7 +1880,7 @@ var Table = []Entry{
 		Method:    "Issues.ListIssues",
 		Product:   GitHub,
 		Exercises: "GET /repos/{owner}/{repo}/issues, whose population is issues and pull requests both, so a row carrying a pull-request key is dropped, then one read against the id-addressed location to resolve the successor where it answered from another address",
-		Requests:  Requests{Min: 1, Max: 3, Paged: true},
+		Requests:  Requests{Min: 0, Max: 3, Paged: true},
 		Support:   Supported,
 	},
 	{
@@ -2269,7 +2263,7 @@ var Table = []Entry{
 		Method:    "Capabilities.RepoAffordances",
 		Product:   GitHub,
 		Exercises: "GET /repos/{owner}/{repo}, then one read against the id-addressed location to resolve the successor where it answered from another address",
-		Requests:  Requests{Min: 1, Max: 3},
+		Requests:  Requests{Min: 0, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -2417,7 +2411,7 @@ var Table = []Entry{
 		Method:    "Releases.ListReleases",
 		Product:   GitHub,
 		Exercises: "GET /repos/{owner}/{repo}/releases, then one read against the id-addressed location to resolve the successor where it answered from another address",
-		Requests:  Requests{Min: 1, Max: 3, Paged: true},
+		Requests:  Requests{Min: 0, Max: 3, Paged: true},
 		Support:   Supported,
 	},
 	{
@@ -2512,7 +2506,7 @@ var Table = []Entry{
 		Method:    "Labels.ListLabels",
 		Product:   GitHub,
 		Exercises: "GET /repos/{owner}/{repo}/labels, then one read against the id-addressed location to resolve the successor where it answered from another address",
-		Requests:  Requests{Min: 1, Max: 3, Paged: true},
+		Requests:  Requests{Min: 0, Max: 3, Paged: true},
 		Support:   Supported,
 	},
 	{
@@ -2587,4 +2581,53 @@ var Throttles = []Throttle{
 		Says: "a rate limit with no budget left in the window",
 	},
 	{Product: Forgejo, Status: 429, Says: "a rate limit"},
+}
+
+// Revalidation is what one product does with a conditional read of a REST route:
+// the validators it sends, what a not-modified answer bills, and whether a
+// document read can be revalidated. NotModifiedPrice is in the product's own
+// units. Says carries the citation.
+type Revalidation struct {
+	Product          Product
+	Validators       string
+	Documents        string
+	Says             string
+	NotModifiedPrice int
+}
+
+// Revalidations is every product's conditional-read facts, which the read cache
+// and the published prices follow.
+var Revalidations = []Revalidation{
+	{
+		Product:    GitHub,
+		Validators: "`ETag` on most REST routes, weak on the lists measured, and `Last-Modified` on many ([best practices](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate))",
+		Documents:  "not revalidated: a document is a POST ([forming calls](https://docs.github.com/en/graphql/guides/forming-calls-with-graphql#communicating-with-graphql)), and conditional requests for unsafe methods are unsupported (best practices)",
+		Says: "a not-modified answer to a conditional request made with an `Authorization` header does not count against the primary rate limit " +
+			"([best practices](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate)); " +
+			"measured with an authorized request, the answer carries `ETag`, `Vary`, `Cache-Control` and the `x-ratelimit-*` headers but no `Link` and no `X-OAuth-Scopes`, and two answers with one body and different `Link` headers carried one `ETag`, which therefore covers the body alone: " +
+			"a revalidated page of a list whose body states no total continues wherever it is full, and the identity read, whose scopes ride that header, is never revalidated",
+		NotModifiedPrice: 0,
+	},
+	{
+		Product:    GitLab,
+		Validators: "a weak `ETag` on every REST read answered 200 with a body that sets no validator of its own, computed by Rack's ETag middleware over the body ([rack/etag.rb](https://github.com/rack/rack/blob/v2.2.23/lib/rack/etag.rb#L26-L63)), and no `Last-Modified` on the routes measured",
+		Documents:  "not revalidated: a document is a POST; the ETag polling GitLab documents serves its own frontend routes ([polling](https://docs.gitlab.com/ee/development/polling.html))",
+		Says: "a not-modified answer is billed like any request ([rate limits](https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/)); " +
+			"measured with an authenticated request, `ratelimit-observed` rose across a 304 that carried `link`, `x-next-page`, `x-total` and `x-total-pages` as the 200 did, so revalidation saves the body's transfer, not the request",
+		NotModifiedPrice: 1,
+	},
+	{
+		Product:          Gitea,
+		Validators:       "none on the JSON API: its writer sets only `Content-Type` ([services/context/base.go](https://github.com/go-gitea/gitea/blob/v28.1.0/services/context/base.go#L114-L120)); the raw, media and archive download routes send them ([routers/common/serve.go](https://github.com/go-gitea/gitea/blob/v28.1.0/routers/common/serve.go#L20-L21), [routers/api/v1/repo/file.go](https://github.com/go-gitea/gitea/blob/v28.1.0/routers/api/v1/repo/file.go#L141), [services/repository/archiver/archiver.go](https://github.com/go-gitea/gitea/blob/v28.1.0/services/repository/archiver/archiver.go#L355-L408)), and this library reads none of them; measured on gitea.com",
+		Documents:        "no GraphQL API: the API is the REST surface its swagger describes ([API usage](https://docs.gitea.com/development/api-usage)), mounted at `/api/v1` with no GraphQL route beside it ([routers/init.go](https://github.com/go-gitea/gitea/blob/v28.1.0/routers/init.go#L183-L185))",
+		Says:             "no validator rides a JSON answer, so no read is revalidated, no not-modified answer arises, and the cache stays inert; the price of 1 is this library's own for a product whose API documentation states no exemption ([API usage](https://docs.gitea.com/development/api-usage)), and the product sends no budget signal (measured)",
+		NotModifiedPrice: 1,
+	},
+	{
+		Product:          Forgejo,
+		Validators:       "none on the JSON API: its writer sets only `Content-Type` ([services/context/base.go](https://codeberg.org/forgejo/forgejo/src/tag/v16.0.5/services/context/base.go#L137-L148)); the raw, media and archive download routes send them ([routers/common/serve.go](https://codeberg.org/forgejo/forgejo/src/tag/v16.0.5/routers/common/serve.go#L18-L19), [routers/api/v1/repo/file.go](https://codeberg.org/forgejo/forgejo/src/tag/v16.0.5/routers/api/v1/repo/file.go#L147) and [#L371-L374](https://codeberg.org/forgejo/forgejo/src/tag/v16.0.5/routers/api/v1/repo/file.go#L371-L374)), and this library reads none of them; measured on codeberg.org",
+		Documents:        "no GraphQL API: the API is the REST surface its swagger describes ([API usage](https://forgejo.org/docs/latest/user/api-usage/)), mounted at `/api/v1` and `/api/forgejo/v1`, both REST ([routers/init.go](https://codeberg.org/forgejo/forgejo/src/tag/v16.0.5/routers/init.go#L180-L181))",
+		Says:             "no validator rides a JSON answer, so no read is revalidated, no not-modified answer arises, and the cache stays inert; the price of 1 is this library's own for a product whose API documentation states no exemption ([API usage](https://forgejo.org/docs/latest/user/api-usage/)), and codeberg.org meters every request (`ratelimit: \"baseline\";r=1999;t=600`, measured)",
+		NotModifiedPrice: 1,
+	},
 }

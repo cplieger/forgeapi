@@ -148,6 +148,10 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 		DeriveAPIBase: deriveAPIBase,
 		Clock:         clock,
 		Family:        forgeapi.FamilyGitHub,
+		// A not-modified answer to an authorized conditional request bills
+		// nothing here, which the transport checks per request:
+		// spec.Revalidations owns the fact.
+		FreeNotModified: true,
 	})
 	if err != nil {
 		return nil, err
@@ -277,32 +281,14 @@ func (c *Client) isDegraded() bool {
 	return c.degraded
 }
 
-// BudgetState implements [forgeapi.Governor]. It is the read-only view of this
-// connection's governor: the remaining budget the instance last reported, when
-// it renews, and what the last call cost. This product reports the remaining
-// budget and the reset through its rate-limit headers on both surfaces, and a
-// document's cost through the rate-limit object every query document selects.
-// What it reports is the USER's primary quota, drawn on by every
-// application acting for that credential, so the remaining budget falls while
-// this client sends nothing and the governor's reserve is held against that
-// shared pool. Both costs were measured: a document is 1 whatever it selects, at
-// every node count from 0 to 2440, and a REST call is 1 unit of the core
-// resource, read as a decrement of one per request across twelve consecutive
-// calls. So [forgeapi.BudgetState.LastCost] is 1 on either surface. The two are
-// separate windows, so what is reported is the window the last call drew on.
-//
-// The figure is read from the signal riding the response just received and NEVER
-// from this product's rate-limit endpoint, which is measured to report a full pool
-// with a fresh window on three separate reads while the same credential's document
-// budget was demonstrably drawn down.
-//
-// [forgeapi.BudgetState.RotationCursor] is empty on this family and nothing
-// rotates: a list's folded verdict is exact from the first page of a connection the
-// list document already sends, so no row costs a read of its own and there is no
-// per-interval cap for a rotation to spread.
-//
-// It performs no I/O and is safe to call concurrently with operations; it is
-// never written from outside. See [forgeapi.BudgetState].
+// BudgetState implements [forgeapi.Governor]: the USER's primary quota, shared by
+// every application acting for the credential, as the last response's rate-limit
+// headers report it, never the rate-limit endpoint, measured to report a full pool
+// while documents drew it down. REST and documents draw separate windows, and the
+// one reported is the last call's. [forgeapi.BudgetState.LastCost] is what the call
+// spent: 1 per REST attempt, 0 for an authorized conditional 304, replaced by a
+// document's reported cost where a document is its last exchange. No I/O; safe
+// concurrently. RotationCursor is empty: a list's folded verdict is exact here.
 func (c *Client) BudgetState() forgeapi.BudgetState { return c.core.BudgetState() }
 
 // Close implements [forgeapi.Core]: it releases this client's pool, the idle

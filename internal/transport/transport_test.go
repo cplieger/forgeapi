@@ -384,6 +384,32 @@ func TestMutationPacingIsBoundedByTheOperationDeadline(t *testing.T) {
 	}
 }
 
+// TestANestedCallJoinsTheOperationsDeadline holds the deadline to the operation's
+// start across a Call opened inside a Call: a nested operation joins the bound its
+// outer one began, rather than renewing it for its own requests.
+func TestANestedCallJoinsTheOperationsDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var deadline time.Time
+		wire := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			deadline, _ = r.Context().Deadline()
+			return jsonAnswer(r, http.StatusOK, `{}`), nil
+		})
+		c := openTestConn(t, forgeapi.Connection{WebBaseURL: "http://forge.example"},
+			forgeapi.WithWireTransport(wire),
+			forgeapi.WithOperationTimeout(time.Hour),
+		)
+		started := time.Now()
+		outer := Call(t.Context(), "Outer")
+		time.Sleep(20 * time.Minute)
+		if _, err := c.Do(Call(outer, "Inner"), &Request{Op: "Inner", Method: http.MethodGet, Path: "/x"}); err != nil {
+			t.Fatalf("the nested call's read = %v, want nil", err)
+		}
+		if want := started.Add(time.Hour); !deadline.Equal(want) {
+			t.Errorf("the nested call's read ran under the deadline %v, want %v: the outer operation's start plus its bound", deadline, want)
+		}
+	})
+}
+
 func TestASecondMutationWaitsOutOnlyWhatIsLeftOfTheInterval(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		wire := roundTripFunc(func(r *http.Request) (*http.Response, error) { return jsonAnswer(r, http.StatusOK, `{}`), nil })
@@ -479,47 +505,10 @@ func TestATransportRefusalIsNotReportedAsAThrottleFromTheStatusAlone(t *testing.
 	}
 }
 
-// TestAConditionalReadIsNotIssuedWithoutSomethingToServeFromIt holds one half of the
-// ruling that every read this core issues is unconditional.
-//
-// The reason is what this library keeps: no response body, so a not-modified answer
-// has nothing to serve from and buys a saving the caller cannot spend. The
-// instance's own validator is on the wire here, which is what makes the second read
-// the measurement: a core that remembered it would repeat the read conditionally and
-// this would go red. The other half, what a not-modified answer arriving anyway is
-// mapped to, is the case below.
-func TestAConditionalReadIsNotIssuedWithoutSomethingToServeFromIt(t *testing.T) {
-	var conditional atomic.Bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
-			conditional.Store(true)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `W/"v1"`)
-		if _, err := io.WriteString(w, `{}`); err != nil {
-			t.Errorf("Setup: writing the answer: %v", err)
-		}
-	}))
-	defer srv.Close()
-	c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL})
-	for range 2 {
-		if _, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err != nil {
-			t.Fatalf("a read = %v, want nil", err)
-		}
-	}
-	if conditional.Load() {
-		t.Error("the second read carried a validator, want none: this library holds no response body, so a not-modified answer would have nothing to serve from and the caller would be handed a zero-valued answer")
-	}
-}
-
-// TestANotModifiedAnswerIsMappedAsTheUnexpectedStatusItIs holds the other half of
-// that ruling.
-//
-// With every read unconditional, a 304 is a status no request of ours asked for, so
-// it is mapped like any other unmapped status, which is the upstream kind carrying
-// the real status. The arm this closes is a success return whose body is empty: a
-// caller handed one decodes nothing and publishes the zero value over whatever it
-// had, with no error anywhere to say so.
+// TestANotModifiedAnswerIsMappedAsTheUnexpectedStatusItIs holds a 304 to a read
+// that is not revalidated, which nothing asked for: it is mapped like any other
+// unmapped status, the upstream kind carrying the real status, rather than handed
+// back as a success with an empty body a caller would decode into the zero value.
 func TestANotModifiedAnswerIsMappedAsTheUnexpectedStatusItIs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotModified)

@@ -103,7 +103,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		}
 		items = append(items, normalizeRepo(&rows[i]))
 	}
-	next := walk.next(resp.Header)
+	next := walk.nextAfter(resp, len(rows))
 	return forgeapi.Page[forgeapi.Repository]{
 		Items:   items,
 		Next:    next,
@@ -988,6 +988,7 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
+	// The body states the run total its validator covers, so the held link is current.
 	next := walk.next(resp.Header)
 	return forgeapi.Page[forgeapi.Run]{
 		Items:     c.normalizeRuns(kept, repo),
@@ -1478,7 +1479,7 @@ func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...
 		}
 		items = append(items, c.normalizeIssue(&rows[i], repo))
 	}
-	next := walk.next(resp.Header)
+	next := walk.nextAfter(resp, len(rows))
 	return forgeapi.Page[forgeapi.Issue]{
 		Items:     items,
 		Next:      next,
@@ -1561,7 +1562,7 @@ func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts .
 	for i := range rows {
 		items = append(items, normalizeRelease(&rows[i]))
 	}
-	next := walk.next(resp.Header)
+	next := walk.nextAfter(resp, len(rows))
 	return forgeapi.Page[forgeapi.Release]{
 		Items:     items,
 		Next:      next,
@@ -1620,7 +1621,7 @@ func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...
 		}
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
-	next := walk.next(resp.Header)
+	next := walk.nextAfter(resp, len(rows))
 	return forgeapi.Page[forgeapi.Label]{
 		Items:     normalizeLabels(rows),
 		Next:      next,

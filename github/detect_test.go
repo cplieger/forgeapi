@@ -234,10 +234,9 @@ func TestTheIdentityReadFillsTheGrantAtNoFurtherRequest(t *testing.T) {
 	}
 }
 
-// TestTheAffordanceReadIsNotCached holds the one accessor that reads every time, which
-// is a boundary decision rather than an oversight: a repository cache would be a fourth
-// kind of per-connection state, and the closed list has three.
-func TestTheAffordanceReadIsNotCached(t *testing.T) {
+// TestTheAffordanceReadIsSentEveryCall holds that each call sends its read: the
+// record is revalidated, never served unasked.
+func TestTheAffordanceReadIsSentEveryCall(t *testing.T) {
 	recorded := readCaptures(t)
 	h := newHarness(t, map[string]string{
 		"GET /api/v3/repos/example/example": recorded.raw(t, "rest_repo"),
@@ -248,6 +247,6 @@ func TestTheAffordanceReadIsNotCached(t *testing.T) {
 		}
 	}
 	if got := h.instance.count(); got != 2 {
-		t.Errorf("two affordance reads sent %d request(s), want 2: this client holds no repository cache", got)
+		t.Errorf("two affordance reads sent %d request(s), want 2: every call revalidates the record", got)
 	}
 }
