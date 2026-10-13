@@ -420,22 +420,25 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 // reference, as a deleted fork's null id does with no request. A lookup the
 // governor defers or the instance throttles ends the lookups and keeps the page
 // already paid for: each fork row left unresolved keeps the zero reference and
-// carries the rate-limited reason, as the page read's own deferral does.
+// carries the rate-limited reason, as the page read's own deferral does. The
+// operation's own bound running out ends them the same way, with the budget reason.
 func (c *Client) resolveForks(ctx context.Context, op string, rows []restMergeRequest, items []forgeapi.PullRequest) error {
 	forks := map[int64]forgeapi.RepoRef{}
-	stopped := false
+	var stopped forgeapi.PartialReason
 	for i := range rows {
 		source, target := rows[i].SourceProjectID, rows[i].TargetProjectID
 		if source == nil || target == nil || *source == *target {
 			continue
 		}
 		ref, seen := forks[*source]
-		if !seen && !stopped {
+		if !seen && stopped == forgeapi.PartialUnknown {
 			var err error
 			ref, err = c.projectByID(ctx, op, *source)
 			switch {
 			case transport.IsDeferred(err) || transport.IsThrottled(err):
-				stopped = true
+				stopped = forgeapi.PartialRateLimited
+			case transport.OperationExpired(ctx, err):
+				stopped = forgeapi.PartialBudget
 			case err != nil:
 				return err
 			default:
@@ -443,7 +446,7 @@ func (c *Client) resolveForks(ctx context.Context, op string, rows []restMergeRe
 			}
 		}
 		if !seen {
-			items[i].Partial = c.partial(forgeapi.PartialRateLimited, 0)
+			items[i].Partial = c.partial(stopped, 0)
 			continue
 		}
 		items[i].SourceRepo = ref

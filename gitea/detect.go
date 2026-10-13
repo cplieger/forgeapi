@@ -161,15 +161,12 @@ func (c *Client) resolveVersion(ctx context.Context) error {
 	if known {
 		return nil
 	}
+	var body wireVersion
 	resp, err := c.core.Do(ctx, &transport.Request{
-		Op: op, Method: http.MethodGet, Path: "/version",
+		Op: op, Method: http.MethodGet, Path: "/version", Into: &body,
 	})
 	if err != nil {
 		return err
-	}
-	var body wireVersion
-	if err := transport.Decode(resp.Body, &body); err != nil {
-		return c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
 	}
 	version := strings.TrimSpace(body.Version)
 	if !numericRelease(version) {
@@ -373,15 +370,12 @@ func (c *Client) resolveMaximum(ctx context.Context) (int, error) {
 	if held := c.heldMaximum(); held > 0 {
 		return held, nil
 	}
+	var body wireSettings
 	resp, err := c.core.Do(ctx, &transport.Request{
-		Op: op, Method: http.MethodGet, Path: settingsPath,
+		Op: op, Method: http.MethodGet, Path: settingsPath, Into: &body,
 	})
 	if err != nil {
 		return 0, err
-	}
-	var body wireSettings
-	if err := transport.Decode(resp.Body, &body); err != nil {
-		return 0, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
 	}
 	if body.MaxResponseItems <= 0 {
 		return 0, c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation, forgeapi.KindUpstream, resp.Status,

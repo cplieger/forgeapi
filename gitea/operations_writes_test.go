@@ -1,12 +1,16 @@
 package gitea
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/forgeapi"
 )
@@ -224,4 +228,46 @@ func TestARerunRefusesAHeadItCannotActOn(t *testing.T) {
 			t.Errorf("RerunFailedChecks(%q) sent %v, want nothing", "not a ref", sent)
 		}
 	})
+}
+
+func TestAnOperationOfSeveralRequestsSharesOneDeadline(t *testing.T) {
+	const delay, bound = time.Second, 1500 * time.Millisecond
+	in := newInstance()
+	in.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		in.mu.Lock()
+		in.requests = append(in.requests, r.Method+" "+r.URL.EscapedPath())
+		in.mu.Unlock()
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		answer := labelBody
+		if r.Method == http.MethodPost {
+			answer = pullRow(1)
+		}
+		if _, err := w.Write([]byte(answer)); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	t.Cleanup(in.server.Close)
+	h := newHarnessOver(t, in, time.Now, forgeapi.WithOperationTimeout(bound))
+	req := forgeapi.NewPullRequest{Title: "Example", SourceBranch: "feature", TargetBranch: "main", Labels: []string{"example-label"}}
+
+	started := time.Now()
+	_, err := h.client.CreatePR(t.Context(), testRef(), req)
+	took := time.Since(started)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("CreatePR over a label read and a creation of %v each under a %v bound = %v, want context.DeadlineExceeded", delay, bound, err)
+	}
+	if took > bound+delay/2 {
+		t.Errorf("CreatePR took %v, want it ended near its %v bound: the creation must have only what the label read left", took, bound)
+	}
+	if got := in.arrived(); !slices.Equal(got, []string{labelsRoute, createPull}) {
+		t.Errorf("CreatePR sent %v, want the label read then the creation", got)
+	}
 }

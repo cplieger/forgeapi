@@ -97,13 +97,8 @@ func (c *Client) unpagedList[T any](resume forgeapi.Cursor) (forgeapi.Page[T], b
 
 // readJSON performs one GET and decodes it, answering the response headers beside
 // the error because two of this product's facts ride there rather than in the body:
-// the continuation for a paged list and the budget signal.
-//
-// The read is UNCONDITIONAL, as every read this library issues is: nothing above the
-// transport holds a response body to answer a not-modified response from, and no
-// published return has a member that says unchanged. A not-modified answer arriving
-// anyway is the unexpected status the core maps, which reaches this function as the
-// error below.
+// the continuation for a paged list and the budget signal. [transport.Conn.Do]
+// states when the read cache revalidates the read.
 func (c *Client) readJSON(ctx context.Context, op, path string, query url.Values, out any) (http.Header, error) {
 	return c.readListed(ctx, op, path, query, nil, out)
 }
@@ -111,18 +106,12 @@ func (c *Client) readJSON(ctx context.Context, op, path string, query url.Values
 // readListed is readJSON for a list an owner can scope: under one, the route is the
 // owner's, and this product answers 404 for an owner it does not resolve.
 func (c *Client) readListed(ctx context.Context, op, path string, query url.Values, set *forgeapi.ListSettings, out any) (http.Header, error) {
-	req := &transport.Request{Op: op, Method: http.MethodGet, EscapedPath: path, Query: query, Page: pageIn(query)}
+	req := &transport.Request{Op: op, Method: http.MethodGet, EscapedPath: path, Query: query, Page: pageIn(query), Into: out}
 	if set != nil && set.OwnerSet {
 		req.OwnerStatus = http.StatusNotFound
 	}
 	resp, err := c.do(ctx, req)
-	if err != nil {
-		return headerOf(resp), err
-	}
-	if err := transport.Decode(resp.Body, out); err != nil {
-		return resp.Header, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
-	}
-	return resp.Header, nil
+	return headerOf(resp), err
 }
 
 // do sends one request through the core, REST and document alike, and records a

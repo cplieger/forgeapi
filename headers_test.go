@@ -40,15 +40,10 @@ var (
 	// TestTheVersionPinIsWithheldFromAnInstanceThatNamedAnotherVersion reads it
 	// withheld from an instance answering under another version.
 	libraryHeadersOneFamilySendsUnderItsOwnPrecondition = []string{"X-GitHub-Api-Version"}
-	// libraryHeadersNothingHereEverWrites are the two request validators, reserved
-	// and permanently unobservable, which is the unconditional-read ruling's consequence
-	// for this list:
-	// conditional requests are a transport layer this library does not build, so no
-	// read of its own carries one and no family can make it arrive. They stay
-	// reserved because a validator a CONSUMER set would be answered with a
-	// not-modified status this library maps as an unexpected one, so the header
-	// could only ever break the read it was set on.
-	libraryHeadersNothingHereEverWrites = []string{
+	// libraryHeadersOnARevalidatingRead are the two request validators, which the
+	// read cache writes on a read whose earlier answer it holds: one of them per
+	// read, the entity tag where the instance sent one and the date otherwise.
+	libraryHeadersOnARevalidatingRead = []string{
 		"If-Modified-Since",
 		"If-None-Match",
 	}
@@ -108,25 +103,17 @@ func (probeCredential) State() forgeapi.CredState             { return forgeapi.
 // names that never arrive as headers reach the server through their own fields,
 // which is what makes "a caller setting this would be ignored" a measured claim.
 //
-// What it still cannot prove, and why that is a smaller gap than it was: the
-// reserved names no request here carries are classified by the builder that would
-// write them rather than by an arrival. They are named in two variables, and the
-// split is the whole of what is left open. The API-version pin's is
-// libraryHeadersOneFamilySendsUnderItsOwnPrecondition, and that variable's comment
-// names the two cases in the github package that observe it arriving and being
-// withheld: it cannot arrive HERE, because its precondition is a version echo this
-// server never sends. The two validators' is
-// libraryHeadersNothingHereEverWrites, which never empties, because conditional
-// requests are a layer this library does not build; their membership rests
-// on the refusal being the right answer to a consumer-set validator rather than on
-// any request of ours.
+// What it still cannot prove: the API-version pin, whose variable names the two
+// cases in the github package that observe it arriving and being withheld, cannot
+// arrive HERE, because its precondition is a version echo this server never sends.
+// The validators arrive on a second read through a server that sent one.
 func TestReservedHeadersHoldTheHeadersThatArrive(t *testing.T) {
 	reserved := canonical(forgeapi.ReservedHeaders())
 	union := canonical(slices.Concat(
 		libraryHeadersOnEveryRequest,
 		libraryHeadersOnARequestWithABody,
 		libraryHeadersOneFamilySendsUnderItsOwnPrecondition,
-		libraryHeadersNothingHereEverWrites,
+		libraryHeadersOnARevalidatingRead,
 		stackHeadersThatArrive,
 		stackHeadersThatNeverStick,
 	))
@@ -139,7 +126,9 @@ func TestReservedHeadersHoldTheHeadersThatArrive(t *testing.T) {
 
 	for _, test := range []struct {
 		name string
-		call func(context.Context, *gitea.Client) error
+		// validator is what the server answers with, so a second read revalidates.
+		validator string
+		call      func(context.Context, *gitea.Client) error
 		// wantArriving is the canonical header set the server must see, in
 		// full: an extra name is a header nothing on the reserved list
 		// accounts for, and a missing one is a name the builder stopped
@@ -155,6 +144,24 @@ func TestReservedHeadersHoldTheHeadersThatArrive(t *testing.T) {
 			},
 			wantArriving: slices.Concat(
 				libraryHeadersOnEveryRequest,
+				headersWithout(stackHeadersThatArrive, "Content-Length"),
+			),
+		},
+		{
+			name: "a_read_revalidating_an_entity_tag", validator: "ETag",
+			call: whoamiTwice,
+			wantArriving: slices.Concat(
+				libraryHeadersOnEveryRequest,
+				[]string{"If-None-Match"},
+				headersWithout(stackHeadersThatArrive, "Content-Length"),
+			),
+		},
+		{
+			name: "a_read_revalidating_a_date", validator: "Last-Modified",
+			call: whoamiTwice,
+			wantArriving: slices.Concat(
+				libraryHeadersOnEveryRequest,
+				[]string{"If-Modified-Since"},
 				headersWithout(stackHeadersThatArrive, "Content-Length"),
 			),
 		},
@@ -186,6 +193,12 @@ func TestReservedHeadersHoldTheHeadersThatArrive(t *testing.T) {
 				host = r.Host
 				transfer = r.TransferEncoding
 				w.Header().Set("Content-Type", "application/json")
+				switch test.validator {
+				case "ETag":
+					w.Header().Set("ETag", `"observed"`)
+				case "Last-Modified":
+					w.Header().Set("Last-Modified", "Wed, 25 Oct 2023 19:17:59 GMT")
+				}
 				if _, err := io.WriteString(w, `{"login":"observed"}`); err != nil {
 					t.Errorf("Setup: writing the response: %v", err)
 				}
@@ -354,4 +367,14 @@ func canonical(names []string) []string {
 	}
 	slices.Sort(keys)
 	return slices.Compact(keys)
+}
+
+// whoamiTwice is a read and its repeat, which a server that sent a validator sees
+// revalidated.
+func whoamiTwice(ctx context.Context, c *gitea.Client) error {
+	if _, err := c.Whoami(ctx); err != nil {
+		return err
+	}
+	_, err := c.Whoami(ctx)
+	return err
 }

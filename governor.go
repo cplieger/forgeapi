@@ -81,7 +81,9 @@ type BudgetState struct { //nolint:govet // fieldalignment: field order is the r
 	// Reset is when the window renews, or the zero time where the instance
 	// reports none.
 	Reset time.Time
-	// LastCost is what the last call spent, in the same units as Remaining.
+	// LastCost is what the last call spent, in the same units as Remaining. A
+	// not-modified answer the product bills nothing for counts zero, so a call
+	// the read cache answered whole can cost nothing.
 	LastCost int
 	// RotationCursor is where the rotation stands now: the value to store and
 	// hand to the next client's [WithRotationCursor]. It is empty on a family
@@ -92,4 +94,6 @@ type BudgetState struct { //nolint:govet // fieldalignment: field order is the r
 	// three above are facts about the connection a user interface renders; this
 	// one is an opaque token whose only reader is this library.
 	RotationCursor RotationCursor
+	// ReadCache is what this connection's read cache has done and holds now.
+	ReadCache ReadCacheState
 }

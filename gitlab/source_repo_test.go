@@ -2,8 +2,10 @@ package gitlab
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/forgeapi"
 )
@@ -117,6 +119,54 @@ func TestAForkLookupTheBudgetStopsMarksItsRowRateLimited(t *testing.T) {
 				t.Errorf("fork row Partial with its lookup %s = %+v, want the rate-limited reason", test.name, fork.Partial)
 			}
 		})
+	}
+}
+
+// TestAForkLookupTheOperationsBoundEndsMarksItsRowBudget holds the fork lookups to
+// the one bound their list started: a lookup the bound ends keeps the page already
+// read, the fork resolved in time keeps its reference, and the row left unresolved
+// carries the budget reason, which names a per-operation bound stopping the work.
+func TestAForkLookupTheOperationsBoundEndsMarksItsRowBudget(t *testing.T) {
+	const stalled = "GET /api/v4/projects/8"
+	rows := "[" + strings.Join([]string{sourceRow(1, "7"), sourceRow(2, "9"), sourceRow(3, "8")}, ",") + "]"
+	in := newInstance()
+	in.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Method + " " + r.URL.EscapedPath()
+		in.mu.Lock()
+		in.requests = append(in.requests, key)
+		in.mu.Unlock()
+		if key == stalled {
+			<-r.Context().Done()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		answer := rows
+		if key == forkLookup {
+			answer = `{"id": 9, "path_with_namespace": "contributor/fork"}`
+		}
+		if _, err := w.Write([]byte(answer)); err != nil {
+			t.Errorf("Setup: writing the answer for %s: %v", key, err)
+		}
+	}))
+	t.Cleanup(in.server.Close)
+	h := newHarnessOver(t, in, forgeapi.WithOperationTimeout(time.Second))
+
+	page, err := h.client.ListMyPRs(t.Context())
+	if err != nil {
+		t.Fatalf("ListMyPRs whose second fork lookup outlasts the operation's bound = %v, want the page", err)
+	}
+	if len(page.Items) != 3 {
+		t.Fatalf("ListMyPRs answered %d rows, want 3", len(page.Items))
+	}
+	if got, want := page.Items[1].SourceRepo, repoRef("contributor/fork"); got != want {
+		t.Errorf("row 2 SourceRepo = %+v, want %+v: its lookup answered in time", got, want)
+	}
+	late := page.Items[2]
+	if late.SourceRepo != (forgeapi.RepoRef{}) {
+		t.Errorf("row 3 SourceRepo = %+v, want the zero reference", late.SourceRepo)
+	}
+	if late.Partial == nil || late.Partial.Reason != forgeapi.PartialBudget {
+		t.Errorf("row 3 Partial = %+v, want the budget reason: the operation's bound ended its lookup", late.Partial)
 	}
 }
 

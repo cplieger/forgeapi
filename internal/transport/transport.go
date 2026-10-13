@@ -108,6 +108,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	read       *http.Client
 	mutate     *http.Client
 	gov        *governor
+	cache      *readCache
 	counters   forgeapi.Counters
 	headers    []forgeapi.Header
 	budget     forgeapi.Budget
@@ -115,6 +116,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	writeSlots chan struct{}
 	family     forgeapi.Family
 	mutations  bool
+	freeNotMod bool
 	mu         sync.Mutex
 	lastMutate time.Time
 }
@@ -133,6 +135,9 @@ type Options struct {
 	DeriveAPIBase func(web *url.URL) string
 	Clock         func() time.Time
 	Family        forgeapi.Family
+	// FreeNotModified says the product bills nothing for a not-modified answer to
+	// an authorized conditional request, as its spec.Revalidations row states.
+	FreeNotModified bool
 }
 
 // Open validates one connection and builds its request core. It performs no I/O:
@@ -188,10 +193,12 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 	// is the only position that sees what a call SENT rather than what it was
 	// answered: a repeated attempt spends the user's quota exactly as an answered
 	// one does.
-	base = pricedTransport{next: base}
+	base = pricedTransport{next: base, freeNotModified: opts.FreeNotModified}
+	base = wireGuard{next: base}
 	// The attempt hook sits beneath the retry round tripper, so it sees one call
 	// per attempt. The request hook sits above it, installed on the client below,
-	// so it sees one call per logical request whatever the attempt count.
+	// so it sees one call per logical request whatever the attempt count. Both sit
+	// above wireGuard, which must see a request as either hook passes it on.
 	if set.AttemptObserver != nil {
 		base = set.AttemptObserver(base)
 	}
@@ -216,8 +223,10 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		writeSlots: make(chan struct{}, set.Budget.MutationConcurrency),
 		family:     opts.Family,
 		mutations:  set.Mutations,
+		freeNotMod: opts.FreeNotModified,
 	}
 	c.gov = newGovernor(set, &c.counters, opts.Family, opts.Clock)
+	c.cache = newReadCache(set)
 
 	policy := c.redirectPolicy(web, set)
 	c.read = httpx.NewRetryClient(base, policy, httpx.TransportConfig{
@@ -271,25 +280,35 @@ type (
 	priceKey    struct{}
 )
 
-// withRecord puts an operation's name and a fresh attempt counter on its context.
+// withRecord puts an operation's name, a fresh attempt counter and a fresh cache
+// note on its context.
 func withRecord(ctx context.Context, op string) context.Context {
 	ctx = context.WithValue(ctx, opKey{}, op)
+	ctx = context.WithValue(ctx, cacheNoteKey{}, &atomic.Int32{})
 	return context.WithValue(ctx, attemptsKey{}, &atomic.Int64{})
 }
 
 // Call opens one operation and returns the context its every request is issued on,
-// which is what makes the published price a CALL's price rather than a request's.
-//
-// A family calls it once per operation, because only the family knows where one
-// begins: on this library's own hot path a list costs one request plus one per row,
-// and nothing beneath the family can tell that from several calls of one operation.
-// The boundary is therefore stated rather than inferred from the method name, which
-// cannot tell a second call of one operation from a second request of the first.
-//
-// A request issued outside a Call is priced as a call of its own, so an operation
-// that forgets to open one under-reports rather than accumulating without bound.
+// so the published price is the CALL's and every request shares the deadline that
+// starts here ([Conn.withDeadline]). A family calls it once per operation, because
+// only the family knows where one begins: nothing beneath it can tell several
+// requests of one operation from several operations. A request issued outside a
+// Call is priced and bounded as a call of its own.
 func Call(ctx context.Context, op string) context.Context {
-	return context.WithValue(withPrice(ctx), opKey{}, op)
+	return context.WithValue(withStart(withPrice(ctx)), opKey{}, op)
+}
+
+// startKey carries the instant the operation a context belongs to began.
+type startKey struct{}
+
+// withStart records when an operation began, and leaves a context that already
+// records it alone, so a nested Call joins the operation's deadline as it joins its
+// price.
+func withStart(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(startKey{}).(time.Time); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, startKey{}, time.Now())
 }
 
 // writeKey marks a call that belongs to a mutating operation.
@@ -335,16 +354,25 @@ func price(ctx context.Context) int {
 }
 
 // pricedTransport counts every attempt that reaches the wire against the call that
-// issued it. It sits beneath the retry round tripper, so a retried request is
-// counted as the two requests it is, and above nothing: a request this library never
-// built is never counted.
-type pricedTransport struct{ next http.RoundTripper }
+// issued it, less a not-modified answer to an authorized conditional request on a
+// product that bills none: the exemption covers only a request carrying a
+// validator. It sits beneath the retry round tripper, so a retried request is
+// counted as the two requests it is, and above nothing: a request this library
+// never built is never counted. An attempt that failed with no answer still counts.
+type pricedTransport struct {
+	next            http.RoundTripper
+	freeNotModified bool
+}
 
 func (t pricedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if counter := priceOf(r.Context()); counter != nil {
+	resp, err := t.next.RoundTrip(r)
+	conditional := r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != ""
+	free := t.freeNotModified && conditional && r.Header.Get("Authorization") != "" && err == nil &&
+		resp.StatusCode == http.StatusNotModified
+	if counter := priceOf(r.Context()); counter != nil && !free {
 		counter.Add(1)
 	}
-	return t.next.RoundTrip(r)
+	return resp, err
 }
 
 // opFrom reads the operation a request belongs to, empty where the request was not
@@ -431,6 +459,9 @@ func checkBudget(set *forgeapi.Settings) error {
 		if d < 0 {
 			return local(forgeapi.CodeBudgetInvalid, "a budget duration is negative")
 		}
+	}
+	if set.ReadCacheBytes < 0 {
+		return local(forgeapi.CodeBudgetInvalid, "the read cache bound is negative")
 	}
 	if b.ReadConcurrency == 0 || b.MutationConcurrency == 0 {
 		return local(forgeapi.CodeBudgetInvalid, "a concurrency limit of zero admits no request")
@@ -663,7 +694,11 @@ func dialablePorts(web *url.URL, proxy string, set *forgeapi.Settings) []uint16 
 
 // BudgetState is the governor's state for this connection, read-only and never
 // written from outside.
-func (c *Conn) BudgetState() forgeapi.BudgetState { return c.gov.state() }
+func (c *Conn) BudgetState() forgeapi.BudgetState {
+	state := c.gov.state()
+	state.ReadCache = c.cache.state()
+	return state
+}
 
 // Logger is the injected logger, for the family's own lines.
 func (c *Conn) Logger() *slog.Logger { return c.logger }
@@ -721,14 +756,24 @@ func (c *Conn) SpendFold(d time.Duration) { c.gov.spendFold(d) }
 // count stands.
 func (c *Conn) Price(cost int) { c.gov.price(cost) }
 
-// Close releases this connection's pool: the idle connections of the ssrf
-// transport Open built, which the connection holds by its concrete type. A
-// substitute wire is its author's, so Close never reaches it.
-func (c *Conn) Close() { c.wire.CloseIdleConnections() }
+// Close releases this connection's pool, the idle connections of the ssrf
+// transport Open built, and empties its read cache. A substitute
+// wire is its author's, so Close never reaches it.
+func (c *Conn) Close() {
+	c.wire.CloseIdleConnections()
+	if c.cache != nil {
+		c.cache.clear()
+	}
+}
 
 // Request is one call this package makes for a family.
 type Request struct {
 	Body any
+	// Into is the value [Conn.Do] decodes a successful answer's body into, inside
+	// the operation's deadline; an undecodable body is the call's error. On a GET,
+	// [Conn.Do] states which reads are revalidated; Into's type is part of the key,
+	// because the cache keeps the decoded projection rather than the body.
+	Into any
 	// Headers are the FAMILY's own request headers for this request, written
 	// after the credential and before the consumer's. One family needs them and
 	// the reason is per request rather than per connection: its REST API-version
@@ -753,7 +798,8 @@ type Request struct {
 	AbsoluteURL string
 	// Answers are the non-2xx statuses this request reads as an ANSWER rather than
 	// a refusal: [Conn.Do] returns such a response with its body and no error, and
-	// the family decodes the outcome from it. One route needs it: GitHub's
+	// the family decodes the outcome from it. A 304 is never one: [Conn.judge]
+	// settles every 304. One route needs it: GitHub's
 	// asynchronous merge answers a merge already in flight with a 409 whose body
 	// names that merge's handle, which is the outcome, not a conflict.
 	Answers  []int
@@ -854,6 +900,9 @@ type Response struct {
 	Body       []byte
 	Status     int
 	Redirected bool
+	// Revalidated says the held answer served this call after a 304: a held field
+	// ([heldFields]) the 304 omitted is the held value, which it did not confirm.
+	Revalidated bool
 }
 
 // Quote is text the instance answered in this exchange made safe to carry on an
@@ -866,23 +915,14 @@ func (r *Response) Quote(text string) string {
 	return r.quote(text)
 }
 
-// Do issues one request, maps its outcome and records what it cost.
+// Do issues one request, maps its outcome and records what it cost. While the read
+// cache is on, a REST GET outside [CallWrite] that names [Request.Into], carries no
+// no-store and is not changed by an observer ([wireGuard]) is revalidated, and a
+// not-modified answer [Conn.judge] finds vouches for the held answer is served from
+// it ([Conn.serve], docs/read-cache.md).
 //
-// Every read it issues is UNCONDITIONAL, and no request carries a validator. A
-// validator only pays where the sender can answer a not-modified response from
-// something it holds, and nothing above this core holds a response body: the
-// per-connection state is the minted merge handles and the budget, a decoded body
-// kept beside them would be the repository cache the boundary rules out, and no
-// published return has a member that says unchanged. So a not-modified answer has
-// nowhere to go, and one arriving anyway is an unexpected status the mapper reports
-// like any other rather than a success arm nothing can spend. If a measured saving
-// ever justifies the exchange, its shape is an opt-in caching round tripper inside
-// this connection's own chain, which remembers the body it would serve.
-//
-// What the call spent is published on EVERY arm this function leaves by, the two
-// refusals that send nothing included. The figure is the last CALL's price, so a
-// call that reached no wire publishes the zero it spent: leaving the previous
-// call's figure standing would report a cost for a call that had none.
+// What the call spent is published on EVERY arm it leaves by, the two refusals that
+// send nothing included: it is the last CALL's price, so one that sent nothing is 0.
 func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	if fe := c.permit(ctx, req); fe != nil {
 		c.gov.price(price(ctx))
@@ -908,31 +948,151 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	defer c.release(req)
 
 	started := time.Now()
-	//nolint:bodyclose // httpx.ReadLimitedBody below always closes the body, which the analyzer cannot follow
-	resp, token, err := c.send(ctx, req, target)
-	if err != nil {
-		return refusedHop(resp), c.transportError(ctx, req, err, started)
+	//nolint:bodyclose // answer always reads the body through httpx.ReadLimitedBody, which closes it
+	resp, rv, err := c.sendRead(ctx, req, target)
+	out, kept, err := c.answer(ctx, req, target, resp, &rv, err, started)
+	if err == nil && req.Into != nil && ctx.Err() != nil {
+		out, kept, err = nil, nil, c.transportError(ctx, req, ctx.Err(), started)
 	}
+	if rv.disowned {
+		kept = nil
+	}
+	if rv.key != "" {
+		c.cache.finish(rv.key, rv.gen, kept)
+	}
+	if rv.answered {
+		hit := rv.verdict == verdictServe && err == nil
+		c.cache.tally(hit)
+		if hit {
+			noteCache(ctx, cacheHit)
+		}
+	}
+	switch {
+	case errors.Is(err, errUndecodable):
+		c.log(ctx, req, exchange(req), resp.StatusCode, "", "", forgeapi.KindUnknown, out.Header, started, nil)
+		return out, c.FailBody(ctx, req.Op, exchange(req), out.Status)
+	case err != nil:
+		return out, err
+	}
+	c.log(ctx, req, exchange(req), resp.StatusCode, "", "", forgeapi.KindUnknown, out.Header, started, nil)
+	return out, nil
+}
 
+// errUndecodable is [Conn.answer]'s report of a body [Request.Into] could not take,
+// which [Conn.Do] records after the exchange's own line, as a family's refusal is.
+var errUndecodable = errors.New("response body did not decode")
+
+// answer reads the exchange's answer and settles it by [Conn.judge]'s verdict on a
+// 304: a served one answers from the held entry, a refused one is mapped like any
+// other refusal, and a success is decoded into [Request.Into]. It answers the entry
+// to keep, a served 304's refreshed one or a vouched 200's, which [Conn.Do] hands
+// [readCache.finish] once for the whole exchange, after the operation's deadline
+// has had its say.
+func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *http.Response, rv *revalidation, sendErr error, started time.Time) (*Response, *pageEntry, error) {
+	if sendErr != nil {
+		return refusedHop(resp), nil, c.transportError(ctx, req, sendErr, started)
+	}
 	c.gov.observe(resp.Header, c.signal)
 	out := &Response{
-		Header: resp.Header, Status: resp.StatusCode, quote: c.quoter(token),
+		Header: resp.Header, Status: resp.StatusCode, quote: c.quoter(rv.token),
 		Redirected: followed(resp, target), Ended: ended(resp, target),
 	}
-	limit := req.MaxBytes
-	if limit <= 0 {
-		limit = maxBodyBytes
-	}
-	body, readErr := httpx.ReadLimitedBody(resp.Body, limit)
+	body, readErr := httpx.ReadLimitedBody(resp.Body, bodyLimit(req))
 	if readErr != nil {
-		return nil, c.bodyError(ctx, req, resp.StatusCode, readErr, started)
+		return nil, nil, c.bodyError(ctx, req, resp.StatusCode, readErr, started)
 	}
 	out.Body = body
-	if resp.StatusCode >= 300 && !slices.Contains(req.Answers, resp.StatusCode) {
-		return out, c.upstreamError(ctx, req, out, started)
+	rv.answered = rv.cacheable
+	if rv.answered {
+		noteCache(ctx, cacheMissed)
 	}
-	c.log(ctx, req, exchange(req), out.Status, "", "", forgeapi.KindUnknown, out.Header, started, nil)
-	return out, nil
+	var kept *pageEntry
+	switch {
+	case rv.verdict == verdictServe:
+		kept = c.serve(*rv, out)
+	case rv.verdict == verdictRefuse, resp.StatusCode >= 300 && !slices.Contains(req.Answers, resp.StatusCode):
+		return out, nil, c.upstreamError(ctx, req, out, started)
+	}
+	if req.Into != nil && Decode(out.Body, req.Into) != nil {
+		return out, nil, errUndecodable
+	}
+	if resp.StatusCode == http.StatusOK && rv.vouched(resp, body) {
+		kept = keepable(resp, req.Into)
+	}
+	return out, kept, nil
+}
+
+// bodyLimit is the most of an answer's body this request reads.
+func bodyLimit(req *Request) int64 {
+	if req.MaxBytes <= 0 {
+		return maxBodyBytes
+	}
+	return req.MaxBytes
+}
+
+// sendRead is [Conn.send] in the cache mode the request takes, in the cache
+// generation current as it begins; each attempt's answer is judged by [Conn.judge].
+// A REST GET whose 304 nothing held may serve is sent once more without a
+// validator, whether or not it may be stored. The discarded answer's rate headers
+// still reach the governor, on a cacheable read only where the wire vouches for
+// them. The resend belongs to the first attempt's exchange, whose key and
+// generation [Conn.Do] settles once.
+func (c *Conn) sendRead(ctx context.Context, req *Request, target string) (*http.Response, revalidation, error) {
+	mode, gen := cacheOff, uint64(0)
+	if c.cacheable(ctx, req) {
+		mode, gen = cacheConditional, c.cache.generation()
+	}
+	resp, rv, err := c.attempt(ctx, req, target, mode, gen, nil)
+	if err != nil || rv.verdict != verdictResend {
+		return resp, rv, err
+	}
+	if rv.check == nil || rv.check.vouches(resp) {
+		c.gov.observe(resp.Header, c.signal)
+	}
+	if mode == cacheConditional {
+		mode = cacheUnconditional
+	}
+	return c.attempt(ctx, req, target, mode, gen, &rv)
+}
+
+// attempt is one send of a read and the verdict [Conn.judge] gives its answer.
+// first is the attempt a resend replaces, nil on the first one, which alone may be
+// resent.
+func (c *Conn) attempt(ctx context.Context, req *Request, target string, mode cacheMode, gen uint64, first *revalidation) (*http.Response, revalidation, error) {
+	resp, rv, err := c.send(ctx, req, target, mode, gen)
+	if first != nil && first.cacheable && rv.key != first.key {
+		rv.key, rv.disowned = first.key, true
+	}
+	if err != nil {
+		return resp, rv, err
+	}
+	rv.verdict, err = c.judge(&rv, resp, first == nil && req.Method == http.MethodGet && !req.Document)
+	if err != nil {
+		c.gov.observe(resp.Header, c.signal)
+		return nil, rv, err
+	}
+	return resp, rv, nil
+}
+
+// judge is the one decision of what a 304 does, and [Conn.attempt] its one caller;
+// any other answer is [verdictNone]. It reads a 304's body in full and puts it back
+// for [Conn.answer]. Only the wire's own 304, in the generation the send began in,
+// to a validator a held entry sent and naming that entry ([pageEntry.answers])
+// serves. Any other is resent where resend allows, and refused otherwise; a body
+// that fails to read is resent likewise, and is otherwise the exchange's failure.
+func (c *Conn) judge(rv *revalidation, resp *http.Response, resend bool) (verdict, error) {
+	if resp.StatusCode != http.StatusNotModified {
+		return verdictNone, nil
+	}
+	body, err := httpx.ReadLimitedBody(resp.Body, maxBodyBytes)
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	switch {
+	case err == nil && rv.held != nil && rv.vouched(resp, body) && rv.held.answers(resp.Header) && c.cache.current(rv.gen):
+		return verdictServe, nil
+	case resend:
+		return verdictResend, nil
+	}
+	return verdictRefuse, err
 }
 
 // followed reports whether this exchange took a redirect hop, by comparing the URL
@@ -990,20 +1150,24 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 	return nil
 }
 
-// send builds and issues the request on the client [Request.mutates] chooses, and
-// answers the credential it carried, which the instance's text is redacted of.
-func (c *Conn) send(ctx context.Context, req *Request, target string) (*http.Response, string, error) {
+// send builds and issues the request on the client [Request.mutates] chooses. It
+// answers what the read cache knows of the request beside the response: the
+// credential it carried, which the instance's text is redacted of, and on a
+// cacheable read its key and the entry held for it, whose validator rides the
+// request in the conditional mode.
+func (c *Conn) send(ctx context.Context, req *Request, target string, mode cacheMode, gen uint64) (*http.Response, revalidation, error) {
+	rv := revalidation{gen: gen}
 	var payload []byte
 	if req.Body != nil {
 		encoded, marshalErr := marshal(req.Body)
 		if marshalErr != nil {
-			return nil, "", marshalErr
+			return nil, rv, marshalErr
 		}
 		payload = encoded
 	}
 	r, err := http.NewRequestWithContext(ctx, req.Method, target, bodyReader(payload))
 	if err != nil {
-		return nil, "", err
+		return nil, rv, err
 	}
 	if payload != nil {
 		r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(payload)), nil }
@@ -1014,8 +1178,9 @@ func (c *Conn) send(ctx context.Context, req *Request, target string) (*http.Res
 	r.Header.Set("User-Agent", userAgent)
 	token, err := c.credential.Token(ctx)
 	if err != nil {
-		return nil, "", credentialError(err)
+		return nil, rv, credentialError(err)
 	}
+	rv.token = token
 	// Bearer is the one scheme every product reads for every kind of token it
 	// issues; gitlab.com refuses the token scheme the others also accept.
 	if token != "" {
@@ -1027,15 +1192,22 @@ func (c *Conn) send(ctx context.Context, req *Request, target string) (*http.Res
 	for _, h := range c.headers {
 		r.Header.Set(h.Name, h.Value)
 	}
+	if mode != cacheOff {
+		c.revalidate(req, r, mode, &rv)
+	}
+	if rv.cacheable {
+		rv.check = newWireCheck(r)
+		r = r.WithContext(context.WithValue(ctx, wireCheckKey{}, rv.check))
+	}
 	client := c.read
 	if req.mutates() {
 		if paceErr := c.pace(ctx); paceErr != nil {
-			return nil, "", paceErr
+			return nil, rv, paceErr
 		}
 		client = c.mutate
 	}
 	resp, err := client.Do(r)
-	return resp, token, err
+	return resp, rv, err
 }
 
 // credentialError keeps a credential source's own failure from reading as an
@@ -1087,18 +1259,19 @@ func (c *Conn) urlFor(req *Request) string {
 }
 
 // withDeadline applies the per-operation bound as a real context deadline, which
-// is the only bound that reaches every blocking phase.
+// is the only bound that reaches every blocking phase. It runs from the start
+// [Call] recorded, so a request answers whatever its operation has left rather than
+// a bound of its own; a request outside a Call starts its operation here.
 //
 // A ZERO bound is the deadline its option publishes, one that has already passed,
-// rather than no bound at all: there is one configuration door, so the zero a caller
-// passes is the literal zero, and a client that answered an uncapped context to it
-// would run every operation unbounded while the option said the opposite. A negative
-// never reaches here, being refused at construction.
+// rather than no bound at all. A negative never reaches here, being refused at
+// construction.
 func (c *Conn) withDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
-	if c.budget.OperationTimeout <= 0 {
-		return context.WithDeadline(ctx, time.Now())
+	start, ok := ctx.Value(startKey{}).(time.Time)
+	if !ok {
+		start = time.Now()
 	}
-	return context.WithTimeout(ctx, c.budget.OperationTimeout)
+	return context.WithDeadline(ctx, start.Add(max(c.budget.OperationTimeout, 0)))
 }
 
 // acquire bounds concurrency per instance, more for reads than for mutations.
@@ -1288,6 +1461,15 @@ func IsDeferred(err error) bool {
 func IsThrottled(err error) bool {
 	fe, ok := errors.AsType[*forgeapi.Error](err)
 	return ok && fe.Kind == forgeapi.KindRateLimited && fe.Status != 0
+}
+
+// OperationExpired reports whether err is the operation's own bound
+// ([Conn.withDeadline]) running out while ctx, the context the operation was called
+// with, is still live. It is what lets a list reading row by row mark the rows it did
+// not reach [forgeapi.PartialBudget] rather than fail; the caller's own deadline or
+// cancellation still fails it.
+func OperationExpired(ctx context.Context, err error) bool {
+	return ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded)
 }
 
 // Local re-exports the local-refusal shape for a family's own pre-request checks.
@@ -1511,7 +1693,7 @@ func (c *Conn) log(ctx context.Context, req *Request, ex Exchange, status int, c
 		"attempt", attempts(ctx),
 		"page", max(req.Page, 1),
 		"duration_ms", time.Since(started).Milliseconds(),
-		"cache", cacheResult(status),
+		"cache", cacheNoted(ctx),
 		"upstream_request_id", upstreamRequestID(header),
 	)
 }
@@ -1530,11 +1712,4 @@ func upstreamRequestID(header http.Header) string {
 		}
 	}
 	return ""
-}
-
-func cacheResult(status int) string {
-	if status == http.StatusNotModified {
-		return "not_modified"
-	}
-	return "miss"
 }

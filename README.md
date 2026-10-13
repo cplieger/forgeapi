@@ -13,7 +13,7 @@ forgeapi is built for Go tools that span several forges.
 - Each operation is one method with the same result types on all four products. A field a product does not supply keeps its zero value, the unknown member for an enumeration.
 - Each operation's godoc lists its route, request cost and differing fields per product, and [SUPPORT.md](SUPPORT.md) maps operations to products.
 - It serves github.com, gitlab.com, and Gitea and Forgejo instances. GitHub Enterprise Server and self-managed GitLab run the same code but were not [measured](docs/tested-against.md).
-- A client [paces itself to the rate limit](docs/request-prices.md) and [reports a repository that moved](docs/renames.md).
+- A client [paces itself to the rate limit](docs/request-prices.md), [revalidates what it read before](docs/read-cache.md) where the forge sends validators, so an unchanged REST list on GitHub costs no request when the request carries an `Authorization` header (GraphQL documents are never cached), and [reports a repository that moved](docs/renames.md).
 - `creds` runs the OAuth device flow on GitHub and GitLab and refreshes tokens. `gitcred` hands them to git.
 
 Consider [go-github](https://github.com/google/go-github) if you target GitHub alone and want services that mirror its API documentation. Consider [go-scm](https://github.com/drone/go-scm) if you need Bitbucket, Gitee or Gogs, or comment and file endpoints. Consider [git-pkgs/forge](https://github.com/git-pkgs/forge) if you need reviews, branches, Bitbucket Cloud or Gerrit, or a command-line tool.
@@ -76,7 +76,7 @@ if errors.As(err, &ferr) && ferr.Code == forgeapi.CodeRepoRefStale { ... }
 
 `Error` carries an `ErrorKind` and a `Code`, because one HTTP status means different things per product and per operation. `Error.Retryable` says whether another attempt may succeed: a network failure, a throttle, and a 408, 429 or 5xx status. `Error.Message` is the forge's own text, so never branch on it. `Error` wraps no other error, and the library declares no sentinel errors of its own.
 
-A cancelled or expired context returns Go's own `context.Canceled` or `context.DeadlineExceeded` unchanged, so `errors.Is` works on it. Each operation also runs under its own deadline, `Budget.OperationTimeout`, 20 seconds by default, which expires as `context.DeadlineExceeded` too. To tell whether your own context ended, check `ctx.Err()`. The `creds` file store and the `gitcred` helper return ordinary Go errors when a read or write fails.
+A cancelled or expired context returns Go's own `context.Canceled` or `context.DeadlineExceeded` unchanged, so `errors.Is` works on it. Each operation also runs under its own deadline, `Budget.OperationTimeout`, 20 seconds by default, which expires as `context.DeadlineExceeded` too. A list that makes a further read per row, the checks on a Gitea or Forgejo pull-request list or the forks on a GitLab `ListMyPRs`, returns its rows instead when that deadline ends those reads, each row left unread marked `PartialBudget`. To tell whether your own context ended, check `ctx.Err()`. The `creds` file store and the `gitcred` helper return ordinary Go errors when a read or write fails.
 
 ## Unsupported by design
 
@@ -99,6 +99,7 @@ forgeapi leaves these out on purpose. [Non-goals](docs/non-goals.md) gives the r
 - [Lists across repositories](docs/cross-repository-lists.md) covers `ListMyPRs` and `ListMyIssues`.
 - [Renamed and moved repositories](docs/renames.md) says what a call answers after a move.
 - [Request prices and the budget](docs/request-prices.md) covers call costs and pacing.
+- [The read cache](docs/read-cache.md) covers revalidated reads and the memory bound.
 - [Credentials](docs/credentials.md) covers sign-in, token refresh, the store and the git credential helper.
 - [Tested against](docs/tested-against.md) lists the measured instances and versions.
 - [Non-goals](docs/non-goals.md) explains what is left out and why.

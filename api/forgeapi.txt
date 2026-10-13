@@ -46,6 +46,7 @@ type BudgetState struct {
 	Reset time.Time
 	LastCost int
 	RotationCursor RotationCursor
+	ReadCache ReadCacheState
 }
 const CapCanPush Capability = "can_push"
 const CapHasIssues Capability = "has_issues"
@@ -198,6 +199,7 @@ const DefaultMutationInterval = time.Second
 const DefaultMutationReserve = 50
 const DefaultOperationTimeout = 20 * time.Second
 const DefaultPageBound = 100
+const DefaultReadCacheBytes = 32 << 20
 const DefaultReadConcurrency = 2
 const DefaultRefreshLead = 5 * time.Minute
 const DefaultRetries = 2
@@ -468,6 +470,12 @@ type QueueState int
 func (q QueueState) String() string
 const QueueUnknown QueueState = iota
 const QueueUnmergeable QueueState = iota + 5
+type ReadCacheState struct {
+	Hits int
+	Misses int
+	Saved int
+	Bytes int64
+}
 type Release struct {
 	TagName string
 	Name string
@@ -548,6 +556,7 @@ type Settings struct {
 	PrivateAddresses bool
 	PlaintextHTTP bool
 	RefreshLead time.Duration
+	ReadCacheBytes int64
 }
 type Support int
 func (s Support) String() string
@@ -579,6 +588,7 @@ func WithOwner(owner string) ListOption
 func WithPageBound(n int) ListOption
 func WithPlaintextHTTP(allowed bool) Option
 func WithPrivateAddresses(allowed bool) Option
+func WithReadCache(maxBytes int64) Option
 func WithReadConcurrency(n int) Option
 func WithRefreshLead(d time.Duration) Option
 func WithRequestObserver(wrap func(next http.RoundTripper) http.RoundTripper) Option
