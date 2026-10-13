@@ -72,7 +72,7 @@ func TestNoPublishedCommentPointsAtAWorkingDocument(t *testing.T) {
 			return err
 		}
 		if unshipped(root, path, d) {
-			return fs.SkipDir
+			return skipEntry(d)
 		}
 		if d.IsDir() {
 			return nil
@@ -113,7 +113,7 @@ func TestEveryRecordedBodyNamesItsRecordingWithoutAPath(t *testing.T) {
 			return err
 		}
 		if unshipped(root, path, d) {
-			return fs.SkipDir
+			return skipEntry(d)
 		}
 		if d.IsDir() || filepath.Ext(path) != ".json" || !strings.Contains(path, "testdata") {
 			return nil
@@ -212,17 +212,30 @@ func checkText(t *testing.T, root, path string) {
 	}
 }
 
-// unshipped reports whether the walk has reached a directory this repository does
+// unshipped reports whether the walk has reached an entry this repository does
 // not publish. A dot-directory below the root holds version-control state, tool
 // caches or local scratch, none of which a reader of the repository receives; .github
 // is the exception, because its workflows ship. testdata ships: it holds the golden
-// surface file and the recorded bodies.
+// surface file and the recorded bodies. A linked worktree's .git is a file naming
+// the main checkout's path, which is version-control state too.
 func unshipped(root, path string, d fs.DirEntry) bool {
-	if !d.IsDir() || path == root {
+	if path == root {
 		return false
 	}
 	name := d.Name()
+	if !d.IsDir() {
+		return name == ".git"
+	}
 	return strings.HasPrefix(name, ".") && name != ".github"
+}
+
+// skipEntry is the walk's answer for an unshipped entry. A file gets nil, not
+// fs.SkipDir, because SkipDir from a file skips every later entry of its directory.
+func skipEntry(d fs.DirEntry) error {
+	if d.IsDir() {
+		return fs.SkipDir
+	}
+	return nil
 }
 
 // moduleRoot is the directory holding go.mod, which is where the root package's own
