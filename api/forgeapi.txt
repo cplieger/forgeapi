@@ -769,3 +769,19 @@ func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (fo
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
+
+## package readcache (./readcache)
+
+func NewTransport(next http.RoundTripper, opts ...Option) (*Transport, error)
+type Option interface {
+	// contains unexported members
+}
+type Transport struct {
+	// contains unexported members
+}
+func (t *Transport) CloseIdleConnections()
+func (t *Transport) RoundTrip(r *http.Request) (*http.Response, error)
+func (t *Transport) State() forgeapi.ReadCacheState
+func WithFreeNotModified(free bool) Option
+func WithHeldFields(names ...string) Option
+func WithMaxBytes(maxBytes int64) Option

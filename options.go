@@ -465,12 +465,11 @@ func WithRefreshLead(d time.Duration) Option {
 	return optionFunc(func(s *Settings) { s.RefreshLead = d })
 }
 
-// WithWireTransport replaces the wire under this client's own HTTP stack, which
-// is what a test substitutes to answer requests without a network. It bypasses
-// containment: the address policy, the port allowlist, the trust anchor, the
-// redirect policy and the connection's own proxy live in the transport it
-// replaces, so a substitute enforces exactly what its author wrote. A client's
-// Close does not reach it: a substitute's pool is its author's to release.
+// WithWireTransport replaces the wire under this client's own HTTP stack, as a
+// test does to answer without a network. It bypasses containment, which lives in
+// the transport it replaces: address policy, port allowlist, trust anchor,
+// redirect policy and proxy. Close leaves its pool to its author, and its reads are
+// cached only where each answer reports the request it answered as its Request.
 //
 // Default: none, and the library builds its own transport. It never falls back
 // to http.DefaultClient, which has no timeout and no redirect policy of ours.

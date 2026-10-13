@@ -222,7 +222,8 @@ const (
 	// proxies over, or a [Header] entry with an empty name, or with a name or a
 	// value outside net/http's field grammar, which the transport would refuse
 	// on every request. It is the catch-all for a malformed connection and never
-	// the answer where a refusal below names the cause.
+	// the answer where a refusal below names the cause. It is also a
+	// readcache.NewTransport given no round tripper to send through.
 	CodeConnectionInvalid = "connection_invalid"
 	// CodeAnonymousRefused is a client built with no [CredentialSource], whose
 	// requests would be anonymous. It is its own code because its remedy is a
@@ -241,14 +242,14 @@ const (
 	// consumer's remedy is one deliberate statement per instance, which it
 	// cannot offer without knowing that this was the refusal.
 	CodePrivateAddressRefused = "private_address_refused"
-	// CodeBudgetInvalid is a NEGATIVE value passed to one of the budget
-	// options, [WithMutationReserve] and [WithRefreshLead] included, the second
-	// refused by the creds package's source rather than by a family's
-	// constructor. It is refused rather than defaulted, because a negative
-	// deadline would expire every operation on the client and a negative bound,
-	// reserve or lead would read as a limit nobody set. A ZERO is never this
-	// refusal: with one configuration door a zero is the literal zero, and each
-	// option's godoc says what its own zero does.
+	// CodeBudgetInvalid is a NEGATIVE value passed to one of the budget options,
+	// [WithMutationReserve], [WithRefreshLead] and readcache.WithMaxBytes included,
+	// the last two refused by the creds package's source and readcache.NewTransport.
+	// It is refused rather than defaulted, because a negative deadline would expire
+	// every operation on the client and a negative bound, reserve or lead would read
+	// as a limit nobody set. A ZERO is never this refusal: with one configuration
+	// door a zero is the literal zero, and each option's godoc says what its own
+	// zero does.
 	CodeBudgetInvalid = "budget_invalid"
 	// CodePageBoundInvalid is a page bound of zero or less, refused by
 	// [ResolveList] rather than sent: one upstream accepts a zero with HTTP 200

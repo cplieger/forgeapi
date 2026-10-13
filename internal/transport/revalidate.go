@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/cplieger/httpx/v5"
 )
 
 // cacheMode is how one send treats the read cache.
@@ -26,12 +28,12 @@ const (
 	// cacheConditional looks the request up and sends the held entry's validator.
 	cacheConditional
 	// cacheUnconditional keys the request without looking it up, for the resend a
-	// not-modified answer forces when nothing held may serve it ([Conn.sendRead]).
+	// not-modified answer forces when nothing held may serve it ([readExchange]).
 	cacheUnconditional
 )
 
-// verdict is what [Conn.judge] decided an answer does: [Conn.sendRead] acts on a
-// resend, and [Conn.answer] on the rest.
+// verdict is what [judge] decided an answer does: [readExchange] acts on a resend,
+// and its owner on the rest.
 type verdict int
 
 const (
@@ -54,9 +56,10 @@ type revalidation struct {
 	gen       uint64
 	verdict   verdict
 	cacheable bool
-	// answered is what [Conn.answer] found: the instance's answer read in full.
+	// answered says the instance's answer was read as its owner reads one, which
+	// [readCache.settle] counts.
 	answered bool
-	// disowned says a resend ([Conn.sendRead]) was not keyed as the attempt it
+	// disowned says a resend ([readExchange]) was not keyed as the attempt it
 	// replaced: key is that attempt's, which the exchange forgets, keeping nothing.
 	disowned bool
 }
@@ -156,9 +159,11 @@ func (b *wireBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// wireGuard sits beneath both observers and above the wire. A request that differs
-// from the one its key was computed from leaves without validators, because the
-// held entry answers only for the keyed request (RFC 9110 section 8.8.1).
+// wireGuard sits between the request its owner keyed and the wire, beneath every
+// observer [Conn] installs. A request that differs from the one its key was computed
+// from leaves without validators, because the held entry answers only for the keyed
+// request (RFC 9110 section 8.8.1), and an answer reporting that next sent another
+// request, or naming none, is not vouched for.
 type wireGuard struct {
 	next http.RoundTripper
 }
@@ -170,19 +175,54 @@ func (g wireGuard) RoundTrip(r *http.Request) (*http.Response, error) {
 		if check.matches(r) {
 			resp, err := g.next.RoundTrip(r)
 			if err == nil {
+				if !sentAsKeyed(check, resp) {
+					check.diverged.Store(true)
+				}
 				check.record(resp)
 			}
 			return resp, err
 		}
 		check.diverged.Store(true)
 	}
-	if r.Header.Get("If-None-Match") == "" && r.Header.Get("If-Modified-Since") == "" {
+	if !carriesValidator(r.Header) {
 		return g.next.RoundTrip(r)
 	}
 	stripped := r.Clone(r.Context())
-	stripped.Header.Del("If-None-Match")
-	stripped.Header.Del("If-Modified-Since")
+	maps.DeleteFunc(stripped.Header, func(name string, _ []string) bool { return isValidator(name) })
 	return g.next.RoundTrip(stripped)
+}
+
+// sentAsKeyed reports whether resp answers the request check keyed, by the request
+// resp says next sent, as net/http's Transport reports it. An answer naming no
+// request vouches for none, since next may have rewritten the one it was given.
+func sentAsKeyed(check *wireCheck, resp *http.Response) bool {
+	return resp.Request != nil && check.matches(resp.Request)
+}
+
+// isValidator reports whether name is If-None-Match or If-Modified-Since, however
+// it is cased.
+func isValidator(name string) bool {
+	switch http.CanonicalHeaderKey(name) {
+	case "If-None-Match", "If-Modified-Since":
+		return true
+	}
+	return false
+}
+
+// carriesValidator reports whether h has a validator line with text under any
+// name net/http sends it by; an empty line names nothing (RFC 9110 section 5.6.1).
+func carriesValidator(h http.Header) bool {
+	for name, lines := range h {
+		if isValidator(name) && hasText(lines) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasText reports whether any of a field's lines is not empty.
+func hasText(lines []string) bool {
+	return slices.ContainsFunc(lines, func(line string) bool { return line != "" })
 }
 
 // cacheNoteKey carries the per-request record's cache attribute.
@@ -219,26 +259,34 @@ func cacheNoted(ctx context.Context) string {
 
 // cacheable reports whether a request is a read the cache may revalidate: a GET of
 // a REST route naming the value it decodes into, outside a write, with the cache
-// on. A document is a POST; [Conn.revalidate] leaves a no-store request uncached.
+// on. A document is a POST; [readCache.revalidate] leaves a no-store request uncached.
 func (c *Conn) cacheable(ctx context.Context, req *Request) bool {
 	return c.cache != nil && req.Method == http.MethodGet && !req.Document && !writes(ctx) && req.Into != nil
 }
 
-// revalidate keys a cacheable request and, in the conditional mode, sets the held
-// entry's validator on it. It runs after every other header is written, so the key
-// folds the request as it leaves this package and nothing here replaces the
-// validator; [wireGuard] holds every attempt and hop to that request. A request
-// carrying no-store is left uncached (RFC 9111 section 5.2.1.5).
-func (c *Conn) revalidate(req *Request, r *http.Request, mode cacheMode, rv *revalidation) {
+// revalidate keys a cacheable request by its credential (rv.token) and shape, and in
+// the conditional mode sets the held entry's validator on it. It answers the
+// request to send, carrying the [wireCheck] [wireGuard] holds every attempt and hop
+// to. Its owner calls it after every other header is written, so the key folds the
+// request as it leaves and nothing replaces the validator. A request carrying
+// no-store is left uncached (RFC 9111 section 5.2.1.5).
+func (rc *readCache) revalidate(r *http.Request, shape string, mode cacheMode, rv *revalidation) *http.Request {
 	if noStore(r.Header) {
-		return
+		return r
 	}
 	rv.cacheable = true
-	rv.key = c.cache.key(rv.token, shapeOf(req.Into), r.URL.String(), r.Header)
-	if mode != cacheConditional {
-		return
+	rv.key = rc.key(rv.token, shape, r)
+	if mode == cacheConditional {
+		rc.condition(r, rv)
 	}
-	e := c.cache.lookup(rv.key)
+	rv.check = newWireCheck(r)
+	return r.WithContext(context.WithValue(r.Context(), wireCheckKey{}, rv.check))
+}
+
+// condition sets the validator of the entry held for rv's key on r, and notes that
+// entry as the one a 304 may serve.
+func (rc *readCache) condition(r *http.Request, rv *revalidation) {
+	e := rc.lookup(rv.key)
 	if e == nil {
 		return
 	}
@@ -250,29 +298,107 @@ func (c *Conn) revalidate(req *Request, r *http.Request, mode cacheMode, rv *rev
 	rv.held = e.page
 }
 
-// serve answers a not-modified exchange [Conn.judge] found the held entry serves: its body, and
-// the exchange's own headers with the held fields they omit ([heldFields]). It
-// answers the entry kept from here on, nil where the exchange says no-store, which
-// forgets the entry after this answer (RFC 9111 section 5.2.2.5).
-func (c *Conn) serve(rv revalidation, out *Response) *pageEntry {
-	p := rv.held.refreshed(out.Header)
-	if c.freeNotMod && rv.token != "" {
-		c.cache.saved.Add(1)
-	}
-	out.Header = p.served(out.Header)
-	out.Status = http.StatusOK
-	out.Body = slices.Clone(p.Body)
-	out.Revalidated = true
-	if noStore(out.Header) {
-		return nil
-	}
-	return p
+// readExchange is one read through a cache, the sequence [Conn] and [CacheTransport]
+// share: the first attempt in the cache mode the read takes, in the generation
+// current as it begins, each answer judged by [judge], and a 304 nothing held may
+// serve sent once more without a validator, whether or not the read may be stored.
+// The resend belongs to the first attempt's exchange, whose key and generation the
+// owner settles once ([readCache.settle]).
+type readExchange struct {
+	cache *readCache
+	send  func(mode cacheMode, gen uint64) (*http.Response, revalidation, error)
+	// discarded takes the header of an answer the exchange drops: a resent 304's,
+	// on a cacheable read only where the wire vouches for it, and a 304 that fails
+	// the exchange.
+	discarded  func(http.Header)
+	cacheable  bool
+	resendable bool
 }
 
-// keepable is the entry a vouched 200 leaves for a later revalidation, its body the
-// projection decoded holds, nil where the answer carries no well-formed validator or
-// says no-store.
-func keepable(resp *http.Response, decoded any) *pageEntry {
+func (x readExchange) run() (*http.Response, revalidation, error) {
+	mode, gen := cacheOff, uint64(0)
+	if x.cacheable {
+		mode, gen = cacheConditional, x.cache.generation()
+	}
+	resp, rv, err := x.attempt(mode, gen, nil)
+	if err != nil || rv.verdict != verdictResend {
+		return resp, rv, err
+	}
+	if rv.check == nil || rv.check.vouches(resp) {
+		x.discarded(resp.Header)
+	}
+	if mode == cacheConditional {
+		mode = cacheUnconditional
+	}
+	return x.attempt(mode, gen, &rv)
+}
+
+// attempt is one send of the read and the verdict [judge] gives its answer. first is
+// the attempt a resend replaces, nil on the first one, which alone may be resent.
+func (x readExchange) attempt(mode cacheMode, gen uint64, first *revalidation) (*http.Response, revalidation, error) {
+	resp, rv, err := x.send(mode, gen)
+	if first != nil && first.cacheable && rv.key != first.key {
+		rv.key, rv.disowned = first.key, true
+	}
+	if err != nil {
+		return resp, rv, err
+	}
+	rv.verdict, err = judge(x.cache, &rv, resp, first == nil && x.resendable)
+	if err != nil {
+		x.discarded(resp.Header)
+		return nil, rv, err
+	}
+	return resp, rv, nil
+}
+
+// judge is the one decision of what a 304 does, and [readExchange.attempt] its one
+// caller; any other answer is [verdictNone]. It reads a 304's body in full and puts
+// it back for the owner. Only the wire's own 304, in the generation the send began
+// in, to a validator a held entry sent and naming that entry ([pageEntry.answers])
+// serves. Any other is resent where resend allows, and refused otherwise; a body
+// that fails to read is resent likewise, and is otherwise the exchange's failure.
+func judge(rc *readCache, rv *revalidation, resp *http.Response, resend bool) (verdict, error) {
+	if resp.StatusCode != http.StatusNotModified {
+		return verdictNone, nil
+	}
+	body, err := httpx.ReadLimitedBody(resp.Body, maxBodyBytes)
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	switch {
+	case err == nil && rv.held != nil && rv.vouched(resp, body) && rv.held.answers(rc.held, resp.Header) && rc.current(rv.gen):
+		return verdictServe, nil
+	case resend:
+		return verdictResend, nil
+	}
+	return verdictRefuse, err
+}
+
+// serve answers a not-modified exchange [judge] found the held entry serves: the
+// live header with each held field it omits, a copy of the held body, and the entry
+// kept from here on, nil where that header says no-store, which forgets the entry
+// after this answer (RFC 9111 section 5.2.2.5).
+func (rc *readCache) serve(rv *revalidation, live http.Header) (http.Header, []byte, *pageEntry) {
+	p := rv.held.refreshed(rc.held, live)
+	if rc.freeNotMod && rv.token != "" {
+		rc.saved.Add(1)
+	}
+	header := p.served(rc.held, live)
+	if noStore(header) {
+		return header, slices.Clone(p.Body), nil
+	}
+	return header, slices.Clone(p.Body), p
+}
+
+// serve is [readCache.serve] onto a call's answer, marked as revalidated.
+func (c *Conn) serve(rv *revalidation, out *Response) *pageEntry {
+	header, body, kept := c.cache.serve(rv, out.Header)
+	out.Header, out.Body, out.Status, out.Revalidated = header, body, http.StatusOK, true
+	return kept
+}
+
+// keepable is the entry a vouched 200 leaves for a later revalidation, its body what
+// body answers, nil where the answer carries no well-formed validator, says
+// no-store, or body fails.
+func (rc *readCache) keepable(resp *http.Response, body func() ([]byte, error)) *pageEntry {
 	if resp.StatusCode != http.StatusOK || noStore(resp.Header) {
 		return nil
 	}
@@ -280,12 +406,12 @@ func keepable(resp *http.Response, decoded any) *pageEntry {
 	if etag == "" && modified == "" {
 		return nil
 	}
-	body, err := ownedBody(decoded)
+	b, err := body()
 	if err != nil {
 		return nil
 	}
 	return &pageEntry{
-		ETag: strings.Clone(etag), LastModified: strings.Clone(modified), Body: body, Fields: holdFields(resp.Header),
+		ETag: strings.Clone(etag), LastModified: strings.Clone(modified), Body: b, Fields: rc.held.hold(resp.Header),
 	}
 }
 

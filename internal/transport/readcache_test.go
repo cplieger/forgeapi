@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -61,7 +62,7 @@ func (o *origin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Last-Modified", o.modified)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	conditional := (o.etag != "" && r.Header.Get("If-None-Match") == o.etag) ||
+	conditional := (o.etag != "" && slices.Contains(r.Header.Values("If-None-Match"), o.etag)) ||
 		(o.modified != "" && r.Header.Get("If-Modified-Since") == o.modified)
 	if o.status == http.StatusOK && (conditional || o.notModified > 0) {
 		if o.notModified > 0 {
@@ -633,6 +634,11 @@ func TestANotModifiedAnswerUpdatesTheHeldHeaders(t *testing.T) {
 			name: "the_rate_headers_of_the_304", first: http.Header{"X-Remaining": {"4000"}}, then: http.Header{"X-Remaining": {"3999"}},
 			want: map[string]string{"X-Remaining": "3999"}, requests: 2,
 		},
+		{
+			// GitLab's last page sends an empty X-Next-Page, which holds nothing to require.
+			name: "an_empty_next_page_the_304_omits", first: http.Header{"X-Next-Page": {""}}, then: http.Header{},
+			want: map[string]string{"X-Next-Page": ""}, requests: 2,
+		},
 	}
 	for _, name := range []string{"X-Next-Page", "X-Total-Count", "X-Gitlab-Meta", "X-Gitea-Version", "X-Forgejo-Version"} {
 		tests = append(tests, step{
@@ -810,6 +816,98 @@ func TestAnObserverThatChangesARequestBypassesTheCache(t *testing.T) {
 			}
 			if got.Login != "second.example" {
 				t.Errorf("the read sent with Host second.example = %+v, want that host's answer, not the one kept for first.example", got)
+			}
+		})
+	}
+}
+
+// A request an observer changed leaves without its validators however their lines
+// and names are written: an empty first line hides none (RFC 9110 section 5.6.1),
+// and net/http sends a field under any name.
+func TestAChangedRequestLeavesWithoutAnyValidatorLine(t *testing.T) {
+	for _, test := range []struct {
+		change func(h http.Header, lines []string)
+		name   string
+	}{
+		{name: "an_empty_first_line", change: func(h http.Header, lines []string) { h["If-None-Match"] = append([]string{""}, lines...) }},
+		{name: "a_lowercase_name", change: func(h http.Header, lines []string) {
+			h.Del("If-None-Match")
+			h["if-none-match"] = lines
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			o := newOrigin(`{"login":"octo"}`, `"v1"`)
+			change := func(next http.RoundTripper) http.RoundTripper {
+				return roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					if lines := r.Header.Values("If-None-Match"); len(lines) > 0 {
+						r = r.Clone(r.Context())
+						test.change(r.Header, lines)
+					}
+					return next.RoundTrip(r)
+				})
+			}
+			c := openTestConn(t, forgeapi.Connection{WebBaseURL: serveOrigin(t, o).URL}, forgeapi.WithAttemptObserver(change))
+			for i := range 2 {
+				if got, _, err := read(t, c, nil); err != nil || got.Login != "octo" {
+					t.Fatalf("read %d = %+v, %v, want the instance's answer", i, got, err)
+				}
+			}
+			got := o.requests()
+			if len(got) != 2 {
+				t.Errorf("the instance saw %d request(s), want 2: a changed read is one unconditional attempt", len(got))
+			}
+			for i, header := range got {
+				if lines := header.Values("If-None-Match"); slices.ContainsFunc(lines, func(line string) bool { return line != "" }) {
+					t.Errorf("wire request %d carried If-None-Match %q, want no validator on a changed request", i, lines)
+				}
+			}
+		})
+	}
+}
+
+// An answer is for the request it reports: a substitute wire that rewrites the
+// keyed request, here its credential, is answered for the request it sent, whether
+// its answers report that request or name none.
+func TestAWireThatRewritesARequestBypassesTheCache(t *testing.T) {
+	wire := &http.Transport{}
+	t.Cleanup(wire.CloseIdleConnections)
+	for _, test := range []struct {
+		report func(*http.Response)
+		name   string
+	}{
+		{name: "an_answer_reporting_its_request", report: func(*http.Response) {}},
+		{name: "an_answer_naming_no_request", report: func(resp *http.Response) { resp.Request = nil }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("ETag", `"shared"`)
+				w.Header().Set("Content-Type", "application/json")
+				if r.Header.Get("If-None-Match") == `"shared"` {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				_, _ = io.WriteString(w, `{"login":"`+r.Header.Get("Authorization")+`"}`)
+			}))
+			t.Cleanup(srv.Close)
+			var token atomic.Value
+			rewrite := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				r = r.Clone(r.Context())
+				r.Header.Set("Authorization", token.Load().(string))
+				resp, err := wire.RoundTrip(r)
+				if err == nil {
+					test.report(resp)
+				}
+				return resp, err
+			})
+			c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL}, forgeapi.WithWireTransport(rewrite))
+			for _, value := range []string{"one", "two"} {
+				token.Store(value)
+				if got, _, err := read(t, c, nil); err != nil || got.Login != value {
+					t.Errorf("the read the wire sent as %q = %+v, %v, want its own answer", value, got, err)
+				}
+			}
+			if got := c.BudgetState().ReadCache; got.Hits != 0 || got.Bytes != 0 {
+				t.Errorf("ReadCache = %+v, want no hit and nothing held for a request the wire rewrote", got)
 			}
 		})
 	}
@@ -1034,12 +1132,22 @@ func TestAnEntryIsChargedEverythingItHolds(t *testing.T) {
 	const key = "page-key"
 	body := make(json.RawMessage, 2, 4096)
 	copy(body, "{}")
-	p := &pageEntry{ETag: `"v1"`, Fields: holdFields(http.Header{"Link": {"next"}}), Body: body}
+	p := &pageEntry{ETag: `"v1"`, Fields: familyFields.hold(http.Header{"Link": {"next"}}), Body: body}
 	if got, model := pageCost(key, p), int64(len(key)+cap(body)+len(`"v1"`)+len("next")); got < model {
 		t.Errorf("a page whose body holds %d bytes is charged %d, want at least %d", cap(body), got, model)
 	}
-	if got := pageCost(key, p) - pageCost(key, &pageEntry{ETag: p.ETag, Body: p.Body}); got != int64(len("next")) {
-		t.Errorf("a held Link of %d bytes adds %d to the charge, want exactly its length", len("next"), got)
+	if got := pageCost(key, &pageEntry{Fields: [][]string{{"next"}}}) - pageCost(key, &pageEntry{Fields: [][]string{{""}}}); got != int64(len("next")) {
+		t.Errorf("a held line of %d bytes adds %d to the charge of an empty one, want exactly its length", len("next"), got)
+	}
+	slots := &pageEntry{ETag: p.ETag, Fields: heldTable(make([]heldField, 4096)).hold(http.Header{})}
+	want := int64(len(slots.Fields)) * int64(reflect.TypeFor[[]string]().Size())
+	if got := pageCost(key, slots) - pageCost(key, &pageEntry{ETag: p.ETag}); got < want {
+		t.Errorf("%d empty held field slots add %d to the charge, want at least the %d bytes their storage takes", len(slots.Fields), got, want)
+	}
+	lines := &pageEntry{ETag: p.ETag, Fields: [][]string{make([]string, 4096)}}
+	want = int64(len(lines.Fields[0])) * int64(reflect.TypeFor[string]().Size())
+	if got := pageCost(key, lines) - pageCost(key, &pageEntry{ETag: p.ETag, Fields: [][]string{nil}}); got < want {
+		t.Errorf("a held field of %d empty lines adds %d to the charge, want at least the %d bytes their storage takes", len(lines.Fields[0]), got, want)
 	}
 }
 

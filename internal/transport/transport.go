@@ -116,7 +116,6 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	writeSlots chan struct{}
 	family     forgeapi.Family
 	mutations  bool
-	freeNotMod bool
 	mu         sync.Mutex
 	lastMutate time.Time
 }
@@ -223,10 +222,9 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		writeSlots: make(chan struct{}, set.Budget.MutationConcurrency),
 		family:     opts.Family,
 		mutations:  set.Mutations,
-		freeNotMod: opts.FreeNotModified,
 	}
 	c.gov = newGovernor(set, &c.counters, opts.Family, opts.Clock)
-	c.cache = newReadCache(set)
+	c.cache = newReadCache(set.ReadCacheBytes, familyFields, opts.FreeNotModified)
 
 	policy := c.redirectPolicy(web, set)
 	c.read = httpx.NewRetryClient(base, policy, httpx.TransportConfig{
@@ -366,8 +364,7 @@ type pricedTransport struct {
 
 func (t pricedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := t.next.RoundTrip(r)
-	conditional := r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != ""
-	free := t.freeNotModified && conditional && r.Header.Get("Authorization") != "" && err == nil &&
+	free := t.freeNotModified && carriesValidator(r.Header) && r.Header.Get("Authorization") != "" && err == nil &&
 		resp.StatusCode == http.StatusNotModified
 	if counter := priceOf(r.Context()); counter != nil && !free {
 		counter.Add(1)
@@ -798,7 +795,7 @@ type Request struct {
 	AbsoluteURL string
 	// Answers are the non-2xx statuses this request reads as an ANSWER rather than
 	// a refusal: [Conn.Do] returns such a response with its body and no error, and
-	// the family decodes the outcome from it. A 304 is never one: [Conn.judge]
+	// the family decodes the outcome from it. A 304 is never one: [judge]
 	// settles every 304. One route needs it: GitHub's
 	// asynchronous merge answers a merge already in flight with a 409 whose body
 	// names that merge's handle, which is the outcome, not a conflict.
@@ -901,7 +898,7 @@ type Response struct {
 	Status     int
 	Redirected bool
 	// Revalidated says the held answer served this call after a 304: a held field
-	// ([heldFields]) the 304 omitted is the held value, which it did not confirm.
+	// ([familyFields]) the 304 omitted is the held value, which it did not confirm.
 	Revalidated bool
 }
 
@@ -918,8 +915,8 @@ func (r *Response) Quote(text string) string {
 // Do issues one request, maps its outcome and records what it cost. While the read
 // cache is on, a REST GET outside [CallWrite] that names [Request.Into], carries no
 // no-store and is not changed by an observer ([wireGuard]) is revalidated, and a
-// not-modified answer [Conn.judge] finds vouches for the held answer is served from
-// it ([Conn.serve], docs/read-cache.md).
+// not-modified answer [judge] finds vouches for the held answer is served from
+// it ([readCache.serve], docs/read-cache.md).
 //
 // What the call spent is published on EVERY arm it leaves by, the two refusals that
 // send nothing included: it is the last CALL's price, so one that sent nothing is 0.
@@ -951,21 +948,12 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	//nolint:bodyclose // answer always reads the body through httpx.ReadLimitedBody, which closes it
 	resp, rv, err := c.sendRead(ctx, req, target)
 	out, kept, err := c.answer(ctx, req, target, resp, &rv, err, started)
-	if err == nil && req.Into != nil && ctx.Err() != nil {
-		out, kept, err = nil, nil, c.transportError(ctx, req, ctx.Err(), started)
+	hit, ended := c.cache.conclude(ctx, &rv, kept, err == nil)
+	if err == nil && req.Into != nil && ended != nil {
+		out, err = nil, c.transportError(ctx, req, ended, started)
 	}
-	if rv.disowned {
-		kept = nil
-	}
-	if rv.key != "" {
-		c.cache.finish(rv.key, rv.gen, kept)
-	}
-	if rv.answered {
-		hit := rv.verdict == verdictServe && err == nil
-		c.cache.tally(hit)
-		if hit {
-			noteCache(ctx, cacheHit)
-		}
+	if hit {
+		noteCache(ctx, cacheHit)
 	}
 	switch {
 	case errors.Is(err, errUndecodable):
@@ -982,12 +970,11 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 // which [Conn.Do] records after the exchange's own line, as a family's refusal is.
 var errUndecodable = errors.New("response body did not decode")
 
-// answer reads the exchange's answer and settles it by [Conn.judge]'s verdict on a
-// 304: a served one answers from the held entry, a refused one is mapped like any
-// other refusal, and a success is decoded into [Request.Into]. It answers the entry
-// to keep, a served 304's refreshed one or a vouched 200's, which [Conn.Do] hands
-// [readCache.finish] once for the whole exchange, after the operation's deadline
-// has had its say.
+// answer reads the exchange's answer and settles it by [judge]'s verdict on a 304:
+// a served one answers from the held entry, a refused one is mapped like any other
+// refusal, and a success is decoded into [Request.Into]. It answers the entry to
+// keep, a served 304's refreshed one or a vouched 200's, which [Conn.Do] hands
+// [readCache.conclude] once for the whole exchange.
 func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *http.Response, rv *revalidation, sendErr error, started time.Time) (*Response, *pageEntry, error) {
 	if sendErr != nil {
 		return refusedHop(resp), nil, c.transportError(ctx, req, sendErr, started)
@@ -1009,7 +996,7 @@ func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *ht
 	var kept *pageEntry
 	switch {
 	case rv.verdict == verdictServe:
-		kept = c.serve(*rv, out)
+		kept = c.serve(rv, out)
 	case rv.verdict == verdictRefuse, resp.StatusCode >= 300 && !slices.Contains(req.Answers, resp.StatusCode):
 		return out, nil, c.upstreamError(ctx, req, out, started)
 	}
@@ -1017,7 +1004,7 @@ func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *ht
 		return out, nil, errUndecodable
 	}
 	if resp.StatusCode == http.StatusOK && rv.vouched(resp, body) {
-		kept = keepable(resp, req.Into)
+		kept = c.cache.keepable(resp, func() ([]byte, error) { return ownedBody(req.Into) })
 	}
 	return out, kept, nil
 }
@@ -1030,69 +1017,19 @@ func bodyLimit(req *Request) int64 {
 	return req.MaxBytes
 }
 
-// sendRead is [Conn.send] in the cache mode the request takes, in the cache
-// generation current as it begins; each attempt's answer is judged by [Conn.judge].
-// A REST GET whose 304 nothing held may serve is sent once more without a
-// validator, whether or not it may be stored. The discarded answer's rate headers
-// still reach the governor, on a cacheable read only where the wire vouches for
-// them. The resend belongs to the first attempt's exchange, whose key and
-// generation [Conn.Do] settles once.
+// sendRead is [Conn.send] through the read cache's [readExchange]: a REST GET
+// whose 304 nothing held may serve is sent once more, and the discarded answer's
+// rate headers reach the governor.
 func (c *Conn) sendRead(ctx context.Context, req *Request, target string) (*http.Response, revalidation, error) {
-	mode, gen := cacheOff, uint64(0)
-	if c.cacheable(ctx, req) {
-		mode, gen = cacheConditional, c.cache.generation()
-	}
-	resp, rv, err := c.attempt(ctx, req, target, mode, gen, nil)
-	if err != nil || rv.verdict != verdictResend {
-		return resp, rv, err
-	}
-	if rv.check == nil || rv.check.vouches(resp) {
-		c.gov.observe(resp.Header, c.signal)
-	}
-	if mode == cacheConditional {
-		mode = cacheUnconditional
-	}
-	return c.attempt(ctx, req, target, mode, gen, &rv)
-}
-
-// attempt is one send of a read and the verdict [Conn.judge] gives its answer.
-// first is the attempt a resend replaces, nil on the first one, which alone may be
-// resent.
-func (c *Conn) attempt(ctx context.Context, req *Request, target string, mode cacheMode, gen uint64, first *revalidation) (*http.Response, revalidation, error) {
-	resp, rv, err := c.send(ctx, req, target, mode, gen)
-	if first != nil && first.cacheable && rv.key != first.key {
-		rv.key, rv.disowned = first.key, true
-	}
-	if err != nil {
-		return resp, rv, err
-	}
-	rv.verdict, err = c.judge(&rv, resp, first == nil && req.Method == http.MethodGet && !req.Document)
-	if err != nil {
-		c.gov.observe(resp.Header, c.signal)
-		return nil, rv, err
-	}
-	return resp, rv, nil
-}
-
-// judge is the one decision of what a 304 does, and [Conn.attempt] its one caller;
-// any other answer is [verdictNone]. It reads a 304's body in full and puts it back
-// for [Conn.answer]. Only the wire's own 304, in the generation the send began in,
-// to a validator a held entry sent and naming that entry ([pageEntry.answers])
-// serves. Any other is resent where resend allows, and refused otherwise; a body
-// that fails to read is resent likewise, and is otherwise the exchange's failure.
-func (c *Conn) judge(rv *revalidation, resp *http.Response, resend bool) (verdict, error) {
-	if resp.StatusCode != http.StatusNotModified {
-		return verdictNone, nil
-	}
-	body, err := httpx.ReadLimitedBody(resp.Body, maxBodyBytes)
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-	switch {
-	case err == nil && rv.held != nil && rv.vouched(resp, body) && rv.held.answers(resp.Header) && c.cache.current(rv.gen):
-		return verdictServe, nil
-	case resend:
-		return verdictResend, nil
-	}
-	return verdictRefuse, err
+	return readExchange{
+		cache: c.cache,
+		send: func(mode cacheMode, gen uint64) (*http.Response, revalidation, error) {
+			return c.send(ctx, req, target, mode, gen)
+		},
+		discarded:  func(h http.Header) { c.gov.observe(h, c.signal) },
+		cacheable:  c.cacheable(ctx, req),
+		resendable: req.Method == http.MethodGet && !req.Document,
+	}.run()
 }
 
 // followed reports whether this exchange took a redirect hop, by comparing the URL
@@ -1193,11 +1130,7 @@ func (c *Conn) send(ctx context.Context, req *Request, target string, mode cache
 		r.Header.Set(h.Name, h.Value)
 	}
 	if mode != cacheOff {
-		c.revalidate(req, r, mode, &rv)
-	}
-	if rv.cacheable {
-		rv.check = newWireCheck(r)
-		r = r.WithContext(context.WithValue(ctx, wireCheckKey{}, rv.check))
+		r = c.cache.revalidate(r, shapeOf(req.Into), mode, &rv)
 	}
 	client := c.read
 	if req.mutates() {
