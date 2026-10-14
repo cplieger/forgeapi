@@ -150,7 +150,8 @@ func seconds(n int64) time.Duration {
 func unreadable(family forgeapi.Family, status int) *forgeapi.Error {
 	return &forgeapi.Error{
 		Code: forgeapi.CodeValidation, Family: family, Status: status, Kind: forgeapi.KindUpstream,
-		Message: "the OAuth endpoint answered a token whose lifetime states neither a rotating nor a static credential",
+		Retryable: transport.Retryable(forgeapi.KindUpstream, status),
+		Message:   "the OAuth endpoint answered a token whose lifetime states neither a rotating nor a static credential",
 	}
 }
 
@@ -160,7 +161,8 @@ func unreadable(family forgeapi.Family, status int) *forgeapi.Error {
 func tokenless(family forgeapi.Family, status int) *forgeapi.Error {
 	return &forgeapi.Error{
 		Code: forgeapi.CodeValidation, Family: family, Status: status, Kind: forgeapi.KindUpstream,
-		Message: "the OAuth endpoint answered a success that carries no token this package can read",
+		Retryable: transport.Retryable(forgeapi.KindUpstream, status),
+		Message:   "the OAuth endpoint answered a success that carries no token this package can read",
 	}
 }
 
@@ -177,14 +179,22 @@ var documentedErrors = map[string]bool{
 }
 
 // unanswered is an endpoint answer that is neither a token nor a protocol outcome
-// this package acts on. A server failure is worth another attempt; anything else
-// names the documented error member the instance sent, so an operator reads what
-// it said.
+// this package acts on. A throttle, a timeout or a server failure is worth another
+// attempt; anything else names the documented error member the instance sent, so
+// an operator reads what it said.
 func unanswered(family forgeapi.Family, status int, a *answer) *forgeapi.Error {
-	if status >= http.StatusInternalServerError {
+	switch {
+	case status == http.StatusTooManyRequests:
 		return &forgeapi.Error{
-			Family: family, Status: status, Kind: forgeapi.KindTransient, Retryable: true,
-			Message: "the OAuth endpoint answered a server failure",
+			Family: family, Status: status, Kind: forgeapi.KindRateLimited,
+			Retryable: transport.Retryable(forgeapi.KindRateLimited, status),
+			Message:   "the OAuth endpoint answered too many requests",
+		}
+	case transport.Retryable(forgeapi.KindUnknown, status):
+		return &forgeapi.Error{
+			Family: family, Status: status, Kind: forgeapi.KindTransient,
+			Retryable: transport.Retryable(forgeapi.KindTransient, status),
+			Message:   "the OAuth endpoint answered a timeout or a server failure",
 		}
 	}
 	message := "the OAuth endpoint answered no token"
@@ -194,5 +204,8 @@ func unanswered(family forgeapi.Family, status int, a *answer) *forgeapi.Error {
 	case a.Error != "":
 		message = "the OAuth endpoint answered an error member no OAuth document defines"
 	}
-	return &forgeapi.Error{Code: forgeapi.CodeValidation, Family: family, Status: status, Kind: forgeapi.KindUpstream, Message: message}
+	return &forgeapi.Error{
+		Code: forgeapi.CodeValidation, Family: family, Status: status, Kind: forgeapi.KindUpstream,
+		Retryable: transport.Retryable(forgeapi.KindUpstream, status), Message: message,
+	}
 }

@@ -201,7 +201,7 @@ type GrantCaps struct {
 // instance's version body under [EvidenceVersion]. A fixed product property
 // carries the evidence that proves it, which is why [RepoAffordances.Ev] is
 // keyed per field rather than stated once for the struct.
-type RepoAffordances struct { //nolint:govet // fieldalignment: field order here is declared order, Ev included, which sits beside the fields it explains, and it is API for an unkeyed composite literal
+type RepoAffordances struct { //nolint:govet // fieldalignment: field order here is declared order, Ev included, which sits beside the fields it explains
 	// MergeStrategies is the merge strategies this repository allows, in the
 	// family's own spellings: a style the repository record switches on, never
 	// one it disables. On a family whose merge takes no strategy (GitLab), it is

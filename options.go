@@ -116,9 +116,10 @@ type Budget struct {
 	// folded-status work is allowed. [WithStatusTimePerInterval] sets it. It is
 	// enforced like StatusReadsPerInterval: a read that cannot be issued inside
 	// the interval's remaining clock is not sent and its row is marked
-	// [PartialBudget]. OperationTimeout bounds each read inside it, so the work
-	// stops at whichever bound it reaches first. A consumer that wants its whole
-	// polling cycle bounded brings its own context.
+	// [PartialBudget]. OperationTimeout bounds the operation each read belongs to,
+	// and a list whose folds reach it returns with the unread rows marked
+	// [PartialBudget]. A consumer that wants its whole polling cycle bounded brings
+	// its own context.
 	StatusTimePerInterval time.Duration
 	// MutationInterval is the minimum gap between mutations.
 	// [WithMutationInterval] sets it.
@@ -226,7 +227,7 @@ type Counters struct {
 //
 // A consumer cannot construct an [Option], so it cannot reach these fields
 // except through the With* functions. A new field is additive.
-type Settings struct { //nolint:govet // fieldalignment: the field order is this record's own reading order and it is API for an unkeyed composite literal
+type Settings struct { //nolint:govet // fieldalignment: the field order is this record's own reading order
 	// Logger receives the library's own lines. Nil means slog.Default.
 	Logger *slog.Logger
 	// Credential is the token source every request authenticates with. Nil
@@ -264,6 +265,9 @@ type Settings struct { //nolint:govet // fieldalignment: the field order is this
 	// RefreshLead is how long before expiry a rotating credential is due for
 	// refresh, the value [WithRefreshLead] took.
 	RefreshLead time.Duration
+	// ReadCacheBytes bounds what the read cache holds, the value
+	// [WithReadCache] took; zero switches the cache off.
+	ReadCacheBytes int64
 }
 
 // Option configures a client. Every option takes a parameter and none signals by
@@ -285,6 +289,7 @@ func Resolve(opts ...Option) Settings {
 		MutationReserve: DefaultMutationReserve,
 		Mutations:       true,
 		RefreshLead:     DefaultRefreshLead,
+		ReadCacheBytes:  DefaultReadCacheBytes,
 	}
 	for _, o := range opts {
 		if o != nil {
@@ -427,6 +432,17 @@ func WithMutationReserve(n int) Option {
 	return optionFunc(func(s *Settings) { s.MutationReserve = n })
 }
 
+// WithReadCache bounds the bytes this connection's read cache holds, evicting the
+// least recently used entry first. A held answer is served only where the instance
+// answers the read's validator with a not-modified status. Zero holds nothing and
+// sends every read unconditionally. A negative maxBytes is refused by a family's
+// constructor with [CodeBudgetInvalid].
+//
+// Default: [DefaultReadCacheBytes].
+func WithReadCache(maxBytes int64) Option {
+	return optionFunc(func(s *Settings) { s.ReadCacheBytes = maxBytes })
+}
+
 // WithCredentialSource sets the token source every request on this connection
 // authenticates with. See [CredentialSource].
 //
@@ -449,12 +465,11 @@ func WithRefreshLead(d time.Duration) Option {
 	return optionFunc(func(s *Settings) { s.RefreshLead = d })
 }
 
-// WithWireTransport replaces the wire under this client's own HTTP stack, which
-// is what a test substitutes to answer requests without a network. It bypasses
-// containment: the address policy, the port allowlist, the trust anchor, the
-// redirect policy and the connection's own proxy live in the transport it
-// replaces, so a substitute enforces exactly what its author wrote. A client's
-// Close does not reach it: a substitute's pool is its author's to release.
+// WithWireTransport replaces the wire under this client's own HTTP stack, as a
+// test does to answer without a network. It bypasses containment, which lives in
+// the transport it replaces: address policy, port allowlist, trust anchor,
+// redirect policy and proxy. Close leaves its pool to its author, and its reads are
+// cached only where each answer reports the request it answered as its Request.
 //
 // Default: none, and the library builds its own transport. It never falls back
 // to http.DefaultClient, which has no timeout and no redirect policy of ours.
@@ -463,11 +478,11 @@ func WithWireTransport(rt http.RoundTripper) Option {
 }
 
 // WithRequestObserver installs a hook outside the retry layer, called once per
-// logical request whatever the attempt count: the position for per-request
-// accounting. The hook takes the next round tripper, returns one, and must pass
-// the request on. A second WithRequestObserver replaces the first, so two hooks
-// here compose in one wrap function. Both observer positions sit above the
-// transport [WithWireTransport] replaces, so containment is unaffected.
+// logical request whatever the attempt count. The hook takes the next round
+// tripper and must pass the request on, its context derived from the one it got;
+// a second one replaces the first. Both observer positions sit above
+// [WithWireTransport]'s, so containment holds. A revalidated read reaches both as
+// the instance's 304, and a read a hook changes bypasses the read cache.
 //
 // Default: none.
 func WithRequestObserver(wrap func(next http.RoundTripper) http.RoundTripper) Option {
@@ -475,9 +490,10 @@ func WithRequestObserver(wrap func(next http.RoundTripper) http.RoundTripper) Op
 }
 
 // WithAttemptObserver installs a hook inside the retry layer, called once per
-// attempt, so a retried request shows as more than one call. Its shape and
-// containment are [WithRequestObserver]'s: the hook must pass the request on,
-// and a second WithAttemptObserver replaces the first.
+// attempt, so a retried request shows as more than one call. Its shape, its
+// containment and its effect on the read cache are [WithRequestObserver]'s: the
+// hook must pass the request on, and a second WithAttemptObserver replaces the
+// first.
 //
 // Default: none.
 func WithAttemptObserver(wrap func(next http.RoundTripper) http.RoundTripper) Option {
@@ -525,7 +541,7 @@ func WithPlaintextHTTP(allowed bool) Option {
 }
 
 // ListSettings is the resolved per-call option state for a list operation.
-type ListSettings struct { //nolint:govet // fieldalignment: each field was appended in turn, and the order is API for an unkeyed composite literal
+type ListSettings struct { //nolint:govet // fieldalignment: each field was appended in turn, and api/forgeapi.txt records that order
 	// After is the continuation to resume from, empty for a first page.
 	After Cursor
 	// Owner is the owner scope [WithOwner] named, empty where it named none.

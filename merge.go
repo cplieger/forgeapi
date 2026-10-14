@@ -30,7 +30,7 @@ func (m MergeIntent) String() string {
 var _ fmt.Stringer = MergeIntent(0)
 
 // MergeRequest is one merge attempt.
-type MergeRequest struct { //nolint:govet // fieldalignment: field order here is declared order, and it is API for an unkeyed composite literal
+type MergeRequest struct { //nolint:govet // fieldalignment: field order here is declared order, which api/forgeapi.txt records
 	// Intent is the cross-forge intent.
 	Intent MergeIntent
 	// Strategy is an OPTIONAL family spelling, and it is refused with
@@ -138,7 +138,7 @@ var _ fmt.Stringer = MergeOutcomeState(0)
 // is the consumer's own cache policy, which this library does not own and has no
 // opinion about. The read that answers what the pull request now looks like is
 // [Merges.MergeStatus] or [PullRequests.ReadPR].
-type MergeOutcome struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, the outcome first, and it is API for an unkeyed composite literal
+type MergeOutcome struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, the outcome first
 	// State is the outcome.
 	State MergeOutcomeState
 	// Code is a machine-readable discriminator from the same namespace as
@@ -169,7 +169,7 @@ type MergeOutcome struct { //nolint:govet // fieldalignment: field order is the 
 // ride WebURL, which is where this read points a caller who wants more than it
 // fetches, and the rename mark every response-level carrier has, because this
 // read addresses a repository and its return rides no list item.
-type MergeStatus struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, the answer first, and it is API for an unkeyed composite literal
+type MergeStatus struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, the answer first
 	// Merged reports whether the pull request is merged. It is a [Support]
 	// rather than a bool because an answer the credential could not read is
 	// unknown, not a wrong "not merged".

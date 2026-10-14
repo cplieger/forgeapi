@@ -103,8 +103,30 @@ func (p PRState) String() string {
 
 var _ fmt.Stringer = PRState(0)
 
+// AccountKind is what kind of account authored an item.
+type AccountKind int
+
+// The AccountKind members.
+const (
+	// AccountKindUnknown is the zero value: the answer named no kind, or a
+	// kind that is neither a person's account nor a bot's.
+	AccountKindUnknown AccountKind = iota
+	// AccountKindUser is a person's account.
+	AccountKindUser
+	// AccountKindBot is an account the product marks as a bot, such as a
+	// GitHub App, whose login on some routes carries no "[bot]" suffix.
+	AccountKindBot
+)
+
+// String returns the member's spelling: "unknown", "user" or "bot".
+func (a AccountKind) String() string {
+	return nameOf([]string{nameUnknown, "user", "bot"}, a)
+}
+
+var _ fmt.Stringer = AccountKind(0)
+
 // PullRequest is one pull request, called a merge request on one family.
-type PullRequest struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, addressing first, and it is API for an unkeyed composite literal
+type PullRequest struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, addressing first
 	// Ref addresses it, sigil included.
 	Ref PRRef
 	// Repo is the repository it belongs to, so a row carries its own
@@ -116,15 +138,19 @@ type PullRequest struct { //nolint:govet // fieldalignment: field order is the r
 	Body string
 	// Author is the account that opened it.
 	Author string
+	// AuthorKind is the kind of account Author is, AccountKindUnknown where
+	// the product's answer does not say.
+	AuthorKind AccountKind
 	// SourceBranch is the branch being merged.
 	SourceBranch string
 	// SourceRepo is the repository SourceBranch lives in: Repo for a pull
 	// request opened inside its repository, the fork for one opened from a
 	// fork. It is the zero RepoRef where the answer names no head repository
-	// the credential can read: a deleted fork on every family, a fork the
-	// credential cannot see and, where a product's table says so, a route whose
-	// answer does not carry it; a consumer joining a local clone matches it
-	// beside Repo.
+	// the credential can read (a deleted fork on every family, a fork the
+	// credential cannot see, a route whose answer does not carry it where a
+	// product's table says so) and where [PullRequest.Partial] marks GitLab's
+	// fork lookup undone. A consumer joining a local clone matches it beside
+	// Repo.
 	SourceRepo RepoRef
 	// TargetBranch is the branch it merges into.
 	TargetBranch string
@@ -143,18 +169,14 @@ type PullRequest struct { //nolint:govet // fieldalignment: field order is the r
 	// Action is everything its own controls need, and it rides the item
 	// because every field in it is a property of this pull request.
 	Action ActionState
-	// Partial is non-nil when something this pull request needed stopped short, and
-	// nil on every complete row. It carries [PartialPaginationCap] where the check
-	// fold or, on GitLab, the labels stopped short (that member names each path), and
-	// beside it [ActionState.Checks] stays exact where the product counted the whole
-	// collection, only the check names short, and is [CheckUnknown] where it did not;
-	// [PartialBudget] where the per-interval folded-status cap left the fold unissued;
-	// [PartialRateLimited] where a read the row needed was deferred or throttled, the
-	// Gitea family's folded status or GitLab's fork lookup, [PullRequest.SourceRepo]
-	// then the zero reference on GitLab;
-	// [PartialLabelsNotApplied] on a creation's pull request where its labels were not
-	// applied; [PartialForbidden] where the credential may not read the checks, then
-	// [CheckUnknown] with no count; and on a single read [PartialGraphQLPartial].
+	// Partial is nil on a complete row, else what stopped short:
+	// [PartialPaginationCap], the check fold or GitLab's labels, with
+	// [ActionState.Checks] exact where the product counted them all, else
+	// [CheckUnknown]; [PartialBudget], a read the per-interval cap or the
+	// operation's bound left undone; [PartialRateLimited], one deferred or
+	// throttled (the Gitea fold, GitLab's fork lookup); [PartialForbidden],
+	// unreadable checks, [CheckUnknown] with no count; [PartialLabelsNotApplied],
+	// a creation's labels; [PartialGraphQLPartial], a single read.
 	Partial *Partial
 	// State is open, closed or merged.
 	State PRState
@@ -200,7 +222,7 @@ func (i IssueState) String() string {
 var _ fmt.Stringer = IssueState(0)
 
 // Issue is one issue.
-type Issue struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, addressing first, and it is API for an unkeyed composite literal
+type Issue struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, addressing first
 	// Ref addresses it.
 	Ref IssueRef
 	// Repo is the repository it belongs to.
@@ -211,6 +233,9 @@ type Issue struct { //nolint:govet // fieldalignment: field order is the reading
 	Body string
 	// Author is the account that filed it.
 	Author string
+	// AuthorKind is the kind of account Author is, AccountKindUnknown where
+	// the product's answer does not say.
+	AuthorKind AccountKind
 	// WebURL is its page on the instance.
 	WebURL string
 	// Labels are the labels on it.
@@ -234,7 +259,7 @@ type NewIssue struct {
 }
 
 // Release is one tagged release.
-type Release struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, the tag first, and it is API for an unkeyed composite literal
+type Release struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, the tag first
 	// TagName is the tag it points at.
 	TagName string
 	// Name is its title.
@@ -300,7 +325,7 @@ type CheckContext struct {
 // both its folded state and its total are computed over the returned PAGE, so a
 // page of successes reports success for a commit that is failing and the
 // truncation is not detectable from the body at all.
-type CommitChecks struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, the commit first, and it is API for an unkeyed composite literal
+type CommitChecks struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, the commit first
 	// Ref is the commit the checks belong to: the SHA the read resolved the
 	// requested ref to, so a branch asked for comes back as its head commit. It
 	// is the ref as asked only where the answer named no commit, which includes
@@ -368,7 +393,7 @@ var _ fmt.Stringer = RunTrigger(0)
 
 // Run is one CI run of one repository: a GitHub Actions workflow run, a GitLab
 // pipeline, or a Gitea or Forgejo Actions run.
-type Run struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, addressing first, and it is API for an unkeyed composite literal
+type Run struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, addressing first
 	// Ref identifies the run within Repo.
 	Ref RunRef
 	// Repo is the repository the run belongs to.

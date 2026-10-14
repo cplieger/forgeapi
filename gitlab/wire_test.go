@@ -744,3 +744,48 @@ func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 		})
 	}
 }
+
+// TestTheAuthorKindIsTheUsersBotFlag holds each arm to the bot flag its author
+// carries, as measured on gitlab.com 2026-10-11: the merge-request document's author
+// and the REST merge request's author both answered bot, the REST issue's author
+// answered no such key, so an issue's kind is never read as a person's.
+func TestTheAuthorKindIsTheUsersBotFlag(t *testing.T) {
+	c := newHarness(t, nil).client
+	for _, tc := range []struct {
+		author string
+		want   forgeapi.AccountKind
+	}{
+		{author: `{"username":"project_1_bot_0123","bot":true}`, want: forgeapi.AccountKindBot},
+		{author: `{"username":"example-user","bot":false}`, want: forgeapi.AccountKindUser},
+		{author: `{"username":"example-user"}`, want: forgeapi.AccountKindUnknown},
+		{author: `null`, want: forgeapi.AccountKindUnknown},
+	} {
+		var doc docMergeRequest
+		var rest restMergeRequest
+		var issue restIssue
+		for _, decode := range []struct {
+			into any
+			body string
+		}{
+			{&doc, `{"iid":"1","author":` + tc.author + `}`},
+			{&rest, `{"iid":1,"author":` + tc.author + `}`},
+			{&issue, `{"iid":1,"author":` + tc.author + `}`},
+		} {
+			if err := json.Unmarshal([]byte(decode.body), decode.into); err != nil {
+				t.Fatalf("Setup: decode %s: %v", decode.body, err)
+			}
+		}
+		for name, got := range map[string]forgeapi.AccountKind{
+			"normalizeDocPull":  c.normalizeDocPull(&doc, testRef()).AuthorKind,
+			"normalizeRESTPull": c.normalizeRESTPull(&rest, testRef(), restDegraded).AuthorKind,
+			"normalizeIssue":    c.normalizeIssue(&issue, testRef()).AuthorKind,
+		} {
+			if got != tc.want {
+				t.Errorf("%s(author %s).AuthorKind = %v, want %v", name, tc.author, got, tc.want)
+			}
+		}
+	}
+	if !strings.Contains(mergeRequestFields, "author { username bot }") {
+		t.Error("the merge-request documents select no author bot flag, so their rows answer AccountKindUnknown")
+	}
+}

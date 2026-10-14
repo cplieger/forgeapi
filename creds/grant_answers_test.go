@@ -173,3 +173,34 @@ func TestDeviceGrant_answers_a_server_failure_as_worth_another_attempt(t *testin
 		t.Errorf("Poll() over a 500 = error %v, want a retryable transient failure", err)
 	}
 }
+
+// A token endpoint that timed out, throttled or failed spent nothing, so the grant
+// stays pollable; a 400 naming no protocol outcome is not worth another attempt.
+func TestATokenEndpointThatTimedOutOrThrottledLeavesTheGrantPollable(t *testing.T) {
+	for _, test := range []struct {
+		status    int
+		kind      forgeapi.ErrorKind
+		retryable bool
+	}{
+		{status: http.StatusRequestTimeout, kind: forgeapi.KindTransient, retryable: true},
+		{status: http.StatusTooManyRequests, kind: forgeapi.KindRateLimited, retryable: true},
+		{status: http.StatusServiceUnavailable, kind: forgeapi.KindTransient, retryable: true},
+		{status: http.StatusBadRequest, kind: forgeapi.KindUpstream},
+	} {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
+			ep := newEndpoint(t, deviceFlow(deviceCode("900"),
+				answerBody{status: test.status, body: `{}`},
+				answerBody{status: http.StatusOK, body: `{"error":"authorization_pending"}`}))
+			g := startGrant(t, ep, forgeapi.FamilyGitHub)
+
+			_, done, err := g.Poll(t.Context())
+			fe, ok := errors.AsType[*forgeapi.Error](err)
+			if !ok || done || fe.Kind != test.kind || fe.Retryable != test.retryable {
+				t.Fatalf("Poll() over a %d = (%v, %v), want kind %v, retryable %v", test.status, done, err, test.kind, test.retryable)
+			}
+			if _, done, err := g.Poll(t.Context()); err != nil || done {
+				t.Errorf("a second Poll() = (%v, %v), want (false, nil) while authorization is pending", done, err)
+			}
+		})
+	}
+}

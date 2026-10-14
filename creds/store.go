@@ -23,7 +23,7 @@ var errNotDurable = errors.New("creds: the credential file was written but not p
 // Store holds the credential records of a consumer's connections under keys that
 // are the consumer's own connection identities, opaque here.
 //
-// Its one unexported method is a refresh's custody of a key: the single owner a
+// Its unexported methods are a refresh's custody of a key: the single owner a
 // rotation runs under and its compare-and-swap over the whole record. So
 // [FileStore] is its only implementation.
 type Store interface {
@@ -35,11 +35,12 @@ type Store interface {
 	// Delete removes the record under key, which is a disconnect. Deleting a
 	// key that holds no record is not an error.
 	Delete(key string) error
-	// Keys answers every key that holds a record, in no stated order: what the
-	// git credential helper matches against.
+	// Keys answers every key that holds a record, in no stated order.
 	Keys() ([]string, error)
 
-	rotation(key string) *rotation
+	acquire(key string) *rotation
+	peek(key string) *rotation
+	release(r *rotation, gone bool)
 }
 
 // FileStore is the [Store] over one file, credentials.json at mode 0600, in a
@@ -111,7 +112,8 @@ func (s *FileStore) Save(key string, rec Record) error {
 	return s.write(recs, rec.Family)
 }
 
-// Delete removes the record under key.
+// Delete removes the record under key and marks the key's refresh custody gone,
+// freed after its last holder unless a rotated pair or an owed mark is pending.
 func (s *FileStore) Delete(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -124,7 +126,16 @@ func (s *FileStore) Delete(key string) error {
 		return nil
 	}
 	delete(recs, key)
-	return s.write(recs, rec.Family)
+	if err := s.write(recs, rec.Family); err != nil {
+		return err
+	}
+	s.custodyMu.Lock()
+	defer s.custodyMu.Unlock()
+	if r, held := s.custody[key]; held {
+		r.gone = true
+		s.free(r)
+	}
+	return nil
 }
 
 // Keys answers every key that holds a record.
@@ -157,7 +168,10 @@ func (s *FileStore) swap(key string, prev, next *Record) (bool, error) {
 	return true, nil
 }
 
-func (s *FileStore) rotation(key string) *rotation {
+// acquire answers key's refresh custody, creating it, and counts the caller as a
+// holder until its [FileStore.release]. Only a token call acquires, so a state read
+// cannot recreate the custody of a deleted key.
+func (s *FileStore) acquire(key string) *rotation {
 	s.custodyMu.Lock()
 	defer s.custodyMu.Unlock()
 	r, ok := s.custody[key]
@@ -165,7 +179,45 @@ func (s *FileStore) rotation(key string) *rotation {
 		r = &rotation{owner: make(chan struct{}, 1), store: s, key: key}
 		s.custody[key] = r
 	}
+	r.holders++
 	return r
+}
+
+// peek answers key's refresh custody where one exists, and otherwise a fresh one
+// that holds nothing and is never stored.
+func (s *FileStore) peek(key string) *rotation {
+	s.custodyMu.Lock()
+	defer s.custodyMu.Unlock()
+	if r, ok := s.custody[key]; ok {
+		return r
+	}
+	return &rotation{owner: make(chan struct{}, 1), store: s, key: key}
+}
+
+// release ends one holder's use of r; gone records that the holder found no
+// record under the key.
+func (s *FileStore) release(r *rotation, gone bool) {
+	s.custodyMu.Lock()
+	defer s.custodyMu.Unlock()
+	r.holders--
+	if gone {
+		r.gone = true
+	}
+	s.free(r)
+}
+
+// free deletes a gone custody nobody holds, unless it holds the only copy of a
+// rotated pair or a mark the store still owes. It is deleted only at zero holders,
+// else a paused token call and a later one would own one key twice. Called under
+// custodyMu.
+func (s *FileStore) free(r *rotation) {
+	if r.holders > 0 || !r.gone || s.custody[r.key] != r {
+		return
+	}
+	if _, _, pending := r.held(); pending || r.owes() {
+		return
+	}
+	delete(s.custody, r.key)
 }
 
 // fileContents is the whole credential file.
@@ -240,8 +292,11 @@ type rotation struct {
 	key  string
 	mark Usability
 	mu   sync.Mutex
-	busy bool
-	owed bool
+	// holders and gone are the store's, under its custodyMu.
+	holders int
+	busy    bool
+	owed    bool
+	gone    bool
 }
 
 // take makes the caller the key's refresh owner, waiting no longer than ctx allows.
@@ -321,6 +376,13 @@ func (r *rotation) drop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.base, r.pair = nil, nil
+}
+
+// owes reports whether a mark is owed to the store.
+func (r *rotation) owes() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.owed
 }
 
 // markFor answers the mark of the outcome reached for rec, and UsabilityUnmarked

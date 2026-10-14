@@ -81,26 +81,15 @@ func repoRoute(repo forgeapi.RepoRef, rest string) string {
 // readJSON performs one GET and decodes it, answering the response beside the error
 // because two of this product's facts ride there rather than in the body: the
 // pagination witness and the record that a redirect was followed, which is how a
-// renamed repository is detected.
-//
-// The read is UNCONDITIONAL, as every read this library issues is: nothing above the
-// transport holds a response body to answer a not-modified response from, and no
-// published return has a member that says unchanged, so the weak validator this
-// product sends on every REST response is irrelevant here. A
-// not-modified answer arriving anyway is the unexpected status the core maps.
+// renamed repository is detected. [transport.Conn.Do] states when the read cache
+// revalidates the read.
 func (c *Client) readJSON(ctx context.Context, op, path string, query url.Values, out any) (*transport.Response, error) {
 	resp, err := c.core.Do(ctx, &transport.Request{
 		Op: op, Method: http.MethodGet, Path: path, Query: query, Page: pageIn(query),
-		Headers: c.restHeaders(),
+		Headers: c.restHeaders(), Into: out,
 	})
 	c.noteResponse(resp)
-	if err != nil {
-		return resp, err
-	}
-	if err := transport.Decode(resp.Body, out); err != nil {
-		return resp, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
-	}
-	return resp, nil
+	return resp, err
 }
 
 // rename is what one call learned about the address it was given: the successor a
@@ -245,9 +234,12 @@ func (c *Client) sendJSON(ctx context.Context, op, method, path string, body, ou
 	return nil
 }
 
-// exchange issues one REST request with this connection's REST headers and answers
+// exchange issues one REST mutation with this connection's REST headers and answers
 // its response, a redirect the write was refused on answered as the stale reference.
+// It marks its call a write, so the successor read that refusal makes is part of the
+// write and never revalidated.
 func (c *Client) exchange(ctx context.Context, req *transport.Request) (*transport.Response, error) {
+	ctx = transport.CallWrite(ctx, req.Op)
 	req.Headers = c.restHeaders()
 	resp, err := c.core.Do(ctx, req)
 	c.noteResponse(resp)
@@ -332,6 +324,7 @@ func (c *Client) listQuery(op string, repo forgeapi.RepoRef, kind listKind, set 
 	if err != nil {
 		return nil, restWalk{}, err
 	}
+	walk.size = min(set.PageBound, restPerPageMax)
 	query := url.Values{
 		keyPage:    {strconv.Itoa(walk.page)},
 		keyPerPage: {strconv.Itoa(set.PageBound)},
@@ -358,11 +351,12 @@ func listState(s forgeapi.ListState) string {
 	return stateOpen
 }
 
-// restWalk is where one call of a REST list stands: the call its continuations name
-// and the page it reads.
+// restWalk is where one call of a REST list stands: the call its continuations name,
+// the page it reads and the rows a full page holds.
 type restWalk struct {
 	call transport.PageCall
 	page int
+	size int
 }
 
 // restWalkAt reads where a REST list call stands from its continuation, the empty one
@@ -403,6 +397,18 @@ func (w restWalk) next(header http.Header) forgeapi.Cursor {
 		return ""
 	}
 	return w.call.Mint(cursorPrefix, w.page+1)
+}
+
+// nextAfter is next for a list whose body states no total, given the rows the page
+// answered before any was dropped. A revalidated page's link header is the held
+// one: this product's 304 omits it and its ETag covers the body alone (measured), so
+// rows added beyond an unchanged page leave both as they were. A full revalidated
+// page therefore continues too, and the next page's own read answers what follows.
+func (w restWalk) nextAfter(resp *transport.Response, rows int) forgeapi.Cursor {
+	if resp.Revalidated && rows >= w.size {
+		return w.call.Mint(cursorPrefix, w.page+1)
+	}
+	return w.next(resp.Header)
 }
 
 // hasNextLink reports whether one response's link header offers a next page.

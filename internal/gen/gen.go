@@ -1,5 +1,5 @@
-// Package gen renders everything forgeapi publishes about per-product behaviour
-// from the expectation table, and nothing else states those facts.
+// Package gen renders the per-product parts of roles.go and SUPPORT.md from the
+// expectation table in internal/spec.
 //
 // Two outputs. It replaces the per-forge block of every role method's godoc in
 // roles.go, and it renders SUPPORT.md, the operation-by-product support matrix.
@@ -397,7 +397,24 @@ func renderSupport() []byte {
 		out.WriteString("\n")
 	}
 	renderThrottles(&out)
+	renderRevalidations(&out)
 	return []byte(out.String())
+}
+
+// renderRevalidations writes what each product does with a conditional read, which
+// is what the read cache and the published prices follow.
+func renderRevalidations(out *strings.Builder) {
+	out.WriteString("\n## Conditional reads\n\n")
+	out.WriteString("The read cache revalidates a REST read whose earlier answer it holds, outside the reads [the read cache](docs/read-cache.md#what-is-never-cached) leaves out, and serves that answer only where the instance answers `304 Not Modified`. ")
+	out.WriteString("A product that sends no validator is never revalidated. The price is what one not-modified answer bills.\n\n")
+	out.WriteString("| Product | Validators | Price of a 304 | Documents | Answer |\n| --- | --- | --- | --- | --- |\n")
+	for _, product := range spec.Products {
+		for _, r := range spec.Revalidations {
+			if r.Product == product {
+				fmt.Fprintf(out, "| %s | %s | %d | %s | %s |\n", product, r.Validators, r.NotModifiedPrice, r.Documents, r.Says)
+			}
+		}
+	}
 }
 
 // renderThrottles writes the answers each product sends for its rate limit, which

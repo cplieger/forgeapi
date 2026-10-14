@@ -54,7 +54,7 @@ const RepoIDPrefix = "v1."
 // A rename or a transfer changes the selector and therefore the ID: a stale one
 // resolves to [CodeRepoRefStale], carrying the successor only where the
 // connection could discover it.
-type RepoRef struct { //nolint:govet // fieldalignment: field order here is declared order, and it is API for an unkeyed composite literal
+type RepoRef struct { //nolint:govet // fieldalignment: field order here is declared order, which api/forgeapi.txt records
 	// ID is the wire-facing derived identifier. It is not authorization:
 	// every resolution re-checks the connection's grant, and opacity is a
 	// consumer convenience.
@@ -243,7 +243,7 @@ func ValidateRef(ref string) error {
 }
 
 // PRRef addresses one pull request within a repository.
-type PRRef struct { //nolint:govet // fieldalignment: the number leads because that is how a human reads a pull-request reference, and the order is API for an unkeyed composite literal
+type PRRef struct { //nolint:govet // fieldalignment: the number leads because that is how a human reads a pull-request reference
 	// Number is the number the family's own API takes. On one family that is
 	// the request's per-project number rather than a global identifier.
 	Number int

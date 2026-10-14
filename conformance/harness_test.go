@@ -421,7 +421,7 @@ func isGraphQL(body []byte) bool {
 }
 
 // departureFor returns the table's departure row for one field path of one entry,
-// expanding the collapsed row spelling the derivation uses for a RUN of fields.
+// expanding the collapsed row spelling the table uses for a RUN of fields.
 func departureFor(e *spec.Entry, path string) (spec.Departure, bool) {
 	for _, d := range e.Departures {
 		if slices.Contains(coveredPaths(d.Field), path) {

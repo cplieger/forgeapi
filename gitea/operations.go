@@ -253,21 +253,13 @@ func (c *Client) myPullPage(rows []wirePull, walk pageWalk) forgeapi.Page[forgea
 	}
 }
 
-// foldRows fills the rows' folded verdicts in ROTATION order.
-//
-// The window starts at the row after the one the stored cursor names rather than at
-// the first, so the rows a previous interval could not reach are the ones this
-// interval serves: without that, a poller presenting the same list in the same
-// order folds the same prefix forever and every row past the per-interval cap
-// starves. The items keep the instance's own order; what moves is which of them the
-// interval's budget buys.
-// An upstream THROTTLE is the one failure it absorbs, and the envelope is what
-// assigns the marker: a throttle refusal answered upstream is one of that reason's
-// two producers, so the row the throttle refused and every row this interval had not
-// yet reached carry it, and no further fold is issued into an instance that has just
-// refused one. Any other upstream failure has no honest marker in the published
-// vocabulary, so it FAILS the call, which is what the single-pull-request read on the
-// same fold already does.
+// foldRows fills the rows' folded verdicts in ROTATION order, starting after the row
+// the stored cursor names, so the rows one interval could not reach are the next
+// one's first and no row past the per-interval cap starves; the items keep the
+// instance's order. A throttle upstream, or the operation's own bound, ending a fold
+// marks that row and every unreached one with the reason the envelope assigns,
+// rate-limited or budget, and issues no further fold. Any other failure, the caller's
+// context ending included, FAILS the call, as the single read's fold does.
 func (c *Client) foldRows(ctx context.Context, op string, addr *address, items []forgeapi.PullRequest) error {
 	if len(items) == 0 {
 		return nil
@@ -280,28 +272,32 @@ func (c *Client) foldRows(ctx context.Context, op string, addr *address, items [
 		if issued {
 			c.rememberFoldPosition(list, at)
 		}
-		if err != nil {
-			if transport.IsThrottled(err) {
-				c.markThrottled(items, start, n)
-				return nil
-			}
+		switch {
+		case err == nil:
+		case transport.IsThrottled(err):
+			c.markUnread(items, start, n, forgeapi.PartialRateLimited)
+			return nil
+		case transport.OperationExpired(ctx, err):
+			c.markUnread(items, start, n, forgeapi.PartialBudget)
+			return nil
+		default:
 			return err
 		}
 	}
 	return nil
 }
 
-// markThrottled marks the row a throttle refused and every row this interval had not
-// yet reached, so the rows carrying no verdict carry the reason instead. A row with
-// nothing to fold is left alone: it was never going to be issued, so a throttle is not
-// why it has no verdict.
-func (c *Client) markThrottled(items []forgeapi.PullRequest, start, from int) {
+// markUnread marks the row a fold failed on and every row this interval had not yet
+// reached with the reason that stopped the folds, so the rows carrying no verdict
+// carry the reason instead. A row with nothing to fold is left alone: it was never
+// going to be issued, so the stop is not why it has no verdict.
+func (c *Client) markUnread(items []forgeapi.PullRequest, start, from int, reason forgeapi.PartialReason) {
 	for n := from; n < len(items); n++ {
 		at := (start + n) % len(items)
 		if items[at].HeadSHA == "" {
 			continue
 		}
-		items[at].Partial = c.partial(forgeapi.PartialRateLimited, 0)
+		items[at].Partial = c.partial(reason, 0)
 	}
 }
 
@@ -461,7 +457,7 @@ func (c *Client) readPull(ctx context.Context, op string, addr *address, pr forg
 //nolint:gocritic // hugeParam: the record is the published signature's own parameter
 func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewPullRequest) (forgeapi.PullRequest, error) {
 	const op = "CreatePR"
-	ctx = transport.Call(ctx, op)
+	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
@@ -501,6 +497,7 @@ func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeap
 
 // setPullState is the one mutation both lifecycle transitions make.
 func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, state string) (forgeapi.PullRequest, error) {
+	ctx = transport.Call(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
@@ -1024,7 +1021,7 @@ func (c *Client) issuePage(addr *address, rows []wireIssue, walk pageWalk) forge
 // CreateIssue implements [forgeapi.Issues].
 func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.NewIssue) (forgeapi.Issue, error) {
 	const op = "CreateIssue"
-	ctx = transport.Call(ctx, op)
+	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
 	}

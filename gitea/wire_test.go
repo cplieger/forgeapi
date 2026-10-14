@@ -505,3 +505,52 @@ func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 		})
 	}
 }
+
+// TestTheAuthorKindIsTheUsersType holds both normalizers to the user type the row
+// carries, as measured 2026-10-11: gitea.com's pull and issue rows answered user
+// type User, which its swagger declares as User, Organization or Bot, and
+// codeberg.org's Forgejo rows answered no type key at all.
+func TestTheAuthorKindIsTheUsersType(t *testing.T) {
+	h := newHarness(t, nil)
+	for _, tc := range []struct {
+		user string
+		want forgeapi.AccountKind
+	}{
+		{user: `{"login":"example-bot","type":"Bot"}`, want: forgeapi.AccountKindBot},
+		{user: `{"login":"example-user","type":"User"}`, want: forgeapi.AccountKindUser},
+		{user: `{"login":"example-org","type":"Organization"}`, want: forgeapi.AccountKindUnknown},
+		{user: `{"login":"example-user"}`, want: forgeapi.AccountKindUnknown},
+	} {
+		var pull wirePull
+		var issue wireIssue
+		for _, decode := range []struct {
+			into any
+			body string
+		}{
+			{&pull, `{"number":1,"user":` + tc.user + `}`},
+			{&issue, `{"number":1,"user":` + tc.user + `}`},
+		} {
+			if err := json.Unmarshal([]byte(decode.body), decode.into); err != nil {
+				t.Fatalf("Setup: decode %s: %v", decode.body, err)
+			}
+		}
+		for name, got := range map[string]forgeapi.AccountKind{
+			"normalizePull":  h.client.normalizePull(&pull, testRef()).AuthorKind,
+			"normalizeIssue": h.client.normalizeIssue(&issue, testRef()).AuthorKind,
+		} {
+			if got != tc.want {
+				t.Errorf("%s(user %s).AuthorKind = %v, want %v", name, tc.user, got, tc.want)
+			}
+		}
+	}
+	if n := h.spy.times("UnknownEnumValue"); n != 0 {
+		t.Errorf("the declared user types counted %d unmapped value(s), want 0", n)
+	}
+	var odd wireIssue
+	if err := json.Unmarshal([]byte(`{"number":1,"user":{"login":"x","type":"Robot"}}`), &odd); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if got := h.client.normalizeIssue(&odd, testRef()).AuthorKind; got != forgeapi.AccountKindUnknown || h.spy.times("UnknownEnumValue") != 1 {
+		t.Errorf("normalizeIssue(an undeclared user type).AuthorKind = %v, counted %d, want unknown, counted once", got, h.spy.times("UnknownEnumValue"))
+	}
+}

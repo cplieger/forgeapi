@@ -103,7 +103,7 @@ func pullRequestFields(foldPage int, foldAfter string) string {
         updatedAt
         isDraft
         state
-        author { login }
+        author { __typename login }
         headRefName
         headRepository { nameWithOwner }
         baseRefName
@@ -245,7 +245,7 @@ var issueMine = document{
         createdAt
         updatedAt
         state
-        author { login }
+        author { __typename login }
         labels(first: 100) { totalCount nodes { name color description } }
         repository { nameWithOwner }
       }

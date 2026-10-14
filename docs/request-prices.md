@@ -10,6 +10,10 @@ On GitLab, an owner named by digits alone costs one more request on every page o
 
 On GitHub, the run route serves one created filter through a result window of 1,000 runs, ending with the whole page that reaches it. A `ListRuns` walk under `WithSince` that goes past the window costs more pages than its runs fill. Each page still costs what the block states. But each time the walk narrows its created range, it reads the runs of one second twice, so it pays once more for the pages those runs fill.
 
+## Revalidated reads
+
+A published figure counts the requests the instance bills. On GitHub, a `304 Not Modified` answer to an authorized conditional request bills nothing, so an authorized REST read the [read cache](read-cache.md) answers from a held copy costs `0`, and so does a call answered whole that way. Those GitHub cells publish a range starting at `0`. A failed attempt still counts, and on every other product a `304` counts as one request.
+
 ## The per-product block
 
 The same `Per forge:` block names the capability a detection can refuse the call on. It also lists every field where that product departs from the normalized contract, because it cannot supply the field, supplies another shape or spells the value differently. A field arriving exactly as the contract states has no row, which keeps the blocks short. The blocks and [SUPPORT.md](../SUPPORT.md) are generated from one table, so they cannot disagree.
@@ -30,6 +34,6 @@ Detecting the family with `families.Open` has its own cost, described in [Connec
 
 - `WithMutationReserve` sets how much budget reads leave for writes. A read that would take `BudgetState.Remaining` below the reserve is deferred and marked `PartialRateLimited`. From `BudgetState.Reset` on, reads are sent again, and the next response reports the renewed budget.
 - A client rotates expensive reads over a window of its own keeping. Store the `RotationCursor` it reports and pass it back with `WithRotationCursor` when you build the next client.
-- `BudgetState.Remaining` counts in the instance's own units, requests on a REST endpoint and points on a GraphQL endpoint. Every read is unconditional, so no response is a free conditional answer.
+- `BudgetState.Remaining` counts in the instance's own units, requests on a REST endpoint and points on a GraphQL endpoint. A `304` answer still updates it from its own rate headers, except the one the [read cache](read-cache.md) cannot vouch for and sends once more.
 - `BudgetRemainingUnknown` is what a product that reports nothing answers. Gitea is that product, so the reserve has no effect there.
 - `DefaultBudget` publishes the defaults, including the deadline each operation runs under.

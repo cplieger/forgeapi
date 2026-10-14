@@ -33,7 +33,7 @@ Run exactly one refreshing process per store directory, the one that calls `Toke
 
 `gitcred.Helper.Serve` answers one git credential-helper invocation from a `creds.Store`.
 
-- A `get` hands over the token of the connection whose web base URL has the remote's origin.
+- A `get` hands over the token of the connection whose web base URL has the remote's origin. Where several records share an origin, build the helper with `gitcred.NewFor` and the keys git may be handed, read again on every invocation; `gitcred.New` answers from every key in the store, the first by key.
 - It declines an expired token or a marked record with one line naming the instance. For a marked record, the line says to reconnect.
 - A `store` is ignored, and an `erase` keeps the connection.
 

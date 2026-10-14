@@ -20,11 +20,13 @@ import (
 // family's internal number.
 type (
 	wireUser struct {
-		Login    string   `json:"login"`
-		FullName string   `json:"full_name"`
-		Email    string   `json:"email"`
-		WebURL   string   `json:"html_url"`
-		Scopes   []string `json:"scopes"`
+		Login    string `json:"login"`
+		FullName string `json:"full_name"`
+		Email    string `json:"email"`
+		WebURL   string `json:"html_url"`
+		// Type is absent on Forgejo, measured on codeberg.org 2026-10-11.
+		Type   string   `json:"type"`
+		Scopes []string `json:"scopes"`
 	}
 
 	wireLabel struct {
@@ -380,6 +382,7 @@ func (c *Client) normalizePull(p *wirePull, repo forgeapi.RepoRef) forgeapi.Pull
 		Title:        p.Title,
 		Body:         p.Body,
 		Author:       p.User.Login,
+		AuthorKind:   c.accountKind(p.User.Type),
 		SourceBranch: p.Head.Ref,
 		SourceRepo:   sourceRepo(p.Head.Repo, p.Base.Repo, repo),
 		TargetBranch: p.Base.Ref,
@@ -485,6 +488,28 @@ func (c *Client) issueState(raw string) forgeapi.IssueState {
 	return forgeapi.IssueStateUnknown
 }
 
+// accountKinds maps a user's type over the three members this product's swagger
+// declares, read on gitea.com 2026-10-11; an organization is neither a person nor a
+// bot.
+var accountKinds = map[string]forgeapi.AccountKind{
+	"User":         forgeapi.AccountKindUser,
+	"Bot":          forgeapi.AccountKindBot,
+	"Organization": forgeapi.AccountKindUnknown,
+}
+
+// accountKind maps one user type totally under the same rule; an answer naming
+// none, as Forgejo's does, is unknown and uncounted.
+func (c *Client) accountKind(raw string) forgeapi.AccountKind {
+	if raw == "" {
+		return forgeapi.AccountKindUnknown
+	}
+	kind, ok := accountKinds[raw]
+	if !ok {
+		c.unmapped("author type (rest)", raw)
+	}
+	return kind
+}
+
 // unmapped is what every one of this family's totality tables does with a value it
 // does not carry: count it by family and field, and log the value, which is what
 // tells a maintainer the upstream enumeration grew rather than leaving an unknown
@@ -522,16 +547,17 @@ func (c *Client) normalizeIssue(i *wireIssue, repo forgeapi.RepoRef) forgeapi.Is
 		repo = metaRepo(i.Repository)
 	}
 	return forgeapi.Issue{
-		Ref:       forgeapi.IssueRef{Number: i.Number},
-		Repo:      repo,
-		Title:     i.Title,
-		Body:      i.Body,
-		Author:    i.User.Login,
-		WebURL:    i.WebURL,
-		Labels:    normalizeLabels(i.Labels),
-		CreatedAt: i.CreatedAt,
-		UpdatedAt: i.UpdatedAt,
-		State:     c.issueState(i.State),
+		Ref:        forgeapi.IssueRef{Number: i.Number},
+		Repo:       repo,
+		Title:      i.Title,
+		Body:       i.Body,
+		Author:     i.User.Login,
+		AuthorKind: c.accountKind(i.User.Type),
+		WebURL:     i.WebURL,
+		Labels:     normalizeLabels(i.Labels),
+		CreatedAt:  i.CreatedAt,
+		UpdatedAt:  i.UpdatedAt,
+		State:      c.issueState(i.State),
 	}
 }
 

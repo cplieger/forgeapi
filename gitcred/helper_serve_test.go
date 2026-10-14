@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cplieger/forgeapi"
@@ -110,4 +113,61 @@ func TestGet_logs_a_decline_to_the_logger_it_was_given(t *testing.T) {
 	if !strings.Contains(line, `msg="forgeapi git credential declined"`) || !strings.Contains(line, " reason=reconnect_required") {
 		t.Errorf("the helper's logger recorded %q, want the decline with its reason", line)
 	}
+}
+
+// Only the consumer knows which of several records for one origin git may be
+// handed, so the helper answers from the keys it is given, read on every call.
+func TestNewFor_AnswersOnlyTheKeysItIsGiven(t *testing.T) {
+	store, _ := openStore(t)
+	for _, key := range []string{"conn-a", "conn-b"} {
+		rec := record(forgeapi.FamilyGitHub, forge)
+		rec.Token = "token-of-" + key
+		save(t, store, key, rec)
+	}
+	var mu sync.Mutex
+	listed, failure := []string{"conn-b"}, error(nil)
+	keys := func() ([]string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(listed), failure
+	}
+	c := &tally{}
+	h := gitcred.NewFor(store, keys,
+		forgeapi.WithCounters(c.counters()),
+		forgeapi.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	set := func(next []string, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		listed, failure = next, err
+	}
+
+	t.Run("the_named_key_over_one_sorting_first", func(t *testing.T) {
+		if got := serve(t, h, "get", attributes("https", "forge.example")); got.attrs["password"] != "token-of-conn-b" {
+			t.Errorf("get with conn-b named = password %q, want %q", got.attrs["password"], "token-of-conn-b")
+		}
+	})
+	t.Run("a_list_changed_after_the_helper_was_built", func(t *testing.T) {
+		set([]string{"conn-a", "conn-gone"}, nil)
+		if got := serve(t, h, "get", attributes("https", "forge.example")); got.attrs["password"] != "token-of-conn-a" {
+			t.Errorf("get with conn-a named after the helper was built = password %q, want %q", got.attrs["password"], "token-of-conn-a")
+		}
+	})
+	t.Run("no_keys", func(t *testing.T) {
+		set(nil, nil)
+		if got := serve(t, h, "get", attributes("https", "forge.example")); got.attrs["password"] != "" || got.diag != "" {
+			t.Errorf("get with no keys named = (password %q, diag %q), want nothing", got.attrs["password"], got.diag)
+		}
+	})
+	t.Run("a_failing_list", func(t *testing.T) {
+		set(nil, errors.New("the list cannot be read"))
+		before := len(c.declined())
+		got := serve(t, h, "get", attributes("https", "forge.example"))
+		if got.attrs["password"] != "" || got.diag == "" {
+			t.Errorf("get with a failing key list = (password %q, diag %q), want a decline with its line", got.attrs["password"], got.diag)
+		}
+		if d := c.declined(); len(d) != before+1 || d[len(d)-1] != "store_unreadable" {
+			t.Errorf("HelperDecline reported %v, want store_unreadable last", d)
+		}
+	})
 }

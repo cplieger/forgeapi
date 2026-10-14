@@ -298,11 +298,11 @@ func TestAMalformedProxyIsRefusedRatherThanDialledDirect(t *testing.T) {
 	}
 }
 
-// TestADialRefusalIsLoggedThroughTheConnectionsLogger holds WithLogger's contract
+// TestADialFailureIsLoggedThroughTheConnectionsLogger holds WithLogger's contract
 // for the lines the transport beneath writes: a consumer running several connections
-// can only attribute a refusal it receives on that connection's logger. A name under
-// .invalid never resolves (RFC 6761 §6.4), so the dial is refused whatever the network.
-func TestADialRefusalIsLoggedThroughTheConnectionsLogger(t *testing.T) {
+// can only attribute a dial failure it receives on that connection's logger. A name
+// under .invalid never resolves (RFC 6761 §6.4), so the dial fails whatever the network.
+func TestADialFailureIsLoggedThroughTheConnectionsLogger(t *testing.T) {
 	var buf bytes.Buffer
 	c, err := Open(&forgeapi.Connection{WebBaseURL: "https://forge.invalid"}, settingsFor(
 		forgeapi.WithCredentialSource(stubCredential{}),
@@ -314,11 +314,11 @@ func TestADialRefusalIsLoggedThroughTheConnectionsLogger(t *testing.T) {
 	}
 	t.Cleanup(c.Close)
 	if _, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err == nil {
-		t.Fatal("a read from a name that cannot resolve = nil, want a refusal")
+		t.Fatal("a read from a name that cannot resolve = nil, want a dial failure")
 	}
 	got := buf.String()
-	if !strings.Contains(got, `"msg":"ssrf dial blocked"`) || !strings.Contains(got, `"connection":"hub"`) {
-		t.Errorf("the connection's logger got %q, want the dial refusal carrying connection=hub", got)
+	if !strings.Contains(got, `"msg":"ssrf dial failed"`) || !strings.Contains(got, `"connection":"hub"`) {
+		t.Errorf("the connection's logger got %q, want the dial failure carrying connection=hub", got)
 	}
 }
 
@@ -382,6 +382,32 @@ func TestMutationPacingIsBoundedByTheOperationDeadline(t *testing.T) {
 	if elapsed > time.Second {
 		t.Errorf("the second mutation returned after %v, want inside the 50ms operation bound: the pacing wait selects on the operation's context, so the bound reaches it", elapsed)
 	}
+}
+
+// TestANestedCallJoinsTheOperationsDeadline holds the deadline to the operation's
+// start across a Call opened inside a Call: a nested operation joins the bound its
+// outer one began, rather than renewing it for its own requests.
+func TestANestedCallJoinsTheOperationsDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var deadline time.Time
+		wire := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			deadline, _ = r.Context().Deadline()
+			return jsonAnswer(r, http.StatusOK, `{}`), nil
+		})
+		c := openTestConn(t, forgeapi.Connection{WebBaseURL: "http://forge.example"},
+			forgeapi.WithWireTransport(wire),
+			forgeapi.WithOperationTimeout(time.Hour),
+		)
+		started := time.Now()
+		outer := Call(t.Context(), "Outer")
+		time.Sleep(20 * time.Minute)
+		if _, err := c.Do(Call(outer, "Inner"), &Request{Op: "Inner", Method: http.MethodGet, Path: "/x"}); err != nil {
+			t.Fatalf("the nested call's read = %v, want nil", err)
+		}
+		if want := started.Add(time.Hour); !deadline.Equal(want) {
+			t.Errorf("the nested call's read ran under the deadline %v, want %v: the outer operation's start plus its bound", deadline, want)
+		}
+	})
 }
 
 func TestASecondMutationWaitsOutOnlyWhatIsLeftOfTheInterval(t *testing.T) {
@@ -479,47 +505,10 @@ func TestATransportRefusalIsNotReportedAsAThrottleFromTheStatusAlone(t *testing.
 	}
 }
 
-// TestAConditionalReadIsNotIssuedWithoutSomethingToServeFromIt holds one half of the
-// ruling that every read this core issues is unconditional.
-//
-// The reason is what this library keeps: no response body, so a not-modified answer
-// has nothing to serve from and buys a saving the caller cannot spend. The
-// instance's own validator is on the wire here, which is what makes the second read
-// the measurement: a core that remembered it would repeat the read conditionally and
-// this would go red. The other half, what a not-modified answer arriving anyway is
-// mapped to, is the case below.
-func TestAConditionalReadIsNotIssuedWithoutSomethingToServeFromIt(t *testing.T) {
-	var conditional atomic.Bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
-			conditional.Store(true)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", `W/"v1"`)
-		if _, err := io.WriteString(w, `{}`); err != nil {
-			t.Errorf("Setup: writing the answer: %v", err)
-		}
-	}))
-	defer srv.Close()
-	c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL})
-	for range 2 {
-		if _, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err != nil {
-			t.Fatalf("a read = %v, want nil", err)
-		}
-	}
-	if conditional.Load() {
-		t.Error("the second read carried a validator, want none: this library holds no response body, so a not-modified answer would have nothing to serve from and the caller would be handed a zero-valued answer")
-	}
-}
-
-// TestANotModifiedAnswerIsMappedAsTheUnexpectedStatusItIs holds the other half of
-// that ruling.
-//
-// With every read unconditional, a 304 is a status no request of ours asked for, so
-// it is mapped like any other unmapped status, which is the upstream kind carrying
-// the real status. The arm this closes is a success return whose body is empty: a
-// caller handed one decodes nothing and publishes the zero value over whatever it
-// had, with no error anywhere to say so.
+// TestANotModifiedAnswerIsMappedAsTheUnexpectedStatusItIs holds a 304 to a read
+// that is not revalidated, which nothing asked for: it is mapped like any other
+// unmapped status, the upstream kind carrying the real status, rather than handed
+// back as a success with an empty body a caller would decode into the zero value.
 func TestANotModifiedAnswerIsMappedAsTheUnexpectedStatusItIs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotModified)

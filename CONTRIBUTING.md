@@ -8,12 +8,12 @@ A change that removes, renames or changes the signature of an entry in `api/forg
 
 ## Rules
 
-- `internal/spec/spec.go` is generated from measurements kept outside this repository, so a pull request cannot change an entry. Report a wrong one in an issue.
+- `internal/spec/spec.go` states what each operation does on each forge. Change an entry only together with the measurement or upstream documentation behind it, and cite that source in the pull request.
 - `SUPPORT.md` and the `Per forge:` block ending each role method's doc comment in `roles.go` are generated from `spec.go`. Write above the marker, because `go generate ./...` rewrites from it to the comment's end.
 - A family package comment states a per-product route, price or departure only where that family's behavior is its whole subject, because a second copy can disagree with `spec.go`.
 - The JSON files under `conformance/testdata` and `families/testdata` are trimmed recordings of real responses. Never edit one to make a case pass, or the offline case asserts an answer no forge sent. Report a stale one in an issue.
 - A new option in `options.go` with a `Default:` line needs a row in `TestRuledDefaultsAreStated`. The golden file omits doc comments, so without that row nothing checks the default.
-- Never reorder the fields of an exported struct to satisfy `fieldalignment`, because that breaks every unkeyed composite literal. Put `//nolint:govet // fieldalignment: <reason>` on the type instead.
+- Never reorder the fields of an exported struct to satisfy `fieldalignment`, because that changes the reading order the type documents and the field order `api/forgeapi.txt` records. Put `//nolint:govet // fieldalignment: <reason>` on the type instead.
 
 ## Checks
 
