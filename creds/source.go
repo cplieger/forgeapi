@@ -33,7 +33,7 @@ const (
 	standGone
 )
 
-// ended is the refusal Token answers for a record standing at st, one of the
+// ended is the refusal a token read answers for a record standing at st, one of the
 // terminal standings, with a message naming why.
 func ended(rec *Record, st standing) error {
 	switch st {
@@ -164,7 +164,50 @@ func (s *Source) State() forgeapi.CredState {
 		return forgeapi.CredUnknown
 	}
 	rot := s.store.peek(s.key)
-	switch s.standing(rot, &rec, ok, time.Now()) {
+	return stateOf(rot, s.standing(rot, &rec, ok, time.Now()))
+}
+
+// StoredToken answers the stored token and the state [Source.State] reports for it,
+// from one read of the store, without sending anything, writing anything or waiting
+// on a refresh another call holds. A record State reads as reconnect-required fails
+// with [forgeapi.CodeReconnectRequired] and a message naming why. A token past its
+// expiry while its refresh is due or in flight, or one a rotated pair held for the
+// next [Source.Token] call replaces, fails as transient and retryable, since that
+// call renews it. A store that cannot be read fails with the store's error and
+// [forgeapi.CredUnknown].
+func (s *Source) StoredToken() (token string, state forgeapi.CredState, err error) {
+	rec, ok, err := s.store.Load(s.key)
+	if err != nil {
+		return "", forgeapi.CredUnknown, err
+	}
+	rot := s.store.peek(s.key)
+	now := time.Now()
+	st := s.standing(rot, &rec, ok, now)
+	state = stateOf(rot, st)
+	switch {
+	case state == forgeapi.CredReconnectRequired:
+		return "", state, ended(&rec, st)
+	case rot.holds(&rec):
+		return "", state, renewable(&rec, "a rotated pair that replaces the stored token waits to be stored")
+	case expired(&rec, now):
+		return "", state, renewable(&rec, "the stored token has expired and its refresh is due")
+	}
+	return rec.Token, state, nil
+}
+
+// renewable is the refusal StoredToken answers for a token the next Token call
+// renews, with a message naming why.
+func renewable(rec *Record, message string) error {
+	return &forgeapi.Error{
+		Family: rec.Family, Kind: forgeapi.KindTransient, Retryable: transport.Retryable(forgeapi.KindTransient, 0),
+		Message: message,
+	}
+}
+
+// stateOf is the state a record standing at st reports, refreshing where rot has a
+// refresh in flight.
+func stateOf(rot *rotation, st standing) forgeapi.CredState {
+	switch st {
 	case standValid:
 		return forgeapi.CredValid
 	case standDue:
