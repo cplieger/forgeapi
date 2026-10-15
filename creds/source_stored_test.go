@@ -1,9 +1,11 @@
 package creds_test
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -182,48 +184,87 @@ func TestSource_StoredToken_answers_without_waiting_on_a_refresh_in_flight(t *te
 	}
 }
 
+// holdPair stores base, then fails the write of the pair the endpoint's answer
+// rotates it to, so the key's custody holds that pair, and restores the store.
+func holdPair(t *testing.T, rotated string, adjust func(*creds.Record)) (src *creds.Source, store *countingStore, ep *endpoint, base creds.Record, dir string) {
+	t.Helper()
+	file, dir := openStore(t)
+	ep, restore := failingWrite(t, dir, rotated)
+	base = rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute)
+	if adjust != nil {
+		adjust(&base)
+	}
+	save(t, file, "conn", base)
+	store = &countingStore{FileStore: file}
+	src = source(t, store, "conn", ep)
+	if token, err := src.Token(t.Context()); err == nil || token != "" {
+		t.Fatalf("Setup: Token() with the rotated pair unstorable = (%q, %v), want no token and the store's failure", token, err)
+	}
+	restore()
+	return src, store, ep, base, dir
+}
+
+// credentialFileState is the store's file and its bytes, so a case can tell that
+// nothing wrote it, a rewrite of the same bytes included.
+func credentialFileState(t *testing.T, dir string) (os.FileInfo, []byte) {
+	t.Helper()
+	path := filepath.Join(dir, credentialFile)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s = error %v", credentialFile, err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s = error %v", credentialFile, err)
+	}
+	return info, raw
+}
+
 // While this process holds a rotated pair its store could not take, the stored token
-// is the one that pair replaced, so it is not handed over, even where the record it
-// sits in would otherwise read as valid or as needing a reconnect. The pair stays
-// held for the next Token call to store.
-func TestSource_StoredToken_fails_while_a_rotated_pair_waits_to_be_stored(t *testing.T) {
+// is the one that pair replaced, and the pair's token is the one the forge issued:
+// StoredToken hands that over, whatever the replaced record's own refresh token
+// says, and leaves the pair held for Token to store.
+func TestSource_StoredToken_hands_over_the_token_of_a_rotated_pair_waiting_to_be_stored(t *testing.T) {
 	cases := []struct {
-		name   string
-		lapsed bool
+		adjust   func(*creds.Record)
+		name     string
+		rotated  string
+		wait     time.Duration
+		requests int
+		lapsed   bool
 	}{
-		{name: "refresh token live"},
-		{name: "refresh token past its own expiry", lapsed: true},
+		{name: "replaced refresh token live", rotated: githubRotated, requests: 1},
+		{name: "replaced refresh token past its own expiry", rotated: githubRotated, requests: 1, lapsed: true, adjust: func(rec *creds.Record) {
+			rec.RefreshExpiry = time.Now().Truncate(time.Second).Add(2 * time.Second)
+		}},
+		{
+			// A six-second token is inside its three-second lead after four seconds, so
+			// the Token call that stores it refreshes it too.
+			name:     "pair's token inside its refresh lead",
+			rotated:  `{"access_token":"token-new","token_type":"bearer","scope":"repo","expires_in":6,"refresh_token":"refresh-new","refresh_token_expires_in":15897600}`,
+			wait:     4 * time.Second,
+			requests: 2,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			file, dir := openStore(t)
-			ep, restore := failingWrite(t, dir, githubRotated)
-			base := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute)
-			if tc.lapsed {
-				base.RefreshExpiry = time.Now().Truncate(time.Second).Add(2 * time.Second)
-			}
-			save(t, file, "conn", base)
-			store := &countingStore{FileStore: file}
-			src := source(t, store, "conn", ep)
-			if token, err := src.Token(t.Context()); err == nil || token != "" {
-				t.Fatalf("Setup: Token() with the rotated pair unstorable = (%q, %v), want no token and the store's failure", token, err)
-			}
-			restore()
+			src, store, ep, base, dir := holdPair(t, tc.rotated, tc.adjust)
 			if tc.lapsed {
 				time.Sleep(time.Until(base.RefreshExpiry) + 100*time.Millisecond)
 			}
+			time.Sleep(tc.wait)
+			infoBefore, rawBefore := credentialFileState(t, dir)
 
 			before := store.loads.Load()
 			token, state, err := src.StoredToken()
 			if n := store.loads.Load() - before; n != 1 {
 				t.Errorf("StoredToken() read the store %d time(s), want 1", n)
 			}
-			if token != "" || state != forgeapi.CredRefreshDue {
-				t.Errorf("StoredToken() with a rotated pair pending = (%q, %v, _), want (\"\", %v, _)", token, state, forgeapi.CredRefreshDue)
+			if err != nil || token != "token-new" || state != forgeapi.CredRefreshDue {
+				t.Errorf("StoredToken() with a rotated pair pending = (%q, %v, %v), want (%q, %v, nil)", token, state, err, "token-new", forgeapi.CredRefreshDue)
 			}
-			fe, ok := errors.AsType[*forgeapi.Error](err)
-			if !ok || fe.Kind != forgeapi.KindTransient || !fe.Retryable || fe.Code != "" || fe.Family != forgeapi.FamilyGitHub {
-				t.Errorf("StoredToken() with a rotated pair pending = error %#v, want a retryable transient *forgeapi.Error with no code, for GitHub", err)
+			if infoAfter, rawAfter := credentialFileState(t, dir); !os.SameFile(infoBefore, infoAfter) || !infoAfter.ModTime().Equal(infoBefore.ModTime()) || !bytes.Equal(rawAfter, rawBefore) {
+				t.Errorf("the store's file was written, want it untouched: StoredToken never writes")
 			}
 			if field := sameRecord(load(t, reopen(t, dir), "conn"), base); field != "" {
 				t.Errorf("the stored record's %s changed, want the record untouched: StoredToken never writes", field)
@@ -232,8 +273,77 @@ func TestSource_StoredToken_fails_while_a_rotated_pair_waits_to_be_stored(t *tes
 			if token, err := src.Token(t.Context()); err != nil || token != "token-new" {
 				t.Errorf("Token() after StoredToken = (%q, %v), want (%q, nil): the pair stays held for Token to store", token, err, "token-new")
 			}
-			if n := len(ep.requests()); n != 1 {
-				t.Errorf("the token endpoint received %d request(s), want 1: nothing refreshes while the pair is held", n)
+			if n := len(ep.requests()); n != tc.requests {
+				t.Errorf("the token endpoint received %d request(s), want %d: StoredToken sends nothing, and Token stores the held pair before any refresh", n, tc.requests)
+			}
+		})
+	}
+}
+
+// A reconnect saved after the failed write is a record the held pair was not rotated
+// from, so its own token is handed over and the pair never is.
+func TestSource_StoredToken_hands_over_a_reconnect_saved_over_a_held_pair(t *testing.T) {
+	src, store, _, base, _ := holdPair(t, githubRotated, nil)
+	reconnected := rotating(forgeapi.FamilyGitHub, base.WebBaseURL, 8*time.Hour, 8*time.Hour)
+	reconnected.Token, reconnected.RefreshToken = "token-reconnected", "refresh-reconnected"
+	save(t, store.FileStore, "conn", reconnected)
+
+	token, state, err := src.StoredToken()
+	if err != nil || token != "token-reconnected" || state != forgeapi.CredValid {
+		t.Errorf("StoredToken() over a reconnect = (%q, %v, %v), want (%q, %v, nil)", token, state, err, "token-reconnected", forgeapi.CredValid)
+	}
+}
+
+// A held pair whose own token has expired, or whose own refresh token has lapsed
+// inside its refresh lead, is no credential to hand over either: StoredToken fails as
+// transient, and the pair stays held for the next Token call to store.
+func TestSource_StoredToken_fails_while_a_held_rotated_pair_is_past_its_use(t *testing.T) {
+	cases := []struct {
+		name    string
+		rotated string
+		wait    time.Duration
+	}{
+		{
+			name:    "pair's token expired",
+			rotated: `{"access_token":"token-new","token_type":"bearer","scope":"repo","expires_in":1,"refresh_token":"refresh-new","refresh_token_expires_in":15897600}`,
+			wait:    1500 * time.Millisecond,
+		},
+		{
+			// A six-second token is inside its three-second lead after four seconds, its
+			// one-second refresh token lapsed by then.
+			name:    "pair's refresh token past its own expiry",
+			rotated: `{"access_token":"token-new","token_type":"bearer","scope":"repo","expires_in":6,"refresh_token":"refresh-new","refresh_token_expires_in":1}`,
+			wait:    4 * time.Second,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src, store, _, base, dir := holdPair(t, tc.rotated, nil)
+			time.Sleep(tc.wait)
+			infoBefore, rawBefore := credentialFileState(t, dir)
+
+			before := store.loads.Load()
+			token, state, err := src.StoredToken()
+			if n := store.loads.Load() - before; n != 1 {
+				t.Errorf("StoredToken() read the store %d time(s), want 1", n)
+			}
+			if token != "" || state != forgeapi.CredRefreshDue {
+				t.Errorf("StoredToken() with a spent held pair = (%q, %v, _), want (\"\", %v, _)", token, state, forgeapi.CredRefreshDue)
+			}
+			fe, ok := errors.AsType[*forgeapi.Error](err)
+			if !ok || fe.Kind != forgeapi.KindTransient || !fe.Retryable || fe.Code != "" || fe.Family != forgeapi.FamilyGitHub {
+				t.Errorf("StoredToken() with a spent held pair = error %#v, want a retryable transient *forgeapi.Error with no code, for GitHub", err)
+			}
+			if infoAfter, rawAfter := credentialFileState(t, dir); !os.SameFile(infoBefore, infoAfter) || !infoAfter.ModTime().Equal(infoBefore.ModTime()) || !bytes.Equal(rawAfter, rawBefore) {
+				t.Errorf("the store's file was written, want it untouched: StoredToken never writes")
+			}
+			if field := sameRecord(load(t, reopen(t, dir), "conn"), base); field != "" {
+				t.Errorf("the stored record's %s changed, want the record untouched: StoredToken never writes", field)
+			}
+
+			_, _ = src.Token(t.Context())
+			if got := load(t, reopen(t, dir), "conn"); got.Token != "token-new" {
+				t.Errorf("the stored token after Token() = %q, want %q: the pair stays held for Token to store", got.Token, "token-new")
 			}
 		})
 	}
