@@ -644,6 +644,7 @@ type Source struct {
 }
 func (s *Source) Kind() forgeapi.CredKind
 func (s *Source) State() forgeapi.CredState
+func (s *Source) StoredToken() (token string, state forgeapi.CredState, err error)
 func (s *Source) Token(ctx context.Context) (string, error)
 func StartDeviceGrant(ctx context.Context, conn forgeapi.Connection, family forgeapi.Family, req GrantRequest, opts ...forgeapi.Option) (*DeviceGrant, error)
 type Store interface {

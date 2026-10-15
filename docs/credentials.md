@@ -23,6 +23,8 @@ Every reader of the store honours the mark, so a marked record is never handed o
 
 A rotation whose write to the store fails keeps the new pair in memory. That call fails and `State` answers `CredRefreshDue`. The next `Token` call in the same process stores the pair before it does anything else.
 
+`StoredToken` reads the stored token and its `State` in one read of the store, and never refreshes, writes or waits on a refresh in flight. Use it when another part of your program owns refreshing, so a request only reads what is stored. It hands over a token that is valid, refresh-due or refreshing and not yet expired. It fails with `CodeReconnectRequired` where `State` answers `CredReconnectRequired`. A token whose refresh is due or in flight fails with a retryable transient error once it has expired. A token that a rotated pair waits to replace fails the same way. Both fail until a `Token` call renews them.
+
 ## The store
 
 `creds.OpenFileStore` keeps every record in one file at mode 0600, in a directory at mode 0700 that the process owns.
