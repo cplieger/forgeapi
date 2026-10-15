@@ -168,13 +168,13 @@ func (s *Source) State() forgeapi.CredState {
 }
 
 // StoredToken answers the stored token and the state [Source.State] reports for it,
-// from one read of the store, without sending anything, writing anything or waiting
-// on a refresh another call holds. A record State reads as reconnect-required fails
-// with [forgeapi.CodeReconnectRequired] and a message naming why. A token past its
-// expiry while its refresh is due or in flight, or one a rotated pair held for the
-// next [Source.Token] call replaces, fails as transient and retryable, since that
-// call renews it. A store that cannot be read fails with the store's error and
-// [forgeapi.CredUnknown].
+// from one read of the store, without sending, writing or waiting on a refresh
+// another call holds. A record State reads as reconnect-required fails with
+// [forgeapi.CodeReconnectRequired] and a message naming why. Where a rotated pair
+// waits for the next [Source.Token] call to store it, the pair's token is answered. A
+// token past its expiry while its refresh is due or in flight, or a held pair whose
+// token expired or whose refresh token lapsed, fails as transient and retryable. A
+// store that cannot be read fails with the store's error and [forgeapi.CredUnknown].
 func (s *Source) StoredToken() (token string, state forgeapi.CredState, err error) {
 	rec, ok, err := s.store.Load(s.key)
 	if err != nil {
@@ -184,19 +184,23 @@ func (s *Source) StoredToken() (token string, state forgeapi.CredState, err erro
 	now := time.Now()
 	st := s.standing(rot, &rec, ok, now)
 	state = stateOf(rot, st)
-	switch {
-	case state == forgeapi.CredReconnectRequired:
+	if state == forgeapi.CredReconnectRequired {
 		return "", state, ended(&rec, st)
-	case rot.holds(&rec):
+	}
+	if base, pair, held := rot.held(); held && same(&base, &rec) {
+		if pst := s.standing(rot, &pair, true, now); (pst == standValid || pst == standDue) && !expired(&pair, now) {
+			return pair.Token, state, nil
+		}
 		return "", state, renewable(&rec, "a rotated pair that replaces the stored token waits to be stored")
-	case expired(&rec, now):
+	}
+	if expired(&rec, now) {
 		return "", state, renewable(&rec, "the stored token has expired and its refresh is due")
 	}
 	return rec.Token, state, nil
 }
 
 // renewable is the refusal StoredToken answers for a token the next Token call
-// renews, with a message naming why.
+// stores or renews, with a message naming why.
 func renewable(rec *Record, message string) error {
 	return &forgeapi.Error{
 		Family: rec.Family, Kind: forgeapi.KindTransient, Retryable: transport.Retryable(forgeapi.KindTransient, 0),
