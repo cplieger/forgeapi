@@ -1542,8 +1542,9 @@ func sanitize(s string) string {
 // trims it on write), and as [jsonForm] spells each, since a message member that
 // is not a string is quoted as its JSON.
 func (c *Conn) quoter(token string) func(string) string {
-	var secrets []string
-	for _, secret := range append([]string{token}, headerValues(c.headers)...) {
+	given := append([]string{token}, headerValues(c.headers)...)
+	secrets := make([]string, 0, 4*len(given))
+	for _, secret := range given {
 		received := textproto.TrimString(secret)
 		secrets = append(secrets, secret, jsonForm(secret), received, jsonForm(received))
 	}
