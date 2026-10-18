@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/textproto"
 	"net/url"
 	"slices"
 	"strconv"
@@ -1491,8 +1492,11 @@ func (r *refusal) text(code string) string {
 }
 
 // instanceText is the message member as text: a string as it came, and any other
-// shape as its compact JSON, which keeps a field error's field name beside its
+// shape as its canonical JSON, which keeps a field error's field name beside its
 // complaint.
+//
+// The shape is decoded and re-encoded rather than compacted, so a secret it holds is
+// spelled only as [jsonForm] spells it, whichever escapes the instance chose.
 func (r *refusal) instanceText() string {
 	if len(r.Message) == 0 {
 		return ""
@@ -1501,11 +1505,17 @@ func (r *refusal) instanceText() string {
 	if err := json.Unmarshal(r.Message, &text); err == nil {
 		return text
 	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, r.Message); err != nil || compact.String() == "null" {
+	dec := json.NewDecoder(bytes.NewReader(r.Message))
+	dec.UseNumber()
+	var shape any
+	if err := dec.Decode(&shape); err != nil || shape == nil {
 		return ""
 	}
-	return compact.String()
+	text, err := canonicalJSON(shape)
+	if err != nil {
+		return ""
+	}
+	return text
 }
 
 // scoped is text led by the scope an RFC 6750 body names, so the bound the caller's
@@ -1526,41 +1536,21 @@ func sanitize(s string) string {
 
 // quoter makes an instance's text from one exchange safe to carry on an error:
 // every secret the request carried, its credential and each value of the
-// connection's own headers, is redacted out of the text, the text made one line,
-// the secrets redacted again, and the text bounded last.
-//
-// Both redactions are needed, because the sanitizer rewrites runes: it can turn a
-// byte inside an echoed secret into a space, which only the first pass still
-// matches, and it can turn a control byte into the space a secret carries, which
-// only the second pass matches. The bound comes last so it cannot cut a secret into
-// a prefix no needle matches. A secret is matched as it was sent and as JSON
-// escapes it, since a message member that is not a string is quoted as its JSON.
+// connection's own headers, is redacted out of the text, which is made one line
+// and bounded. A secret is matched as it was given, as it was received with a
+// field value's edge whitespace trimmed (RFC 9110 section 5.5, and net/http
+// trims it on write), and as [jsonForm] spells each, since a message member that
+// is not a string is quoted as its JSON.
 func (c *Conn) quoter(token string) func(string) string {
-	var needles []string
-	for _, secret := range append([]string{token}, headerValues(c.headers)...) {
-		if secret == "" {
-			continue
-		}
-		needles = append(needles, secret)
-		for _, escapeHTML := range []bool{false, true} {
-			if form := jsonForm(secret, escapeHTML); form != secret {
-				needles = append(needles, form)
-			}
-		}
-	}
-	slices.Sort(needles)
-	needles = slices.Compact(needles)
-	// The longest goes first, so a secret holding another as a substring is not
-	// left partly unredacted by the shorter one's pass.
-	slices.SortStableFunc(needles, func(a, b string) int { return cmp.Compare(len(b), len(a)) })
-	redact := func(text string) string {
-		for _, n := range needles {
-			text = httpx.RedactSecretString(text, httpx.Secret(n))
-		}
-		return text
+	given := append([]string{token}, headerValues(c.headers)...)
+	secrets := make([]string, 0, 4*len(given))
+	for _, secret := range given {
+		received := textproto.TrimString(secret)
+		secrets = append(secrets, secret, jsonForm(secret), received, jsonForm(received))
 	}
 	return func(text string) string {
-		return sanitize(redact(runesafe.SanitizeSingleLine(redact(text))))
+		out, _ := runesafe.RedactSingleLineCapped(text, maxMessageBytes, "...", secrets...)
+		return out
 	}
 }
 
@@ -1573,16 +1563,24 @@ func headerValues(headers []forgeapi.Header) []string {
 	return values
 }
 
-// jsonForm is s as a JSON string's contents spell it, with or without the HTML
-// escapes an encoder may apply.
-func jsonForm(s string, escapeHTML bool) string {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(escapeHTML)
-	if err := enc.Encode(s); err != nil {
+// jsonForm is s as a JSON string's contents spell it in [canonicalJSON].
+func jsonForm(s string) string {
+	text, err := canonicalJSON(s)
+	if err != nil {
 		return s
 	}
-	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(buf.String()), `"`), `"`)
+	return strings.TrimSuffix(strings.TrimPrefix(text, `"`), `"`)
+}
+
+// canonicalJSON is v encoded with no HTML escapes and no trailing newline.
+func canonicalJSON(v any) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(buf.String(), "\n"), nil
 }
 
 // log is the per-request record: operation, family, sanitized instance, transport,
