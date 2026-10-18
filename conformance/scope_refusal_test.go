@@ -357,7 +357,7 @@ func TestARefusalEchoingTheCredentialCarriesNoneOfIt(t *testing.T) {
 					t.Errorf("Whoami on %s refused with %q, want none of the token the request carried", p, text)
 				}
 			}
-			if !strings.Contains(fe.Message, "REDACTED") {
+			if !strings.Contains(fe.Message, "[redacted]") {
 				t.Errorf("Whoami on %s refused with message %q, want the instance's words with the token redacted out of them", p, fe.Message)
 			}
 		})
