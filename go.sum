@@ -4,8 +4,8 @@ github.com/cplieger/httpx/v5 v5.1.0-dev.1 h1:EwaPAKtB+LKSW+hFxc8PZthAdRS21mYzDLz
 github.com/cplieger/httpx/v5 v5.1.0-dev.1/go.mod h1:+oL1fPTCSNuzy7HZEC2eCSirL+D3fh/AblvN/nQPSt0=
 github.com/cplieger/jsoncap/v2 v2.0.3 h1:KrXnATaR6XE/cRmNqOwawm7jnCCCVQBhveqV39d2Ajc=
 github.com/cplieger/jsoncap/v2 v2.0.3/go.mod h1:HKuj6+CrcJf5oHAJ8Sfnxv7Ip790NBWwCFtwVC9GR8Q=
-github.com/cplieger/runesafe/v3 v3.0.0 h1:kswlOohhxhTqCLP/tATUqqoQvqXYVrcWjouRQE4EP3w=
-github.com/cplieger/runesafe/v3 v3.0.0/go.mod h1:fRNhoxNxl4NHo4xkFyf5hePwPE7lGwcuGYN9MwyKZDU=
+github.com/cplieger/runesafe/v3 v3.1.0-dev.1 h1:vMd+tU7kdH5WsC/OdPV/+QqMygMrFsl2byY/dXO/KkQ=
+github.com/cplieger/runesafe/v3 v3.1.0-dev.1/go.mod h1:fRNhoxNxl4NHo4xkFyf5hePwPE7lGwcuGYN9MwyKZDU=
 github.com/cplieger/ssrf/v4 v4.5.0-dev.1 h1:wJD8plFr/mgsN/1u8RxrDcvl/uZLyCbOHzj/kwbPlBw=
 github.com/cplieger/ssrf/v4 v4.5.0-dev.1/go.mod h1:XssdRD8XPxVlxQkVOBLIOyi0aMhjG2xxO5uvAaiXZBg=
 github.com/cplieger/urlform v1.4.0 h1:80AZ2c5lq3AWAO2FidJrIrpgX1Ef/wt98Yhxg2XRJKE=
