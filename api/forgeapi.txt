@@ -527,6 +527,7 @@ type Run struct {
 	Ref RunRef
 	Repo RepoRef
 	Name string
+	WorkflowPath string
 	Branch string
 	HeadSHA string
 	WebURL string

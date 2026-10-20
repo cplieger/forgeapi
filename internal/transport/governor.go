@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -22,8 +23,14 @@ import (
 // has left, because that signal rides every response and never crosses the
 // library's surface.
 type governor struct {
-	counters  forgeapi.Counters
-	now       func() time.Time
+	counters forgeapi.Counters
+	now      func() time.Time
+	// pools is each rate-limit pool's last reported figure, by the name the
+	// product gives it, less the requests counted against it by parent since;
+	// drawn is the pool each operation's last answer drew on.
+	pools     map[string]poolFigure
+	drawn     map[string]string
+	parent    budgetParent
 	reset     time.Time
 	window    time.Time
 	cursor    forgeapi.RotationCursor
@@ -40,7 +47,7 @@ type governor struct {
 	mu        sync.Mutex
 }
 
-func newGovernor(set *forgeapi.Settings, counters *forgeapi.Counters, family forgeapi.Family, clock func() time.Time) *governor {
+func newGovernor(set *forgeapi.Settings, counters *forgeapi.Counters, family forgeapi.Family, clock func() time.Time, parent budgetParent) *governor {
 	if clock == nil {
 		clock = time.Now
 	}
@@ -53,7 +60,27 @@ func newGovernor(set *forgeapi.Settings, counters *forgeapi.Counters, family for
 		family:    family,
 		remaining: forgeapi.BudgetRemainingUnknown,
 		reserve:   set.MutationReserve,
+		pools:     map[string]poolFigure{},
+		drawn:     map[string]string{},
+		parent:    parent,
 	}
+}
+
+// poolFigure is one rate-limit pool as its last response reported it; limit is
+// zero where the response stated none.
+type poolFigure struct {
+	reset     time.Time
+	remaining int
+	limit     int
+}
+
+// holds reports whether reads must leave reserve of p untouched: p is at or
+// under it, and its whole limit is above it. A pool whose whole limit is the
+// reserve or less, such as gitlab.com's per-minute burst limit of 100 on one
+// route (measured: RateLimit-Name burst_traffic_per_user_free_plan), would
+// otherwise defer its every read after the first of each window.
+func (p poolFigure) holds(reserve int) bool {
+	return p.remaining <= reserve && (p.limit == 0 || p.limit > reserve)
 }
 
 // windowLength is the rolling interval's own LENGTH, held separately from the
@@ -85,41 +112,62 @@ func (g *governor) state() forgeapi.BudgetState {
 	}
 }
 
-// observe reads the product's budget signal off one response.
-func (g *governor) observe(header http.Header, signal budgetSignal) {
+func (g *governor) observe(op string, header http.Header, signal budgetSignal, pool budgetPool) {
 	if signal == nil {
 		return
 	}
+	remaining, reset, ok := signal(header)
+	if !ok {
+		return
+	}
+	var name string
+	var limit int
+	if pool != nil {
+		name, limit = pool(header)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if remaining, reset, ok := signal(header); ok {
-		g.remaining = remaining
-		g.reset = reset
+	g.remaining = remaining
+	g.reset = reset
+	g.pools[name] = poolFigure{remaining: remaining, reset: reset, limit: limit}
+	g.drawn[op] = name
+	// The answer reports name alone, so the request's draw on its parent is
+	// counted here until an answer reports the parent again.
+	if parent := g.parentOf(name); parent != "" {
+		if p, ok := g.pools[parent]; ok && p.remaining > 0 {
+			p.remaining--
+			g.pools[parent] = p
+		}
 	}
 }
 
-// expire forgets an observation whose reported window has renewed. Only a response
+func (g *governor) parentOf(name string) string {
+	if g.parent == nil {
+		return ""
+	}
+	if p := g.parent(name); p != name {
+		return p
+	}
+	return ""
+}
+
+// expire forgets each observation whose reported window has renewed. Only a response
 // can report the new budget, so a stale figure left in place would defer every read
 // that could refresh it. The caller holds mu.
 func (g *governor) expire() {
-	if !g.reset.IsZero() && !g.now().Before(g.reset) {
+	now := g.now()
+	if !g.reset.IsZero() && !now.Before(g.reset) {
 		g.remaining, g.reset = forgeapi.BudgetRemainingUnknown, time.Time{}
 	}
+	maps.DeleteFunc(g.pools, func(_ string, p poolFigure) bool { return !p.reset.IsZero() && !now.Before(p.reset) })
 }
 
 // price publishes what the call in flight has SENT so far, counted at the wire and
-// carried on that call's own context.
-//
-// It is a call's price rather than a request's, because on this family a list costs
-// one request plus one per row and the constant one would report a figure an order of
-// magnitude below what the poller's commonest call actually spent. Four properties
-// follow from counting the call rather than the operation. The figure is that call's
-// own, so it resets with each one. A failed attempt counts, which is the rule every
-// published price obeys and the reason the counter sits at the wire rather than on
-// the answers. A ZERO is a figure like any other, because a call refused before the
-// wire spent nothing and the field names the last call. And where two calls interleave
-// on one connection the figure is the more recent one's, which is the only reading one
-// value can carry.
+// carried on that call's own context. It is a call's price, not a request's: on
+// this family a list costs one request plus one per row. The figure resets with
+// each call, counts a failed attempt (the rule every published price obeys, so the
+// counter sits at the wire), is zero for a call refused before the wire, and where
+// two calls interleave on one connection is the more recent one's.
 func (g *governor) price(cost int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -129,12 +177,24 @@ func (g *governor) price(cost int) {
 // admit reports whether one further read may be issued, and why not when it may
 // not. A read that would cross the mutation reserve is DEFERRED rather than
 // issued, so a cycle of reads never spends what the merge the user is about to
-// click will need.
+// click will need. The pools held are the one op's last answer drew on, else the
+// unnamed pool, and the parent that pool overlaps ([forgeapi.WithMutationReserve]
+// owns why). A deferral publishes the pool it held, so the published figure is
+// the budget that stopped the read.
 func (g *governor) admit(op string) (forgeapi.PartialReason, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.expire()
-	if g.remaining != forgeapi.BudgetRemainingUnknown && g.remaining <= g.reserve {
+	held := []string{g.drawn[op]}
+	if parent := g.parentOf(held[0]); parent != "" {
+		held = append(held, parent)
+	}
+	for _, name := range held {
+		p, ok := g.pools[name]
+		if !ok || p.remaining == forgeapi.BudgetRemainingUnknown || !p.holds(g.reserve) {
+			continue
+		}
+		g.remaining, g.reset = p.remaining, p.reset
 		if g.counters.ReadDeferred != nil {
 			g.counters.ReadDeferred(g.family, op)
 		}

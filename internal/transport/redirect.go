@@ -35,6 +35,7 @@ func (c *Conn) redirectPolicy(web *url.URL, set *forgeapi.Settings) func(*http.R
 	policy := ssrf.NewURLPolicy(schemesOf(set)...)
 
 	return func(req *http.Request, via []*http.Request) error {
+		c.observeDropped(req, req.Response)
 		if err := c.checkHop(req, via, set, ports, standard, policy); err != nil {
 			return err
 		}
@@ -102,7 +103,7 @@ func (c *Conn) checkHopMethod(req *http.Request, via []*http.Request) error {
 	// A hop net/http would rewrite into a bodyless read is REFUSED rather
 	// than followed, because a merge against a renamed repository would
 	// otherwise answer 2xx from a read that merged nothing.
-	if rewritable(previous.Method, statusOf(req)) {
+	if rewritable(previous.Method, req.Response.StatusCode) {
 		return c.fail(opOf(via), forgeapi.CodeRepoRefStale, forgeapi.KindNotFound, 0,
 			"redirect answered to a mutating method would be rewritten into a bodyless read")
 	}
@@ -140,20 +141,8 @@ func (c *Conn) checkAddress(req *http.Request, via []*http.Request, policy ssrf.
 		"redirect hop does not pass this connection's address policy")
 }
 
-// statusOf recovers the status of the response that produced this hop. net/http
-// does not hand the policy the response, so the status rides the hop's own
-// method: a rewritten hop arrives as a GET where the request before it was not
-// one, which is exactly the class this library refuses.
-func statusOf(req *http.Request) int {
-	if req.Method == http.MethodGet {
-		return http.StatusSeeOther
-	}
-	return http.StatusTemporaryRedirect
-}
-
 // rewritable reports whether this hop is one of the three statuses net/http
-// downgrades to a bodyless method. It reads the rewrite that already happened
-// rather than a status the policy is not given.
+// downgrades to a bodyless method.
 func rewritable(previousMethod string, status int) bool {
 	if !mutating(previousMethod) {
 		return false

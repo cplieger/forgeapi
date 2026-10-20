@@ -599,8 +599,9 @@ func (c *Client) readRuns(ctx context.Context, op string, addr *address, query u
 }
 
 // ListRuns implements [forgeapi.Checks]. The row type reads both products' status
-// fields, and [forgeapi.Run.Name] is the workflow file's name without its YAML
-// extension, since neither product names the workflow. It is not gated on
+// fields, [forgeapi.Run.WorkflowPath] is the workflow file's name and
+// [forgeapi.Run.Name] that name without its YAML extension, since neither product
+// names the workflow. It is not gated on
 // [forgeapi.CapRerunChecks], since both carry the route whether or not they can
 // re-run. The envelope's total_count decides the continuation (see runWalk.next), so
 // one missing or below zero is refused, a page with no row while the total states
