@@ -446,6 +446,7 @@ type (
 		RunNumber  int64     `json:"run_number"`
 		Event      string    `json:"event"`
 		Name       string    `json:"name"`
+		Path       string    `json:"path"`
 		HeadBranch string    `json:"head_branch"`
 		HeadSHA    string    `json:"head_sha"`
 		Status     string    `json:"status"`
@@ -1186,18 +1187,48 @@ func (c *Client) normalizeRun(r *restWorkflowRun, repo forgeapi.RepoRef) forgeap
 		state = c.runState("workflow run (rest)", r.Status, r.Conclusion)
 	}
 	return forgeapi.Run{
-		Ref:       forgeapi.RunRef{ID: r.ID, Number: r.RunNumber},
-		Repo:      repo,
-		Name:      r.Name,
-		Branch:    r.HeadBranch,
-		HeadSHA:   r.HeadSHA,
-		WebURL:    r.WebURL,
-		CreatedAt: r.CreatedAt,
-		StartedAt: r.StartedAt,
-		UpdatedAt: r.UpdatedAt,
-		State:     state,
-		Trigger:   c.runTrigger(r.Event),
+		Ref:          forgeapi.RunRef{ID: r.ID, Number: r.RunNumber},
+		Repo:         repo,
+		Name:         r.Name,
+		WorkflowPath: r.definition(),
+		Branch:       r.HeadBranch,
+		HeadSHA:      r.HeadSHA,
+		WebURL:       r.WebURL,
+		CreatedAt:    r.CreatedAt,
+		StartedAt:    r.StartedAt,
+		UpdatedAt:    r.UpdatedAt,
+		State:        state,
+		Trigger:      c.runTrigger(r.Event),
 	}
+}
+
+// definition is the run's path without the ref the route's documented example
+// appends after an @ (https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run),
+// which is how the workflows listing names the definition. A workflow file's
+// name may itself hold an @, so the ref is cut only where what precedes it is a
+// .yml or .yaml file: the run's own branch or commit first, else the last such @.
+func (r *restWorkflowRun) definition() string {
+	for _, ref := range []string{r.HeadBranch, r.HeadSHA} {
+		if def, ok := strings.CutSuffix(r.Path, "@"+ref); ok && ref != "" && workflowFile(def) {
+			return def
+		}
+	}
+	if workflowFile(r.Path) {
+		return r.Path
+	}
+	for at := strings.LastIndexByte(r.Path, '@'); at > 0; at = strings.LastIndexByte(r.Path[:at], '@') {
+		if workflowFile(r.Path[:at]) {
+			return r.Path[:at]
+		}
+	}
+	return r.Path
+}
+
+// workflowFile reports whether path names a workflow file, which GitHub reads
+// only with a .yml or .yaml extension
+// (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax).
+func workflowFile(path string) bool {
+	return strings.HasSuffix(path, ".yml") || strings.HasSuffix(path, ".yaml")
 }
 
 // runConclusions is where a workflow run's conclusion departs from a check run's.
@@ -1361,6 +1392,17 @@ func pushSupport(p *restPermissions) forgeapi.Support {
 		return forgeapi.SupportUnknown
 	}
 	return supportOf(p.Push)
+}
+
+// pool names the rate-limit pool a response drew on, core for REST and graphql for
+// documents among them, and that pool's whole limit
+// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit).
+func pool(header http.Header) (name string, limit int) {
+	limit, err := strconv.Atoi(strings.TrimSpace(header.Get("X-RateLimit-Limit")))
+	if err != nil || limit < 0 {
+		limit = 0
+	}
+	return strings.TrimSpace(header.Get("X-RateLimit-Resource")), limit
 }
 
 // signal reads this product's budget signal, which rides EVERY response on both

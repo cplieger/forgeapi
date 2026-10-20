@@ -398,9 +398,17 @@ type Run struct { //nolint:govet // fieldalignment: field order is the reading o
 	Ref RunRef
 	// Repo is the repository the run belongs to.
 	Repo RepoRef
-	// Name is the workflow's or pipeline's display name, empty where the
-	// product names none for this run.
+	// Name is the run's display title, empty where the product names none for
+	// this run. It is no identity: on GitHub it is the run-name the workflow
+	// sets (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#run-name),
+	// which may differ on every run, and the workflow's name where it sets none.
 	Name string
+	// WorkflowPath identifies the workflow definition the run ran, the same on
+	// every run of it whatever its Name: the definition's path in the
+	// repository, such as .github/workflows/ci.yaml, or dynamic/<name> for a
+	// workflow GitHub defines itself. It is empty where the product names no
+	// definition.
+	WorkflowPath string
 	// Branch is the branch the run ran for, as the product spells the ref.
 	Branch string
 	// HeadSHA is the commit the run ran on.

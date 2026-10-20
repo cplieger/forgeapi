@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded ListRuns response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured on 2026-10-01 over two pages of five: the continuation names the repository by id rather than by owner and name, and a renamed repository's route answers an id-addressed 301 that keeps the query",
+  "//": "cut from a recorded ListRuns response, read 2026-10-01, and its path key from one read 2026-10-20; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured on 2026-10-01 over two pages of five: the continuation names the repository by id rather than by owner and name, and a renamed repository's route answers an id-addressed 301 that keeps the query",
   "routes": [
     {
       "method": "GET",
@@ -14,6 +14,7 @@
           {
             "id": 1,
             "name": "example",
+            "path": ".github/workflows/example.yaml",
             "head_branch": "example-feature",
             "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
             "html_url": "https://forge.example/example/example/actions/runs/1",

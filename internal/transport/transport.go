@@ -90,6 +90,17 @@ type errorMapper func(op string, status int, header http.Header, bodyError strin
 // governor then reports the neutral value.
 type budgetSignal func(header http.Header) (remaining int, reset time.Time, ok bool)
 
+// budgetPool is how a family reads which of its product's rate-limit pools a
+// response drew on and that pool's whole limit, zero where the response states
+// none. A product answering every route from one pool has none: its family sets
+// no budgetPool.
+type budgetPool func(header http.Header) (name string, limit int)
+
+// budgetParent names the pool a request answered under the pool name also
+// counted against, empty for none, where a product's pools overlap and its
+// headers name only one of them. A family whose pools are disjoint sets none.
+type budgetParent func(name string) string
+
 // Conn is one connection's request core: one wire transport, two clients over it,
 // and its governor.
 //
@@ -103,6 +114,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	credential forgeapi.CredentialSource
 	mapper     errorMapper
 	signal     budgetSignal
+	pool       budgetPool
 	apiBase    *url.URL
 	web        *url.URL
 	wire       *http.Transport
@@ -132,6 +144,8 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 type Options struct {
 	Mapper        errorMapper
 	Signal        budgetSignal
+	Pool          budgetPool
+	PoolParent    budgetParent
 	DeriveAPIBase func(web *url.URL) string
 	Clock         func() time.Time
 	Family        forgeapi.Family
@@ -208,6 +222,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		credential: set.Credential,
 		mapper:     opts.Mapper,
 		signal:     opts.Signal,
+		pool:       opts.Pool,
 		apiBase:    apiBase,
 		web:        web,
 		wire:       wire,
@@ -224,7 +239,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		family:     opts.Family,
 		mutations:  set.Mutations,
 	}
-	c.gov = newGovernor(set, &c.counters, opts.Family, opts.Clock)
+	c.gov = newGovernor(set, &c.counters, opts.Family, opts.Clock, opts.PoolParent)
 	c.cache = newReadCache(set.ReadCacheBytes, familyFields, opts.FreeNotModified)
 
 	policy := c.redirectPolicy(web, set)
@@ -255,10 +270,8 @@ func observe(client *http.Client, wrap func(http.RoundTripper) http.RoundTripper
 	client.Transport = wrap(client.Transport)
 }
 
-// onRetry records that an attempt was repeated: the attempt number onto the
-// counter the operation's context carries, so the per-request line can report it,
-// and the counter seam with the operation the request belongs to.
-func (c *Conn) onRetry(attempt int, req *http.Request, _ *http.Response, _ error) {
+func (c *Conn) onRetry(attempt int, req *http.Request, resp *http.Response, _ error) {
+	c.observeDropped(req, resp)
 	if req != nil {
 		if counter := attemptsFrom(req.Context()); counter != nil {
 			counter.Store(int64(attempt) + 1)
@@ -266,6 +279,15 @@ func (c *Conn) onRetry(attempt int, req *http.Request, _ *http.Response, _ error
 	}
 	if c.counters.Retried != nil {
 		c.counters.Retried(c.family, opFrom(req))
+	}
+}
+
+// observeDropped hands the governor the budget reported by an answer [Conn.answer]
+// never observes, a retried attempt's or a redirect hop's: each was a request the
+// instance counted, and [governor.observe] debits a parent per answer.
+func (c *Conn) observeDropped(req *http.Request, resp *http.Response) {
+	if resp != nil {
+		c.gov.observe(opFrom(req), resp.Header, c.signal, c.pool)
 	}
 }
 
@@ -980,7 +1002,7 @@ func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *ht
 	if sendErr != nil {
 		return refusedHop(resp), nil, c.transportError(ctx, req, sendErr, started)
 	}
-	c.gov.observe(resp.Header, c.signal)
+	c.gov.observe(req.Op, resp.Header, c.signal, c.pool)
 	out := &Response{
 		Header: resp.Header, Status: resp.StatusCode, quote: c.quoter(rv.token),
 		Redirected: followed(resp, target), Ended: ended(resp, target),
@@ -1027,7 +1049,7 @@ func (c *Conn) sendRead(ctx context.Context, req *Request, target string) (*http
 		send: func(mode cacheMode, gen uint64) (*http.Response, revalidation, error) {
 			return c.send(ctx, req, target, mode, gen)
 		},
-		discarded:  func(h http.Header) { c.gov.observe(h, c.signal) },
+		discarded:  func(h http.Header) { c.gov.observe(req.Op, h, c.signal, c.pool) },
 		cacheable:  c.cacheable(ctx, req),
 		resendable: req.Method == http.MethodGet && !req.Document,
 	}.run()
