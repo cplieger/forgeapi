@@ -95,16 +95,17 @@ func TestTheRunListingAnswersTheRunRecord(t *testing.T) {
 		t.Fatalf("forgeapi.Checks.ListRuns answers a page of %v, want forgeapi.Run", run)
 	}
 	fields := map[string]reflect.Type{
-		"Ref":       reflect.TypeFor[forgeapi.RunRef](),
-		"Repo":      reflect.TypeFor[forgeapi.RepoRef](),
-		"Name":      reflect.TypeFor[string](),
-		"Branch":    reflect.TypeFor[string](),
-		"HeadSHA":   reflect.TypeFor[string](),
-		"WebURL":    reflect.TypeFor[string](),
-		"CreatedAt": reflect.TypeFor[time.Time](),
-		"UpdatedAt": reflect.TypeFor[time.Time](),
-		"State":     reflect.TypeFor[forgeapi.CheckState](),
-		"Trigger":   reflect.TypeFor[forgeapi.RunTrigger](),
+		"Ref":          reflect.TypeFor[forgeapi.RunRef](),
+		"Repo":         reflect.TypeFor[forgeapi.RepoRef](),
+		"Name":         reflect.TypeFor[string](),
+		"WorkflowPath": reflect.TypeFor[string](),
+		"Branch":       reflect.TypeFor[string](),
+		"HeadSHA":      reflect.TypeFor[string](),
+		"WebURL":       reflect.TypeFor[string](),
+		"CreatedAt":    reflect.TypeFor[time.Time](),
+		"UpdatedAt":    reflect.TypeFor[time.Time](),
+		"State":        reflect.TypeFor[forgeapi.CheckState](),
+		"Trigger":      reflect.TypeFor[forgeapi.RunTrigger](),
 	}
 	for name, want := range fields {
 		f, ok := run.FieldByName(name)

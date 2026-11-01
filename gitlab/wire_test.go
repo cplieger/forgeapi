@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/forgeapi/internal/spec"
@@ -787,5 +788,97 @@ func TestTheAuthorKindIsTheUsersBotFlag(t *testing.T) {
 	}
 	if !strings.Contains(mergeRequestFields, "author { username bot }") {
 		t.Error("the merge-request documents select no author bot flag, so their rows answer AccountKindUnknown")
+	}
+}
+
+// TestThePoolIsTheThrottleTheResponseNames holds the pool reader to the two headers
+// this product sends on every response, the throttle's name and its whole limit.
+func TestThePoolIsTheThrottleTheResponseNames(t *testing.T) {
+	name, limit := pool(http.Header{"Ratelimit-Name": {"burst_traffic_per_user_free_plan"}, "Ratelimit-Limit": {"100"}})
+	if name != "burst_traffic_per_user_free_plan" || limit != 100 {
+		t.Errorf("pool(the recorded headers) = %q, %d, want burst_traffic_per_user_free_plan and 100", name, limit)
+	}
+	if name, limit := pool(http.Header{}); name != "" || limit != 0 {
+		t.Errorf("pool(no headers) = %q, %d, want the unnamed pool with no limit", name, limit)
+	}
+}
+
+// TestAProjectListingsThrottleDefersNoOtherRead reproduces gitlab.com answering its
+// project listings from a throttle of 100 requests a minute: under a reserve above that
+// throttle's whole limit, neither the next listing nor a read the listing's throttle
+// does not cover is deferred by its figure.
+func TestAProjectListingsThrottleDefersNoOtherRead(t *testing.T) {
+	h := newHarness(t, map[string]string{projectsListRoute: "[" + projectBody + "]", myMergeRoute: "[]"}, forgeapi.WithMutationReserve(250))
+	h.instance.answerHeader("RateLimit-Name", "burst_traffic_per_user_free_plan")
+	h.instance.answerHeader("RateLimit-Limit", "100")
+	h.instance.answerHeader("RateLimit-Remaining", "99")
+	h.instance.answerHeader("RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
+	for read := 1; read <= 2; read++ {
+		page, err := h.client.ListRepos(t.Context())
+		if err != nil || page.Partial != nil {
+			t.Fatalf("ListRepos %d of 2 = partial %v, %v, want the whole page", read, page.Partial, err)
+		}
+	}
+	page, err := h.client.ListMyPRs(t.Context())
+	if err != nil || page.Partial != nil {
+		t.Errorf("ListMyPRs after the project listings' throttle reported 99 = partial %v, %v, want the read sent", page.Partial, err)
+	}
+	if got := h.instance.count(); got != 3 {
+		t.Errorf("the instance saw %d request(s), want 3: nothing is deferred", got)
+	}
+}
+
+// TestAParentPoolIsTheAPIThrottleBesideALimitOfAnotherName holds parentPool to
+// GitLab's throttles: the API throttle and the ones it excludes take an API
+// request each alone, and any other limit counts beside the authenticated API
+// throttle, a name GitLab adds later included.
+func TestAParentPoolIsTheAPIThrottleBesideALimitOfAnotherName(t *testing.T) {
+	for _, test := range []struct{ name, pool, want string }{
+		{name: "the_api_throttle", pool: "throttle_authenticated_api", want: ""},
+		{name: "the_packages_api_throttle", pool: "throttle_authenticated_packages_api", want: ""},
+		{name: "the_files_api_throttle", pool: "throttle_authenticated_files_api", want: ""},
+		{name: "the_deprecated_api_throttle", pool: "throttle_authenticated_deprecated_api", want: ""},
+		{name: "the_protected_paths_api_throttle", pool: "throttle_authenticated_protected_paths_api", want: "throttle_authenticated_api"},
+		{name: "the_get_protected_paths_api_throttle", pool: "throttle_authenticated_get_protected_paths_api", want: "throttle_authenticated_api"},
+		{name: "an_unknown_throttle", pool: "throttle_authenticated_something_new", want: "throttle_authenticated_api"},
+		{name: "a_gitlab_com_burst_limit", pool: "burst_traffic_per_user_free_plan", want: "throttle_authenticated_api"},
+		{name: "no_name", pool: "", want: "throttle_authenticated_api"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := parentPool(test.pool); got != test.want {
+				t.Errorf("parentPool(%q) = %q, want %q", test.pool, got, test.want)
+			}
+		})
+	}
+}
+
+// TestProjectListingsSpendTheAPIThrottleTheirAnswersDoNotName holds the reserve on
+// the authenticated API throttle while gitlab.com answers the project listings under
+// its burst limit, the one the headers name: each listing spends one of the API
+// throttle's last figure, and at the reserve every read is deferred.
+func TestProjectListingsSpendTheAPIThrottleTheirAnswersDoNotName(t *testing.T) {
+	h := newHarness(t, map[string]string{projectsListRoute: "[" + projectBody + "]", myMergeRoute: "[]"}, forgeapi.WithMutationReserve(250))
+	answer := func(name, limit, remaining string) {
+		h.instance.answerHeader("RateLimit-Name", name)
+		h.instance.answerHeader("RateLimit-Limit", limit)
+		h.instance.answerHeader("RateLimit-Remaining", remaining)
+		h.instance.answerHeader("RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
+	}
+	answer("throttle_authenticated_api", "2000", "251")
+	if page, err := h.client.ListMyPRs(t.Context()); err != nil || page.Partial != nil {
+		t.Fatalf("Setup: ListMyPRs = partial %v, %v, want the whole page", page.Partial, err)
+	}
+	answer("burst_traffic_per_user_free_plan", "100", "90")
+	if page, err := h.client.ListRepos(t.Context()); err != nil || page.Partial != nil {
+		t.Fatalf("ListRepos with the API throttle at 251 = partial %v, %v, want the whole page", page.Partial, err)
+	}
+	if page, err := h.client.ListRepos(t.Context()); err != nil || page.Partial == nil || page.Partial.Reason != forgeapi.PartialRateLimited {
+		t.Errorf("ListRepos after a listing took the API throttle to 250 = partial %v, %v, want the rate-limit deferral", page.Partial, err)
+	}
+	if page, err := h.client.ListMyPRs(t.Context()); err != nil || page.Partial == nil || page.Partial.Reason != forgeapi.PartialRateLimited {
+		t.Errorf("ListMyPRs with the API throttle at 250 = partial %v, %v, want the rate-limit deferral", page.Partial, err)
+	}
+	if got := h.instance.count(); got != 2 {
+		t.Errorf("the instance saw %d request(s), want 2", got)
 	}
 }

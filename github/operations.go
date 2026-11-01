@@ -952,7 +952,7 @@ func (c *Client) readRuns(ctx context.Context, op string, repo forgeapi.RepoRef,
 //
 // A run is an Actions workflow run, the row the re-run resolves its run from: its
 // state folds status and conclusion, its branch is the head branch, its name the
-// workflow's display name. A page is one request, plus one read resolving the
+// run's display title and its workflow path the definition's path. A page is one request, plus one read resolving the
 // successor where the route answered from another address, published on
 // [forgeapi.Page.Successor]. It is not gated on [forgeapi.CapRerunChecks], the
 // re-run verb's, since every repository answers the route.

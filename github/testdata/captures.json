@@ -1,5 +1,5 @@
 {
-  "//": "cut from this product's own recorded responses, read 2026-09-18, and 2026-10-01 for the run listing's rows and the issue search row, trimmed to the keys this family's wire types read and with the owner, repository, login, ids, branches, URLs and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
+  "//": "cut from this product's own recorded responses, read 2026-09-18, 2026-10-01 for the run listing's rows and the issue search row, and 2026-10-20 for the run listing's path key, trimmed to the keys this family's wire types read and with the owner, repository, login, ids, branches, URLs and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
   "graphql_pr_read": {
     "nameWithOwner": "example/example",
     "viewerPermission": null,
@@ -437,6 +437,7 @@
         "name": "example",
         "head_branch": "example-feature",
         "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+        "path": ".github/workflows/example.yaml",
         "status": "completed",
         "conclusion": "failure",
         "html_url": "https://forge.example/example/example/actions/runs/1",
@@ -448,6 +449,7 @@
         "name": "example-security",
         "head_branch": "example-feature",
         "head_sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+        "path": ".github/workflows/example-security.yml",
         "status": "completed",
         "conclusion": "success",
         "html_url": "https://forge.example/example/example/actions/runs/2",

@@ -853,3 +853,50 @@ func TestASelectorThatIsNotAnOwnerAndNamePairIsRefused(t *testing.T) {
 		t.Errorf("ownerName(%q) = %q, %q, %v, want %q, %q and no error", testSelector, owner, name, err, testOwner, testName)
 	}
 }
+
+// TestARunsWorkflowPathIsItsDefinitionsWhateverItsName holds a run's identity to the
+// definition it ran rather than to its name, which is the run-name the workflow sets
+// for that run, and to the definition's path without the ref the route's documented
+// example appends after an @
+// (https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run), an @
+// in the file's own name kept.
+func TestARunsWorkflowPathIsItsDefinitionsWhateverItsName(t *testing.T) {
+	h := newHarness(t, nil)
+	for _, test := range []struct {
+		name, path, branch, title, want string
+	}{
+		{name: "a_run_name_title", path: ".github/workflows/promote.yaml", title: "Promote example (dry run)", want: ".github/workflows/promote.yaml"},
+		{name: "a_path_naming_its_ref", path: ".github/workflows/build.yml@main", title: "Build", want: ".github/workflows/build.yml"},
+		{name: "a_path_naming_a_commit", path: ".github/workflows/secure.yml@1595d4b6", title: "Secure", want: ".github/workflows/secure.yml"},
+		{name: "an_at_in_the_file_name", path: ".github/workflows/release@nightly.yml", title: "Release", want: ".github/workflows/release@nightly.yml"},
+		{name: "an_at_in_the_file_name_and_its_ref", path: ".github/workflows/release@nightly.yml@main", title: "Release", want: ".github/workflows/release@nightly.yml"},
+		{name: "a_file_name_holding_another_file_name", path: ".github/workflows/a.yml@b.yml", title: "B", want: ".github/workflows/a.yml@b.yml"},
+		{name: "an_at_in_the_ref", path: ".github/workflows/ci.yml@feat@x", title: "CI", want: ".github/workflows/ci.yml"},
+		{name: "the_runs_branch_named_like_a_file", path: ".github/workflows/ci.yml@x.yml", branch: "x.yml", title: "CI", want: ".github/workflows/ci.yml"},
+		{name: "a_workflow_github_defines", path: "dynamic/dependabot/update-graph", title: "Graph Update: go_modules in /. #1", want: "dynamic/dependabot/update-graph"},
+		{name: "no_path", path: "", title: "CI", want: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := h.client.normalizeRun(&restWorkflowRun{ID: 1, Name: test.title, Path: test.path, HeadBranch: test.branch, Status: "completed", Conclusion: "success"}, testRef())
+			if got.WorkflowPath != test.want {
+				t.Errorf("normalizeRun(path %q).WorkflowPath = %q, want %q", test.path, got.WorkflowPath, test.want)
+			}
+			if got.Name != test.title {
+				t.Errorf("normalizeRun(name %q).Name = %q, want the run's own name", test.title, got.Name)
+			}
+		})
+	}
+}
+
+// TestThePoolIsTheResourceTheResponseNames holds the pool reader to the two headers
+// this product sends on every response, the resource the request drew on and its
+// whole limit.
+func TestThePoolIsTheResourceTheResponseNames(t *testing.T) {
+	name, limit := pool(http.Header{"X-Ratelimit-Resource": {"graphql"}, "X-Ratelimit-Limit": {"5000"}})
+	if name != "graphql" || limit != 5000 {
+		t.Errorf("pool(the recorded headers) = %q, %d, want graphql and 5000", name, limit)
+	}
+	if name, limit := pool(http.Header{}); name != "" || limit != 0 {
+		t.Errorf("pool(no headers) = %q, %d, want the unnamed pool with no limit", name, limit)
+	}
+}

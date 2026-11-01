@@ -1589,14 +1589,14 @@ func TestTheRunListingReadsEachWorkflowRun(t *testing.T) {
 	want := []forgeapi.Run{
 		{
 			Ref:  forgeapi.RunRef{ID: 1},
-			Repo: testRef(), Name: "example", Branch: "example-feature", HeadSHA: testHeadSHA,
+			Repo: testRef(), Name: "example", WorkflowPath: ".github/workflows/example.yaml", Branch: "example-feature", HeadSHA: testHeadSHA,
 			WebURL:    "https://forge.example/example/example/actions/runs/1",
 			CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			State: forgeapi.CheckFailing,
 		},
 		{
 			Ref:  forgeapi.RunRef{ID: 2},
-			Repo: testRef(), Name: "example-security", Branch: "example-feature", HeadSHA: testHeadSHA,
+			Repo: testRef(), Name: "example-security", WorkflowPath: ".github/workflows/example-security.yml", Branch: "example-feature", HeadSHA: testHeadSHA,
 			WebURL:    "https://forge.example/example/example/actions/runs/2",
 			CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			State: forgeapi.CheckPassing,

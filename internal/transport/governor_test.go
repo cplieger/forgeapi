@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -353,5 +355,260 @@ func TestAFoldedReadIsAdmittedOnlyWhereItsMeasuredCostFitsTheIntervalLeft(t *tes
 	clock.advance(time.Second)
 	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
 		t.Errorf("a folded read costing 10s with 9s of the interval left = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
+	}
+}
+
+func pooledConn(t *testing.T, pools map[string][3]string, reserve int, parent budgetParent) (*Conn, func(path string) int64) {
+	t.Helper()
+	var mu sync.Mutex
+	sent := map[string]int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1")
+		mu.Lock()
+		sent[path]++
+		mu.Unlock()
+		p := pools[path]
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Pool", p[0])
+		w.Header().Set("X-Remaining", p[1])
+		w.Header().Set("X-Limit", p[2])
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	opts := testOptions()
+	opts.Pool = func(h http.Header) (string, int) {
+		limit, _ := strconv.Atoi(h.Get("X-Limit"))
+		return h.Get("X-Pool"), limit
+	}
+	opts.PoolParent = parent
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, forgeapi.WithMutationReserve(reserve))
+	return c, func(path string) int64 {
+		mu.Lock()
+		defer mu.Unlock()
+		return sent[path]
+	}
+}
+
+func readOp(t *testing.T, c *Conn, op, path string) error {
+	t.Helper()
+	_, err := c.Do(Call(t.Context(), op), &Request{Op: op, Method: http.MethodGet, Path: path})
+	return err
+}
+
+// TestAReadIsHeldAgainstThePoolItsOperationDrewOn holds the reserve to the pool a
+// read draws on where the product names its pools: the last response's figure may be
+// another route's pool, and holding a read against it defers a read whose own pool
+// has budget to spare.
+func TestAReadIsHeldAgainstThePoolItsOperationDrewOn(t *testing.T) {
+	c, sent := pooledConn(t, map[string][3]string{
+		"/main":   {"main", "1990", "2000"},
+		"/narrow": {"narrow", "5", "1000"},
+	}, 10, nil)
+	if err := readOp(t, c, "ListPRs", "/main"); err != nil {
+		t.Fatalf("Setup: the first ListPRs = %v, want nil", err)
+	}
+	if err := readOp(t, c, "ListRepos", "/narrow"); err != nil {
+		t.Fatalf("Setup: the first ListRepos = %v, want nil: no answer has placed the operation yet", err)
+	}
+	if got := c.BudgetState().Remaining; got != 5 {
+		t.Fatalf("Setup: BudgetState.Remaining = %d, want 5, the last response's pool", got)
+	}
+	if err := readOp(t, c, "ListPRs", "/main"); err != nil {
+		t.Errorf("ListPRs after another route's pool reached the reserve = %v, want it sent: its own pool has 1990 left", err)
+	}
+	if err := readOp(t, c, "ListPRs", "/main"); err != nil {
+		t.Fatalf("Setup: ListPRs = %v, want nil", err)
+	}
+	if err := readOp(t, c, "ListRepos", "/narrow"); !IsDeferred(err) {
+		t.Errorf("ListRepos with its own pool at 5 under a reserve of 10 = %v, want the deferral", err)
+	}
+	if got := c.BudgetState().Remaining; got != 5 {
+		t.Errorf("BudgetState.Remaining after the deferral = %d, want 5, the figure of the pool that held the read", got)
+	}
+	if got, want := sent("/main")+sent("/narrow"), int64(4); got != want {
+		t.Errorf("the instance saw %d request(s), want %d: only the deferred ListRepos is held back", got, want)
+	}
+}
+
+// TestAPoolWhoseLimitIsUnderTheReserveIsNotHeld holds a pool too small to keep the
+// reserve, as gitlab.com's 100-a-minute pool on its project listings is beside a
+// reserve of 250: holding it would defer its every read after the first of each
+// window.
+func TestAPoolWhoseLimitIsUnderTheReserveIsNotHeld(t *testing.T) {
+	c, sent := pooledConn(t, map[string][3]string{"/projects": {"burst", "99", "100"}}, 250, nil)
+	for read := 1; read <= 2; read++ {
+		if err := readOp(t, c, "ListRepos", "/projects"); err != nil {
+			t.Fatalf("ListRepos %d of 2 from a pool of 100 under a reserve of 250 = %v, want it sent", read, err)
+		}
+	}
+	if got := sent("/projects"); got != 2 {
+		t.Errorf("the instance saw %d request(s), want 2", got)
+	}
+}
+
+// TestAnUnnamedPoolHoldsEveryRead holds the product that reports one figure for every
+// route to it: every read, an operation not answered yet included, is held against
+// that figure.
+func TestAnUnnamedPoolHoldsEveryRead(t *testing.T) {
+	c, sent := pooledConn(t, map[string][3]string{"/user": {"", "5", "1000"}, "/labels": {"", "5", "1000"}}, 10, nil)
+	if err := readOp(t, c, "Whoami", "/user"); err != nil {
+		t.Fatalf("Setup: Whoami = %v, want nil", err)
+	}
+	if err := readOp(t, c, "ListLabels", "/labels"); !IsDeferred(err) {
+		t.Errorf("a first ListLabels under the one figure at 5 with a reserve of 10 = %v, want the deferral", err)
+	}
+	if got := sent("/labels"); got != 0 {
+		t.Errorf("the instance saw %d ListLabels request(s), want 0", got)
+	}
+}
+
+// apiParent is a product whose burst pool overlaps its API-wide pool, which every
+// read, the burst pool's included, counts against.
+func apiParent(name string) string {
+	if name == "api" {
+		return ""
+	}
+	return "api"
+}
+
+// TestAReadUnderANarrowerPoolSpendsTheParentItOverlaps holds the reserve to the
+// API-wide pool where an answer names only the narrower pool it also drew on: each
+// such answer spends one of the parent's last figure, and once that reaches the
+// reserve every read is held, the narrower pool's own and one not answered yet.
+func TestAReadUnderANarrowerPoolSpendsTheParentItOverlaps(t *testing.T) {
+	c, sent := pooledConn(t, map[string][3]string{
+		"/user":     {"api", "252", "2000"},
+		"/projects": {"burst", "90", "100"},
+	}, 250, apiParent)
+	if err := readOp(t, c, "Whoami", "/user"); err != nil {
+		t.Fatalf("Setup: Whoami = %v, want nil", err)
+	}
+	for read := 1; read <= 2; read++ {
+		if err := readOp(t, c, "ListRepos", "/projects"); err != nil {
+			t.Fatalf("ListRepos %d of 2 with the parent at %d = %v, want it sent", read, 253-read, err)
+		}
+	}
+	if err := readOp(t, c, "ListRepos", "/projects"); !IsDeferred(err) {
+		t.Errorf("ListRepos after two answers took the parent from 252 to 250 under a reserve of 250 = %v, want the deferral", err)
+	}
+	if got := c.BudgetState().Remaining; got != 250 {
+		t.Errorf("BudgetState.Remaining after the deferral = %d, want 250, the parent that held the read", got)
+	}
+	if err := readOp(t, c, "ListPRs", "/prs"); !IsDeferred(err) {
+		t.Errorf("a first ListPRs with the parent at the reserve = %v, want the deferral", err)
+	}
+	if got := sent("/projects") + sent("/prs"); got != 2 {
+		t.Errorf("the instance saw %d listing request(s), want 2", got)
+	}
+}
+
+// TestEveryAnswerUnderANarrowerPoolSpendsTheParent holds the parent's count to the
+// requests the instance answered rather than the reads asked for: a retried
+// attempt and a followed redirect hop each spent the parent exactly once, so one
+// read answered twice takes the parent from 252 to 250, the reserve of 250 holds
+// the next read and a reserve of 249 sends it.
+func TestEveryAnswerUnderANarrowerPoolSpendsTheParent(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		first func(w http.ResponseWriter)
+	}{
+		{name: "a_retried_attempt", first: func(w http.ResponseWriter) {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusBadGateway)
+		}},
+		{name: "a_followed_redirect_hop", first: func(w http.ResponseWriter) {
+			w.Header().Set("Location", "/api/v1/projects-moved")
+			w.WriteHeader(http.StatusFound)
+		}},
+	} {
+		t.Run(test.name+"_holds_at_a_reserve_of_250", func(t *testing.T) {
+			c, prs := twiceAnsweredListing(t, test.first, 250)
+			if err := readOp(t, c, "ListPRs", "/prs"); !IsDeferred(err) {
+				t.Errorf("ListPRs after two answers took the parent from 252 to 250 under a reserve of 250 = %v, want the deferral", err)
+			}
+			if got := prs.Load(); got != 0 {
+				t.Errorf("the instance saw %d ListPRs request(s), want 0", got)
+			}
+		})
+		t.Run(test.name+"_sends_at_a_reserve_of_249", func(t *testing.T) {
+			c, prs := twiceAnsweredListing(t, test.first, 249)
+			if err := readOp(t, c, "ListPRs", "/prs"); err != nil {
+				t.Errorf("ListPRs after two answers took the parent from 252 to 250 under a reserve of 249 = %v, want it sent", err)
+			}
+			if got := prs.Load(); got != 1 {
+				t.Errorf("the instance saw %d ListPRs request(s), want 1", got)
+			}
+		})
+	}
+}
+
+// twiceAnsweredListing opens a connection under the given reserve whose parent
+// reads 252, then sends one ListRepos the instance answers twice, first with
+// first, and returns the connection and the instance's ListPRs count.
+func twiceAnsweredListing(t *testing.T, first func(w http.ResponseWriter), reserve int) (*Conn, *atomic.Int32) {
+	t.Helper()
+	var listings, prs atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/user":
+			w.Header().Set("X-Pool", "api")
+			w.Header().Set("X-Remaining", "252")
+			w.Header().Set("X-Limit", "2000")
+		case "/api/v1/prs":
+			prs.Add(1)
+		default:
+			w.Header().Set("X-Pool", "burst")
+			w.Header().Set("X-Remaining", strconv.Itoa(int(90-listings.Load())))
+			w.Header().Set("X-Limit", "100")
+			if listings.Add(1) == 1 {
+				first(w)
+				return
+			}
+		}
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	opts := testOptions()
+	opts.Pool = func(h http.Header) (string, int) {
+		limit, _ := strconv.Atoi(h.Get("X-Limit"))
+		return h.Get("X-Pool"), limit
+	}
+	opts.PoolParent = apiParent
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, forgeapi.WithMutationReserve(reserve))
+	if err := readOp(t, c, "Whoami", "/user"); err != nil {
+		t.Fatalf("Setup: Whoami = %v, want nil", err)
+	}
+	if err := readOp(t, c, "ListRepos", "/projects"); err != nil {
+		t.Fatalf("ListRepos with the parent at 252 = %v, want it sent", err)
+	}
+	if got := listings.Load(); got != 2 {
+		t.Fatalf("Setup: the instance answered %d listing request(s), want 2", got)
+	}
+	return c, &prs
+}
+
+// TestANarrowPoolUnderTheReserveIsNotHeldBesideItsParent holds the exemption of a
+// pool too small to keep the reserve where it overlaps a parent with budget to spare:
+// its every read is sent.
+func TestANarrowPoolUnderTheReserveIsNotHeldBesideItsParent(t *testing.T) {
+	c, sent := pooledConn(t, map[string][3]string{
+		"/user":     {"api", "1990", "2000"},
+		"/projects": {"burst", "5", "100"},
+	}, 250, apiParent)
+	if err := readOp(t, c, "Whoami", "/user"); err != nil {
+		t.Fatalf("Setup: Whoami = %v, want nil", err)
+	}
+	for read := 1; read <= 5; read++ {
+		if err := readOp(t, c, "ListRepos", "/projects"); err != nil {
+			t.Fatalf("ListRepos %d of 5 from a pool of 100 at 5 with its parent at %d = %v, want it sent", read, 1991-read, err)
+		}
+	}
+	if got := sent("/projects"); got != 5 {
+		t.Errorf("the instance saw %d ListRepos request(s), want 5", got)
 	}
 }

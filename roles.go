@@ -696,20 +696,23 @@ type Checks interface {
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Items[].Branch     differs in spelling  ref string: a branch on 2 of 5 and a refs/ path on 3, which merge-request and workload pipelines run for
-	//	Items[].StartedAt  cannot supply        zero: the listing row carries no started_at, which only the single-pipeline route answers, and the listing adds no request for it
-	//	Successor          cannot supply        nil: no successor key
+	//	Items[].Branch        differs in spelling  ref string: a branch on 2 of 5 and a refs/ path on 3, which merge-request and workload pipelines run for
+	//	Items[].StartedAt     cannot supply        zero: the listing row carries no started_at, which only the single-pipeline route answers, and the listing adds no request for it
+	//	Items[].WorkflowPath  cannot supply        empty: a pipeline row names no configuration file, and every pipeline of a project runs its one configuration
+	//	Successor             cannot supply        nil: no successor key
 	//
 	// Gitea departs from the normalized contract:
 	//
 	//	Items[].Name                   differs in spelling  path string, the workflow file and its ref, on 6 of 6; no name key among the 26 the route answers
+	//	Items[].WorkflowPath           differs in shape     the workflow file's name, path string before its ref with no directory, the name Forgejo answers
 	//	Items[].CreatedAt, before v28  cannot supply        zero: the route's run object carries no created_at before v28, so a page read under a since bound is refused as run_undated rather than answered as holding no run
 	//	Items[].UpdatedAt, before v28  cannot supply        zero: the route's run object carries no updated_at before v28
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	Items[].Name    differs in spelling  workflow_id string, the workflow file's name, on 16 of 16 rows kept; no name key among the 23 the route answers
-	//	Items[].Branch  differs in spelling  prettyref string, pull_request run "#820"; pull_request run "#841"; pull_request run "#842"; push run "main": the branch on a push run and a pull request's number on a pull-request run, no branch key
+	//	Items[].Name          differs in spelling  workflow_id string, the workflow file's name, on 16 of 16 rows kept; no name key among the 23 the route answers
+	//	Items[].WorkflowPath  differs in shape     workflow_id string, the workflow file's name with no directory
+	//	Items[].Branch        differs in spelling  prettyref string, pull_request run "#820"; pull_request run "#841"; pull_request run "#842"; push run "main": the branch on a push run and a pull request's number on a pull-request run, no branch key
 	//
 	// GitHub sends this, where a wrong default would change the request silently:
 	//

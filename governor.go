@@ -71,12 +71,14 @@ const BudgetRemainingUnknown = -1
 type BudgetState struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, remaining first
 	// Remaining is the budget left in the current window, in the instance's own units:
 	// requests on a REST endpoint, points on a document endpoint, and on a product with
-	// one pool per surface the pool the last response drew on. It is
+	// more than one pool the pool the last response drew on, or the one a read was
+	// last deferred against where that came later. It is
 	// [BudgetRemainingUnknown] where the instance reports none. On GitHub and GitLab it
 	// is the user's own quota, which every application acting for that user draws on,
 	// so it falls while this client sends nothing: render it as the account's remaining
-	// budget. The mutation reserve is held against it until Reset, after which the next
-	// read is sent and its response reports the renewed window.
+	// budget. The mutation reserve is held against the pool each read draws on (see
+	// [WithMutationReserve]) until that pool's reset, after which the next read is sent
+	// and its response reports the renewed window.
 	Remaining int
 	// Reset is when the window renews, or the zero time where the instance
 	// reports none.

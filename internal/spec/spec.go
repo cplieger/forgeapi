@@ -1769,6 +1769,11 @@ var Table = []Entry{
 				Says:  "zero: the listing row carries no started_at, which only the single-pipeline route answers, and the listing adds no request for it",
 			},
 			{
+				Field: "Items[].WorkflowPath",
+				Kind:  CannotSupply,
+				Says:  "empty: a pipeline row names no configuration file, and every pipeline of a project runs its one configuration",
+			},
+			{
 				Field: "Successor",
 				Kind:  CannotSupply,
 				Says:  "nil: no successor key",
@@ -1800,6 +1805,11 @@ var Table = []Entry{
 				Field: "Items[].Name",
 				Kind:  DiffersInSpelling,
 				Says:  "path string, the workflow file and its ref, on 6 of 6; no name key among the 26 the route answers",
+			},
+			{
+				Field: "Items[].WorkflowPath",
+				Kind:  DiffersInShape,
+				Says:  "the workflow file's name, path string before its ref with no directory, the name Forgejo answers",
 			},
 			{
 				Field: "Items[].CreatedAt, before v28",
@@ -1846,6 +1856,11 @@ var Table = []Entry{
 				Field: "Items[].Name",
 				Kind:  DiffersInSpelling,
 				Says:  "workflow_id string, the workflow file's name, on 16 of 16 rows kept; no name key among the 23 the route answers",
+			},
+			{
+				Field: "Items[].WorkflowPath",
+				Kind:  DiffersInShape,
+				Says:  "workflow_id string, the workflow file's name with no directory",
 			},
 			{
 				Field: "Items[].Branch",

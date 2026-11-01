@@ -81,6 +81,8 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 	core, err := transport.Open(conn, &settings, transport.Options{
 		Mapper:        mapper,
 		Signal:        signal,
+		Pool:          pool,
+		PoolParent:    parentPool,
 		DeriveAPIBase: deriveAPIBase,
 		Clock:         clock,
 		Family:        forgeapi.FamilyGitLab,

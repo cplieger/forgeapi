@@ -10,15 +10,12 @@ import (
 	"github.com/cplieger/forgeapi/internal/spec"
 )
 
-// check is one field of one operation's normalized answer.
-//
-// want is the contract's value, the SAME on all four products. none is the value
-// the field takes on a product whose table row says it cannot supply it, which is
-// the type's zero unless the row's own words name another; noneBy carries it for
-// the fields where two products name two different ones. nonZero relaxes want to
-// "populated at all", and it is used only where the normalized contract fixes that a
-// value arrives without fixing its spelling, which is a gap in that contract rather than a
-// choice of this suite.
+// check is one field of one operation's normalized answer. want is the contract's
+// value, the SAME on all four products; none is the value on a product whose table
+// row says it cannot supply it (the type's zero unless the row names another), and
+// noneBy carries it where two products name two different ones. nonZero relaxes
+// want to "populated at all", only where the contract fixes that a value arrives
+// but not its spelling.
 type check struct {
 	got     any
 	want    any
@@ -137,6 +134,17 @@ var productOf = map[spec.Product]forgeapi.Product{
 	spec.Gitea: forgeapi.ProductGitea, spec.Forgejo: forgeapi.ProductForgejo,
 }
 
+func runWorkflowPath(p spec.Product) string {
+	switch p {
+	case spec.GitHub:
+		return ".github/workflows/example.yaml"
+	case spec.GitLab:
+		return ""
+	default:
+		return "example.yml"
+	}
+}
+
 // runWebURL is the page one product's fixture names for the canonical run. The
 // value is the forge's own text, so it is per product where the products' routes
 // for a run page differ.
@@ -192,15 +200,11 @@ func first[T any](s []T) T {
 }
 
 // operations is the suite's contract: one entry per published operation, in the
-// order the roles declare them.
-//
-// Every want here is derived from the normalized contract the returned types state and is
-// single valued across the products. Three kinds of field carry no check. A field whose value is the forge's
-// own text rather than a normalized value is checked against the fixture's own
-// value, which is the same string on every product. A field the table marks
-// unmeasured on a product is skipped on that product, by the driver, with the
-// reason. And a field no normalized value is fixed for is named in the record rather
-// than guessed at here.
+// order the roles declare them. Every want derives from the normalized contract and
+// is single valued across the products. A field holding the forge's own text is
+// checked against the fixture's value, the same string on every product; a field
+// the table marks unmeasured on a product is skipped there by the driver, with the
+// reason; and a field no normalized value is fixed for is named in the record.
 var operations = []operation{
 	{
 		method:    "Identity.Whoami",
@@ -494,6 +498,7 @@ var operations = []operation{
 				eq("Items[].Ref.ID", fieldValue(reflect.ValueOf(fieldValue(row, "Ref")), "ID"), int64(1)),
 				eq("Items[].Repo", fieldValue(row, "Repo"), repoRef(p)),
 				eq("Items[].Name", fieldValue(row, "Name"), runName),
+				eq("Items[].WorkflowPath", fieldValue(row, "WorkflowPath"), runWorkflowPath(p)),
 				eq("Items[].Branch", fieldValue(row, "Branch"), sourceBranch),
 				eq("Items[].HeadSHA", fieldValue(row, "HeadSHA"), headSHA),
 				eq("Items[].WebURL", fieldValue(row, "WebURL"), runWebURL(p)),

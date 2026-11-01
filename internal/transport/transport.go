@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/textproto"
 	"net/url"
 	"slices"
 	"strconv"
@@ -89,6 +90,17 @@ type errorMapper func(op string, status int, header http.Header, bodyError strin
 // governor then reports the neutral value.
 type budgetSignal func(header http.Header) (remaining int, reset time.Time, ok bool)
 
+// budgetPool is how a family reads which of its product's rate-limit pools a
+// response drew on and that pool's whole limit, zero where the response states
+// none. A product answering every route from one pool has none: its family sets
+// no budgetPool.
+type budgetPool func(header http.Header) (name string, limit int)
+
+// budgetParent names the pool a request answered under the pool name also
+// counted against, empty for none, where a product's pools overlap and its
+// headers name only one of them. A family whose pools are disjoint sets none.
+type budgetParent func(name string) string
+
 // Conn is one connection's request core: one wire transport, two clients over it,
 // and its governor.
 //
@@ -102,6 +114,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	credential forgeapi.CredentialSource
 	mapper     errorMapper
 	signal     budgetSignal
+	pool       budgetPool
 	apiBase    *url.URL
 	web        *url.URL
 	wire       *http.Transport
@@ -131,6 +144,8 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 type Options struct {
 	Mapper        errorMapper
 	Signal        budgetSignal
+	Pool          budgetPool
+	PoolParent    budgetParent
 	DeriveAPIBase func(web *url.URL) string
 	Clock         func() time.Time
 	Family        forgeapi.Family
@@ -207,6 +222,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		credential: set.Credential,
 		mapper:     opts.Mapper,
 		signal:     opts.Signal,
+		pool:       opts.Pool,
 		apiBase:    apiBase,
 		web:        web,
 		wire:       wire,
@@ -223,7 +239,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		family:     opts.Family,
 		mutations:  set.Mutations,
 	}
-	c.gov = newGovernor(set, &c.counters, opts.Family, opts.Clock)
+	c.gov = newGovernor(set, &c.counters, opts.Family, opts.Clock, opts.PoolParent)
 	c.cache = newReadCache(set.ReadCacheBytes, familyFields, opts.FreeNotModified)
 
 	policy := c.redirectPolicy(web, set)
@@ -254,10 +270,8 @@ func observe(client *http.Client, wrap func(http.RoundTripper) http.RoundTripper
 	client.Transport = wrap(client.Transport)
 }
 
-// onRetry records that an attempt was repeated: the attempt number onto the
-// counter the operation's context carries, so the per-request line can report it,
-// and the counter seam with the operation the request belongs to.
-func (c *Conn) onRetry(attempt int, req *http.Request, _ *http.Response, _ error) {
+func (c *Conn) onRetry(attempt int, req *http.Request, resp *http.Response, _ error) {
+	c.observeDropped(req, resp)
 	if req != nil {
 		if counter := attemptsFrom(req.Context()); counter != nil {
 			counter.Store(int64(attempt) + 1)
@@ -265,6 +279,15 @@ func (c *Conn) onRetry(attempt int, req *http.Request, _ *http.Response, _ error
 	}
 	if c.counters.Retried != nil {
 		c.counters.Retried(c.family, opFrom(req))
+	}
+}
+
+// observeDropped hands the governor the budget reported by an answer [Conn.answer]
+// never observes, a retried attempt's or a redirect hop's: each was a request the
+// instance counted, and [governor.observe] debits a parent per answer.
+func (c *Conn) observeDropped(req *http.Request, resp *http.Response) {
+	if resp != nil {
+		c.gov.observe(opFrom(req), resp.Header, c.signal, c.pool)
 	}
 }
 
@@ -979,7 +1002,7 @@ func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *ht
 	if sendErr != nil {
 		return refusedHop(resp), nil, c.transportError(ctx, req, sendErr, started)
 	}
-	c.gov.observe(resp.Header, c.signal)
+	c.gov.observe(req.Op, resp.Header, c.signal, c.pool)
 	out := &Response{
 		Header: resp.Header, Status: resp.StatusCode, quote: c.quoter(rv.token),
 		Redirected: followed(resp, target), Ended: ended(resp, target),
@@ -1026,7 +1049,7 @@ func (c *Conn) sendRead(ctx context.Context, req *Request, target string) (*http
 		send: func(mode cacheMode, gen uint64) (*http.Response, revalidation, error) {
 			return c.send(ctx, req, target, mode, gen)
 		},
-		discarded:  func(h http.Header) { c.gov.observe(h, c.signal) },
+		discarded:  func(h http.Header) { c.gov.observe(req.Op, h, c.signal, c.pool) },
 		cacheable:  c.cacheable(ctx, req),
 		resendable: req.Method == http.MethodGet && !req.Document,
 	}.run()
@@ -1491,8 +1514,11 @@ func (r *refusal) text(code string) string {
 }
 
 // instanceText is the message member as text: a string as it came, and any other
-// shape as its compact JSON, which keeps a field error's field name beside its
+// shape as its canonical JSON, which keeps a field error's field name beside its
 // complaint.
+//
+// The shape is decoded and re-encoded rather than compacted, so a secret it holds is
+// spelled only as [jsonForm] spells it, whichever escapes the instance chose.
 func (r *refusal) instanceText() string {
 	if len(r.Message) == 0 {
 		return ""
@@ -1501,11 +1527,17 @@ func (r *refusal) instanceText() string {
 	if err := json.Unmarshal(r.Message, &text); err == nil {
 		return text
 	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, r.Message); err != nil || compact.String() == "null" {
+	dec := json.NewDecoder(bytes.NewReader(r.Message))
+	dec.UseNumber()
+	var shape any
+	if err := dec.Decode(&shape); err != nil || shape == nil {
 		return ""
 	}
-	return compact.String()
+	text, err := canonicalJSON(shape)
+	if err != nil {
+		return ""
+	}
+	return text
 }
 
 // scoped is text led by the scope an RFC 6750 body names, so the bound the caller's
@@ -1526,41 +1558,21 @@ func sanitize(s string) string {
 
 // quoter makes an instance's text from one exchange safe to carry on an error:
 // every secret the request carried, its credential and each value of the
-// connection's own headers, is redacted out of the text, the text made one line,
-// the secrets redacted again, and the text bounded last.
-//
-// Both redactions are needed, because the sanitizer rewrites runes: it can turn a
-// byte inside an echoed secret into a space, which only the first pass still
-// matches, and it can turn a control byte into the space a secret carries, which
-// only the second pass matches. The bound comes last so it cannot cut a secret into
-// a prefix no needle matches. A secret is matched as it was sent and as JSON
-// escapes it, since a message member that is not a string is quoted as its JSON.
+// connection's own headers, is redacted out of the text, which is made one line
+// and bounded. A secret is matched as it was given, as it was received with a
+// field value's edge whitespace trimmed (RFC 9110 section 5.5, and net/http
+// trims it on write), and as [jsonForm] spells each, since a message member that
+// is not a string is quoted as its JSON.
 func (c *Conn) quoter(token string) func(string) string {
-	var needles []string
-	for _, secret := range append([]string{token}, headerValues(c.headers)...) {
-		if secret == "" {
-			continue
-		}
-		needles = append(needles, secret)
-		for _, escapeHTML := range []bool{false, true} {
-			if form := jsonForm(secret, escapeHTML); form != secret {
-				needles = append(needles, form)
-			}
-		}
-	}
-	slices.Sort(needles)
-	needles = slices.Compact(needles)
-	// The longest goes first, so a secret holding another as a substring is not
-	// left partly unredacted by the shorter one's pass.
-	slices.SortStableFunc(needles, func(a, b string) int { return cmp.Compare(len(b), len(a)) })
-	redact := func(text string) string {
-		for _, n := range needles {
-			text = httpx.RedactSecretString(text, httpx.Secret(n))
-		}
-		return text
+	given := append([]string{token}, headerValues(c.headers)...)
+	secrets := make([]string, 0, 4*len(given))
+	for _, secret := range given {
+		received := textproto.TrimString(secret)
+		secrets = append(secrets, secret, jsonForm(secret), received, jsonForm(received))
 	}
 	return func(text string) string {
-		return sanitize(redact(runesafe.SanitizeSingleLine(redact(text))))
+		out, _ := runesafe.RedactSingleLineCapped(text, maxMessageBytes, "...", secrets...)
+		return out
 	}
 }
 
@@ -1573,16 +1585,24 @@ func headerValues(headers []forgeapi.Header) []string {
 	return values
 }
 
-// jsonForm is s as a JSON string's contents spell it, with or without the HTML
-// escapes an encoder may apply.
-func jsonForm(s string, escapeHTML bool) string {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(escapeHTML)
-	if err := enc.Encode(s); err != nil {
+// jsonForm is s as a JSON string's contents spell it in [canonicalJSON].
+func jsonForm(s string) string {
+	text, err := canonicalJSON(s)
+	if err != nil {
 		return s
 	}
-	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(buf.String()), `"`), `"`)
+	return strings.TrimSuffix(strings.TrimPrefix(text, `"`), `"`)
+}
+
+// canonicalJSON is v encoded with no HTML escapes and no trailing newline.
+func canonicalJSON(v any) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(buf.String(), "\n"), nil
 }
 
 // log is the per-request record: operation, family, sanitized instance, transport,

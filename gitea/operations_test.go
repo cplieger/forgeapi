@@ -542,15 +542,16 @@ const (
 // one commit's runs.
 func TestTheRunListingReadsEachProductsOwnRunRow(t *testing.T) {
 	want := forgeapi.Run{
-		Ref:       forgeapi.RunRef{ID: 1},
-		Repo:      testRef(),
-		Name:      "example",
-		Branch:    "example-feature",
-		HeadSHA:   testHeadSHA,
-		WebURL:    "https://forge.example/example/example/actions/runs/1",
-		CreatedAt: time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
-		UpdatedAt: time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC),
-		State:     forgeapi.CheckFailing,
+		Ref:          forgeapi.RunRef{ID: 1},
+		Repo:         testRef(),
+		Name:         "example",
+		WorkflowPath: "example.yml",
+		Branch:       "example-feature",
+		HeadSHA:      testHeadSHA,
+		WebURL:       "https://forge.example/example/example/actions/runs/1",
+		CreatedAt:    time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:    time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC),
+		State:        forgeapi.CheckFailing,
 	}
 	for _, test := range []struct {
 		name string
@@ -596,23 +597,31 @@ func TestTheRunListingReadsEachProductsOwnRunRow(t *testing.T) {
 
 // TestARunsNameIsItsWorkflowFileWithoutTheExtension holds the one field neither
 // product's run spells as a name: both carry the workflow FILE, Gitea before the ref
-// the run ran on and Forgejo alone, and the name a workflow carries where it
-// declares none is that file's own, without its YAML extension.
+// the run ran on and Forgejo alone, so the run's workflow path is that file's name on
+// both, and the name a workflow carries where it declares none is that file's own,
+// without its YAML extension.
 func TestARunsNameIsItsWorkflowFileWithoutTheExtension(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		run  wireRun
-		want string
+		name     string
+		run      wireRun
+		wantFile string
+		want     string
 	}{
-		{name: "gitea_yml_on_a_branch", run: wireRun{Path: "build.yml@refs/heads/main"}, want: "build"},
-		{name: "gitea_yaml_on_a_tag", run: wireRun{Path: "release.yaml@refs/tags/v1.0.0"}, want: "release"},
-		{name: "forgejo_file_alone", run: wireRun{WorkflowID: "ci.yml"}, want: "ci"},
-		{name: "a_file_in_a_directory", run: wireRun{Path: ".gitea/workflows/lint.yaml@refs/heads/main"}, want: "lint"},
-		{name: "no_file_at_all", run: wireRun{}, want: ""},
+		{name: "gitea_yml_on_a_branch", run: wireRun{Path: "build.yml@refs/heads/main"}, wantFile: "build.yml", want: "build"},
+		{name: "gitea_yaml_on_a_tag", run: wireRun{Path: "release.yaml@refs/tags/v1.0.0"}, wantFile: "release.yaml", want: "release"},
+		{name: "forgejo_file_alone", run: wireRun{WorkflowID: "ci.yml"}, wantFile: "ci.yml", want: "ci"},
+		{name: "a_file_in_a_directory", run: wireRun{Path: ".gitea/workflows/lint.yaml@refs/heads/main"}, wantFile: "lint.yaml", want: "lint"},
+		{name: "an_at_in_the_file_name", run: wireRun{Path: "release@nightly.yml@refs/heads/main"}, wantFile: "release@nightly.yml", want: "release@nightly"},
+		{name: "an_at_in_the_branch", run: wireRun{Path: "ci.yml@refs/heads/feat@x"}, wantFile: "ci.yml", want: "ci"},
+		{name: "an_at_in_the_file_name_on_a_commit", run: wireRun{Path: "release@nightly.yml@1595d4b6"}, wantFile: "release@nightly.yml", want: "release@nightly"},
+		{name: "no_file_at_all", run: wireRun{}, wantFile: "", want: ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := test.run.name(); got != test.want {
 				t.Errorf("name() over path %q and workflow_id %q = %q, want %q", test.run.Path, test.run.WorkflowID, got, test.want)
+			}
+			if got := test.run.file(); got != test.wantFile {
+				t.Errorf("file() over path %q and workflow_id %q = %q, want %q", test.run.Path, test.run.WorkflowID, got, test.wantFile)
 			}
 		})
 	}

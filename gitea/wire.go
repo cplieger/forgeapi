@@ -579,17 +579,18 @@ func normalizeRelease(r *wireRelease) forgeapi.Release {
 // addressed, which is what the row's own repository object echoes.
 func (c *Client) normalizeRun(r *wireRun, repo forgeapi.RepoRef) forgeapi.Run {
 	return forgeapi.Run{
-		Ref:       forgeapi.RunRef{ID: r.ID, Number: cmp.Or(r.RunNumber, r.IndexInRepo)},
-		Repo:      repo,
-		Name:      r.name(),
-		Branch:    cmp.Or(r.HeadBranch, r.PrettyRef),
-		HeadSHA:   r.head(),
-		WebURL:    r.WebURL,
-		CreatedAt: firstTime(r.CreatedAt, r.Created),
-		StartedAt: firstTime(r.StartedAt, r.Started),
-		UpdatedAt: firstTime(r.UpdatedAt, r.Updated),
-		State:     c.runState(r),
-		Trigger:   c.runTrigger(cmp.Or(r.TriggerEvent, r.Event)),
+		Ref:          forgeapi.RunRef{ID: r.ID, Number: cmp.Or(r.RunNumber, r.IndexInRepo)},
+		Repo:         repo,
+		Name:         r.name(),
+		WorkflowPath: r.file(),
+		Branch:       cmp.Or(r.HeadBranch, r.PrettyRef),
+		HeadSHA:      r.head(),
+		WebURL:       r.WebURL,
+		CreatedAt:    firstTime(r.CreatedAt, r.Created),
+		StartedAt:    firstTime(r.StartedAt, r.Started),
+		UpdatedAt:    firstTime(r.UpdatedAt, r.Updated),
+		State:        c.runState(r),
+		Trigger:      c.runTrigger(cmp.Or(r.TriggerEvent, r.Event)),
 	}
 }
 
@@ -606,19 +607,34 @@ func (c *Client) runTrigger(raw string) forgeapi.RunTrigger {
 // head is the commit the run ran on, under either product's spelling.
 func (r *wireRun) head() string { return cmp.Or(r.HeadSHA, r.CommitSHA) }
 
-// name is the workflow file the run came from, without its directory and its YAML
-// extension, which is the display name a workflow carries where it declares none.
-// Gitea spells the file as the path before the ref the run ran on, file@ref, and
-// Forgejo names it alone.
-func (r *wireRun) name() string {
+// file is the workflow file the run came from, without its directory. Gitea
+// spells it as the path before the ref the run ran on, file@ref, and Forgejo
+// names it alone. A file's name may hold an @ and a full ref may too, but no file
+// name holds a /, so the ref is cut at the first @refs/, else at the last @
+// (https://github.com/go-gitea/gitea/blob/main/services/convert/convert.go).
+func (r *wireRun) file() string {
 	file := r.WorkflowID
 	if r.Path != "" {
-		file, _, _ = strings.Cut(r.Path, "@")
+		at := strings.Index(r.Path, "@refs/")
+		if at < 0 {
+			at = strings.LastIndexByte(r.Path, '@')
+		}
+		file = r.Path
+		if at >= 0 {
+			file = r.Path[:at]
+		}
 	}
 	file = path.Base(file)
 	if file == "." || file == "/" {
 		return ""
 	}
+	return file
+}
+
+// name is [wireRun.file] without its YAML extension, which is the display name a
+// workflow carries where it declares none.
+func (r *wireRun) name() string {
+	file := r.file()
 	for _, ext := range []string{".yaml", ".yml"} {
 		if stem, ok := strings.CutSuffix(file, ext); ok {
 			return stem
