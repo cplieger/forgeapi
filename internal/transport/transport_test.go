@@ -223,6 +223,20 @@ func TestTheEnvironmentsProxyVariablesAreNeverRead(t *testing.T) {
 	}
 }
 
+// TestWirePingWindowFitsHeaderTimeout holds the invariant that a request on a silent
+// HTTP/2 connection ends as a lost connection before its header timeout, so the
+// retry dials a new connection rather than waiting on the dead one again.
+func TestWirePingWindowFitsHeaderTimeout(t *testing.T) {
+	c := openTestConn(t, forgeapi.Connection{WebBaseURL: "http://forge.example"})
+	if c.wire.HTTP2 == nil {
+		t.Fatal("the assembled transport carries no HTTP2 config, want the safe transport's PING health check")
+	}
+	window := c.wire.HTTP2.SendPingTimeout + c.wire.HTTP2.PingTimeout
+	if window <= 0 || window >= c.wire.ResponseHeaderTimeout {
+		t.Errorf("SendPingTimeout + PingTimeout = %v, want above 0 and below ResponseHeaderTimeout %v", window, c.wire.ResponseHeaderTimeout)
+	}
+}
+
 // TestAConnectionsOwnProxyIsTheOneThatIsUsed holds the other half of the proxy rule: the
 // proxy a connection STATES is dialled, and the destination sees no connection at all,
 // because the socket goes to the proxy and the proxy resolves the destination.

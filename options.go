@@ -384,7 +384,8 @@ func WithMutationConcurrency(n int) Option {
 
 // WithOperationTimeout bounds one operation. It is applied as a context
 // deadline, which is the only bound that can interrupt an attempt already in
-// flight. Zero is a deadline that has already passed.
+// flight. Zero is a deadline that has already passed. A bound at or under 13 s
+// leaves no room for a retry on a new connection after a silent one.
 //
 // Default: [DefaultOperationTimeout].
 func WithOperationTimeout(d time.Duration) Option {
@@ -570,6 +571,13 @@ type ListSettings struct { //nolint:govet // fieldalignment: each field was appe
 	// OwnerSet exists. The run listing reads Since where it is true; every other
 	// list refuses whenever it is true.
 	SinceSet bool
+	// MergeState is whether a pull request list answers each row's merge
+	// state, true where the caller named none.
+	MergeState bool
+	// MergeStateSet reports that the caller named [WithMergeState], whatever it
+	// named, for the reason StateSet exists. The pull request lists read
+	// MergeState; every other list refuses whenever it is true.
+	MergeStateSet bool
 }
 
 // ListOption configures one list call. Like [Option] it cannot be implemented
@@ -584,10 +592,10 @@ type ListOption interface {
 // [CodeListOwnerInvalid] for an owner outside the form [WithOwner] states,
 // [CodeListSinceInvalid] for the zero time, and [CodeCursorInvalid] for a malformed
 // [WithAfter] cursor. It is not told which list it resolves for, so it records a
-// named filter, owner or bound in the matching Set field, and the family method
-// refuses one its list cannot take, under that option's code.
+// named filter, owner, bound or merge state choice in the matching Set field, and the
+// family method refuses one its list cannot take, under that option's code.
 func ResolveList(opts ...ListOption) (ListSettings, error) {
-	s := ListSettings{PageBound: DefaultPageBound, State: ListStateOpen}
+	s := ListSettings{PageBound: DefaultPageBound, State: ListStateOpen, MergeState: true}
 	for _, o := range opts {
 		if o != nil {
 			o.applyListOption(&s)
@@ -720,5 +728,20 @@ func WithSince(t time.Time) ListOption {
 	return listOptionFunc(func(ls *ListSettings) {
 		ls.Since = t.UTC().Truncate(time.Second)
 		ls.SinceSet = true
+	})
+}
+
+// WithMergeState sets whether [PullRequests.ListPRs] and [PullRequests.ListMyPRs]
+// answer each row's [ActionState.Mergeable] and [ActionState.MergeBlocked]. With read
+// false every row answers SupportUnknown and MergeBlockUnknown, and the GitHub and
+// GitLab list documents leave both fields out of the request. With read true each list
+// answers what its per-forge block states, on some lists already unknown. Every other
+// list refuses it, at either value, with [CodeListMergeStateInvalid].
+//
+// Default: true.
+func WithMergeState(read bool) ListOption {
+	return listOptionFunc(func(ls *ListSettings) {
+		ls.MergeState = read
+		ls.MergeStateSet = true
 	})
 }

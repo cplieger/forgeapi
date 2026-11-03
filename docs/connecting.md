@@ -50,6 +50,7 @@ A `RepoRef` comes from what the forge answered and is never built by hand. It is
 - `WithMutations(false)` refuses every write with `CodeMutationsDisabled`. The default is `true`, so a client can merge and close pull requests unless you say otherwise.
 - `WithOwner` scopes the cross-repository lists, `ListMyPRs` and `ListMyIssues`, to every open item under one owner, in place of what the credential authored. On `ListRepos` it lists the repositories that owner owns. The owner is a user or an organization, or a group on GitLab. An owner is one or more segments of ASCII letters, digits, `-`, `_` and `.`, joined by `/` on GitLab alone. The library checks this form rather than escaping it, because the owner can reach a search string. `ValidateOwner` checks an owner against a family's rule before any request.
 - `WithSince` bounds `ListRuns` to the runs created at or after a time, read at whole seconds, and every other list refuses it.
+- `WithMergeState(false)` leaves merge state unread on `ListPRs` and `ListMyPRs`, so every row answers `Mergeable` and `MergeBlocked` as unknown. GitHub works out merge state for each row as it answers, so leaving it out shortens a list request. The default is `true`, and every other list refuses the option at either value.
 - `WithWireTransport` replaces the wire under a client's own HTTP stack, which is what a test uses to answer requests without a network. It bypasses the address policy, the trust anchor, the redirect policy and the proxy, because those live in the transport it replaces.
 
 ## Capabilities

@@ -135,33 +135,39 @@ type PullRequests interface {
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Items[].Action.Checks, under a fine-grained token  cannot supply  CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup
+	//	Items[].Action.Checks, under a fine-grained token         cannot supply  CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup
+	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply  SupportUnknown on every row: the document leaves mergeable out of the request
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply  MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Items[].Ref                                  differs in spelling  iid, sigil "!"
-	//	Items[].Labels[].Name                        differs in spelling  labels.nodes[].title, not name
-	//	Items[].Labels[].Color                       differs in spelling  color string, leading #
-	//	Items[].Action.Checks                        differs in shape     headPipeline.status scalar, no fold
-	//	Items[].Action.ChecksPassing .. ChecksTotal  cannot supply        absent: one scalar status
-	//	Items[].Action.QueueState                    cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
-	//	Items[].Action.QueuePosition                 cannot supply        no position; train index null
-	//	Successor                                    cannot supply        nil: GraphQL sends no successor
+	//	Items[].Ref                                               differs in spelling  iid, sigil "!"
+	//	Items[].Labels[].Name                                     differs in spelling  labels.nodes[].title, not name
+	//	Items[].Labels[].Color                                    differs in spelling  color string, leading #
+	//	Items[].Action.Checks                                     differs in shape     headPipeline.status scalar, no fold
+	//	Items[].Action.ChecksPassing .. ChecksTotal               cannot supply        absent: one scalar status
+	//	Items[].Action.QueueState                                 cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
+	//	Items[].Action.QueuePosition                              cannot supply        no position; train index null
+	//	Successor                                                 cannot supply        nil: GraphQL sends no successor
+	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply        SupportUnknown on every row: the document leaves mergeable out of the request, and the REST route reads none on a list row
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply        MergeBlockUnknown on every row: the document leaves detailedMergeStatus out of the request, and the REST route reads none on a list row
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Items[].Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Items[].Action.QueueState      cannot supply  QueueNone always
-	//	Items[].Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	Items[].Action.AutoMergeArmed                          cannot supply  no auto_merge key: unknown
+	//	Items[].Action.QueueState                              cannot supply  QueueNone always
+	//	Items[].Action.QueuePosition                           cannot supply  QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                            cannot supply  mergeable and draft, no reason
+	//	Items[].Action.Mergeable, under WithMergeState(false)  cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	Items[].AuthorKind             cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Items[].Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Items[].Action.QueueState      cannot supply  QueueNone always
-	//	Items[].Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	Items[].AuthorKind                                     cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Items[].Action.AutoMergeArmed                          cannot supply  no auto_merge key: unknown
+	//	Items[].Action.QueueState                              cannot supply  QueueNone always
+	//	Items[].Action.QueuePosition                           cannot supply  QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                            cannot supply  mergeable and draft, no reason
+	//	Items[].Action.Mergeable, under WithMergeState(false)  cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
 	ListPRs(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[PullRequest], error)
 
 	// ListMyPRs lists the credential's OPEN pull requests across every repository it
@@ -182,9 +188,11 @@ type PullRequests interface {
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Items[].Action.Checks, under a fine-grained token  cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on this document
-	//	Next                                               differs in shape  a continuation while hasNextPage holds, as on a viewer's first page of 20 rows over issueCount 23; past the search connection's 1,000th result, where it answers hasNextPage false while issueCount states 2673, and a page asked for after it answers no rows and a null end cursor, so a walk ends there with no continuation and carries result_window
-	//	error, owner unresolved                            cannot supply     empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open
+	//	Items[].Action.Checks, under a fine-grained token         cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on this document
+	//	Next                                                      differs in shape  a continuation while hasNextPage holds, as on a viewer's first page of 20 rows over issueCount 23; past the search connection's 1,000th result, where it answers hasNextPage false while issueCount states 2673, and a page asked for after it answers no rows and a null end cursor, so a walk ends there with no continuation and carries result_window
+	//	error, owner unresolved                                   cannot supply     empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open
+	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply     SupportUnknown on every row: the document leaves mergeable out of the request
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply     MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
 	//
 	// GitLab departs from the normalized contract:
 	//

@@ -786,7 +786,7 @@ func TestTheAuthorKindIsTheUsersBotFlag(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(mergeRequestFields, "author { username bot }") {
+	if !strings.Contains(mergeRequestFields(""), "author { username bot }") {
 		t.Error("the merge-request documents select no author bot flag, so their rows answer AccountKindUnknown")
 	}
 }

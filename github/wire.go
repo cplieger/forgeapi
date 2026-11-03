@@ -1,6 +1,7 @@
 package github
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,11 +12,23 @@ import (
 )
 
 // The operation names this family spells, which are the role methods' own. They are
-// constants because each of them decides an error-mapping cell, so a typo there
-// would silently change a refusal.
+// constants because each of them decides an error-mapping cell or a list refusal, so
+// a typo there would silently change a refusal.
 const (
 	opMergePR    = "MergePR"
 	opListIssues = "ListIssues"
+	opListPRs    = "ListPRs"
+	opListMyPRs  = "ListMyPRs"
+)
+
+// The checks a decoded body can fail, each the cause its failure line names.
+var (
+	errFullNameEmpty      = errors.New("full_name is empty")
+	errNameWithOwnerEmpty = errors.New("nameWithOwner is empty")
+	errRepositoriesNull   = errors.New("repositories are null")
+	errPullRequestsNull   = errors.New("pullRequests are null")
+	errSearchNull         = errors.New("search is null")
+	errCommitNull         = errors.New("repository object is null")
 )
 
 // sigil is how a human writes this product's pull-request number. It is a rendering
@@ -1134,9 +1147,14 @@ func (c *Client) normalizeRESTPull(r *restPull, repo forgeapi.RepoRef) forgeapi.
 // The merge state is still read, so a member the table does not carry is counted.
 func (c *Client) normalizeMutatedPull(r *restPull, repo forgeapi.RepoRef) forgeapi.PullRequest {
 	item := c.normalizeRESTPull(r, repo)
+	blankMergeState(&item)
+	return item
+}
+
+// blankMergeState answers a row's merge state unknown.
+func blankMergeState(item *forgeapi.PullRequest) {
 	item.Action.Mergeable = forgeapi.SupportUnknown
 	item.Action.MergeBlocked = forgeapi.MergeBlockUnknown
-	return item
 }
 
 // normalizeIssue is the issue normalizer.
