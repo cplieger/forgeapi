@@ -71,7 +71,7 @@ func tlsRefused(err error) bool {
 // reference would lose its successor.
 func (c *Conn) transportError(ctx context.Context, req *Request, err error, started time.Time) error {
 	if ctxErr := ctx.Err(); ctxErr != nil && contextSentinel(err) != nil {
-		c.log(ctx, req, exchange(req), 0, "", "", forgeapi.KindUnknown, nil, started, ctxErr)
+		c.log(ctx, req, exchange(req), 0, "", "", forgeapi.KindUnknown, nil, started, ctxErr.Error(), true)
 		return ctxErr
 	}
 	if own, ok := errors.AsType[*forgeapi.Error](err); ok {
@@ -81,16 +81,16 @@ func (c *Conn) transportError(ctx context.Context, req *Request, err error, star
 		if own.DiagID == "" {
 			own.DiagID = diagID()
 		}
-		c.log(ctx, req, exchange(req), own.Status, own.Code, own.DiagID, own.Kind, nil, started, err)
+		c.log(ctx, req, exchange(req), own.Status, own.Code, own.DiagID, own.Kind, nil, started, own.Message, true)
 		return own
 	}
 	code, kind := failureOf(err)
-	message := sanitize(httpx.LogSafeError(err).Error())
+	message := causeText(err)
 	if code == forgeapi.CodeUnreachable {
 		message = "cannot reach " + c.hostOf(req, err) + ": " + message
 	}
 	fe := c.fail(req.Op, code, kind, 0, message)
-	c.log(ctx, req, exchange(req), 0, fe.Code, fe.DiagID, fe.Kind, nil, started, err)
+	c.log(ctx, req, exchange(req), 0, fe.Code, fe.DiagID, fe.Kind, nil, started, fe.Message, true)
 	return fe
 }
 
@@ -99,7 +99,7 @@ func (c *Conn) transportError(ctx context.Context, req *Request, err error, star
 // answer and the same again next time, a body cut short is the network's.
 func (c *Conn) bodyError(ctx context.Context, req *Request, status int, err error, started time.Time) error {
 	if ctxErr := ctx.Err(); ctxErr != nil && contextSentinel(err) != nil {
-		c.log(ctx, req, exchange(req), status, "", "", forgeapi.KindUnknown, nil, started, ctxErr)
+		c.log(ctx, req, exchange(req), status, "", "", forgeapi.KindUnknown, nil, started, ctxErr.Error(), true)
 		return ctxErr
 	}
 	var fe *forgeapi.Error
@@ -109,7 +109,7 @@ func (c *Conn) bodyError(ctx context.Context, req *Request, status int, err erro
 		fe = c.fail(req.Op, "", forgeapi.KindTransient, status,
 			"lost the answer from "+c.hostOf(req, err)+": "+sanitize(err.Error()))
 	}
-	c.log(ctx, req, exchange(req), status, fe.Code, fe.DiagID, fe.Kind, nil, started, err)
+	c.log(ctx, req, exchange(req), status, fe.Code, fe.DiagID, fe.Kind, nil, started, fe.Message, true)
 	return fe
 }
 

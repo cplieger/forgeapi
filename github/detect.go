@@ -220,7 +220,7 @@ func (c *Client) readUser(ctx context.Context, op string) (restUser, []string, e
 	}
 	var user restUser
 	if err := transport.Decode(resp.Body, &user); err != nil {
-		return restUser{}, nil, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
+		return restUser{}, nil, c.core.FailDecode(ctx, op, transport.REST(http.MethodGet), resp, err)
 	}
 	return user, scopesOf(resp.Header), nil
 }

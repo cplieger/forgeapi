@@ -277,6 +277,9 @@ const (
 	// bound named on a list with no creation time to bound, which the family
 	// method refuses.
 	CodeListSinceInvalid = "list_since_invalid"
+	// CodeListMergeStateInvalid is a [WithMergeState] named on a list with no
+	// merge state to leave out, refused by the family method at either value.
+	CodeListMergeStateInvalid = "list_merge_state_invalid"
 	// CodeRunUndated is a run row with no creation time on a listing held to a
 	// [WithSince] bound, which such a row cannot be held to. It is upstream's
 	// shape, not the caller's: the same listing read with no bound answers the

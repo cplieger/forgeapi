@@ -18,7 +18,7 @@ func recordingLogger(buf *bytes.Buffer) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
-func onlyRecord(t *testing.T, buf *bytes.Buffer) map[string]any {
+func records(t *testing.T, buf *bytes.Buffer) []map[string]any {
 	t.Helper()
 	var lines []map[string]any
 	dec := json.NewDecoder(buf)
@@ -31,6 +31,12 @@ func onlyRecord(t *testing.T, buf *bytes.Buffer) map[string]any {
 		}
 		lines = append(lines, line)
 	}
+	return lines
+}
+
+func onlyRecord(t *testing.T, buf *bytes.Buffer) map[string]any {
+	t.Helper()
+	lines := records(t, buf)
 	if len(lines) != 1 {
 		t.Fatalf("the injected logger holds %d line(s), want the one per-request record: %v", len(lines), lines)
 	}
