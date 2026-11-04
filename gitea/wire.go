@@ -14,6 +14,12 @@ import (
 	"github.com/cplieger/forgeapi/internal/transport"
 )
 
+// The checks a decoded body can fail, each the cause its failure line names.
+var (
+	errFullNameEmpty           = errors.New("full_name is empty")
+	errRepositoryFullNameEmpty = errors.New("repository full_name is empty")
+)
+
 // The wire shapes this family reads. They are declared here and nowhere else, so
 // nothing in a forgeapi signature spells a field of this product's API: the root
 // never learns "allow_fast_forward_only_merge" any more than it learns another
@@ -406,6 +412,12 @@ func (c *Client) normalizeMutatedPull(p *wirePull, repo forgeapi.RepoRef) forgea
 	item := c.normalizePull(p, repo)
 	item.Action.Mergeable = forgeapi.SupportUnknown
 	return item
+}
+
+// blankMergeState answers a row's merge state unknown.
+func blankMergeState(item *forgeapi.PullRequest) {
+	item.Action.Mergeable = forgeapi.SupportUnknown
+	item.Action.MergeBlocked = forgeapi.MergeBlockUnknown
 }
 
 // pullDraft reads the row's draft flag, whose two arms are the two ROUTES' own

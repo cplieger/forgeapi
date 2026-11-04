@@ -12,9 +12,32 @@ func TestResolveList_answers_the_first_open_page_without_options(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveList() = %v, want the defaults", err)
 	}
-	want := forgeapi.ListSettings{PageBound: 100, State: forgeapi.ListStateOpen}
+	want := forgeapi.ListSettings{PageBound: 100, State: forgeapi.ListStateOpen, MergeState: true}
 	if got != want {
 		t.Errorf("ResolveList() = %+v, want %+v", got, want)
+	}
+}
+
+func TestWithMergeState_records_the_last_value_named(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		opts []forgeapi.ListOption
+		want bool
+	}{
+		{name: "false", opts: []forgeapi.ListOption{forgeapi.WithMergeState(false)}, want: false},
+		{name: "true", opts: []forgeapi.ListOption{forgeapi.WithMergeState(true)}, want: true},
+		{name: "false_then_true", opts: []forgeapi.ListOption{forgeapi.WithMergeState(false), forgeapi.WithMergeState(true)}, want: true},
+		{name: "true_then_false", opts: []forgeapi.ListOption{forgeapi.WithMergeState(true), forgeapi.WithMergeState(false)}, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := forgeapi.ResolveList(test.opts...)
+			if err != nil {
+				t.Fatalf("ResolveList(%s) = %v, want the settings", test.name, err)
+			}
+			if got.MergeState != test.want || !got.MergeStateSet {
+				t.Errorf("ResolveList(%s) = merge state %t (set %t), want %t set", test.name, got.MergeState, got.MergeStateSet, test.want)
+			}
+		})
 	}
 }
 

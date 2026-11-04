@@ -270,15 +270,34 @@ func observe(client *http.Client, wrap func(http.RoundTripper) http.RoundTripper
 	client.Transport = wrap(client.Transport)
 }
 
-func (c *Conn) onRetry(attempt int, req *http.Request, resp *http.Response, _ error) {
+func (c *Conn) onRetry(attempt int, req *http.Request, resp *http.Response, err error) {
 	c.observeDropped(req, resp)
 	if req != nil {
-		if counter := attemptsFrom(req.Context()); counter != nil {
-			counter.Store(int64(attempt) + 1)
-		}
+		requestSlot(req.Context()).store(tally{attempt: attempt + 1, retriedOn: retriedOn(resp, err)})
 	}
 	if c.counters.Retried != nil {
 		c.counters.Retried(c.family, opFrom(req))
+	}
+}
+
+// retriedOn names what an attempt the retry seam retried failed on: its status, or
+// its transport error as [causeText] spells it.
+func retriedOn(resp *http.Response, err error) string {
+	if err != nil {
+		return causeText(err)
+	}
+	return strconv.Itoa(resp.StatusCode)
+}
+
+// causeText is a transport error with every *url.Error in it reduced to its cause,
+// since each carries a full URL. A wire transport that wraps a client returns one
+// of its own, which the client then wraps again.
+func causeText(err error) string {
+	for {
+		if _, ok := errors.AsType[*url.Error](err); !ok {
+			return sanitize(err.Error())
+		}
+		err = httpx.LogSafeError(err)
 	}
 }
 
@@ -291,22 +310,81 @@ func (c *Conn) observeDropped(req *http.Request, resp *http.Response) {
 	}
 }
 
-// The three values one operation's context carries for the machinery beneath it: the
-// operation's own name, which the retry seam has no other way to learn, the attempt
-// count that seam reports, which the per-request line reads back, and the price of
-// the CALL every request of it belongs to.
+// The values one operation's context carries for the machinery beneath it: the
+// operation's own name, which the retry seam has no other way to learn, the tally
+// that seam reports for one request, the tally of the operation's last request, and
+// the price of the CALL every request of it belongs to.
 type (
 	opKey       struct{}
-	attemptsKey struct{}
+	requestKey  struct{}
+	lastSentKey struct{}
 	priceKey    struct{}
 )
 
-// withRecord puts an operation's name, a fresh attempt counter and a fresh cache
-// note on its context.
+// tally is what the retry seam learned of one request: the attempt it reached, the
+// cause of the last attempt it retried (empty where none was) and, once the
+// request is over, how long it took.
+type tally struct {
+	retriedOn string
+	elapsed   time.Duration
+	attempt   int
+}
+
+// slot holds one tally under a lock, because the requests of one operation may
+// write its slot concurrently. A nil slot holds a request that was never retried.
+type slot struct {
+	t  tally
+	mu sync.Mutex
+}
+
+func (s *slot) load() tally {
+	if s == nil {
+		return tally{attempt: 1}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.t
+}
+
+// since is the tally with the time since started, zero where nothing was sent.
+func (s *slot) since(started time.Time) tally {
+	t := s.load()
+	if !started.IsZero() {
+		t.elapsed = time.Since(started)
+	}
+	return t
+}
+
+func (s *slot) store(t tally) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.t = t
+}
+
+// requestSlot is the tally of the request a context belongs to, which [withRecord]
+// puts there.
+func requestSlot(ctx context.Context) *slot {
+	s, _ := ctx.Value(requestKey{}).(*slot)
+	return s
+}
+
+// lastSent is the tally of the last request of the operation a context belongs to,
+// which [Call] puts there and [Conn.Do] overwrites on every arm it leaves by, so a
+// family's failure line after it reads that request's attempt, retry and duration.
+func lastSent(ctx context.Context) *slot {
+	s, _ := ctx.Value(lastSentKey{}).(*slot)
+	return s
+}
+
+// withRecord puts an operation's name, a fresh request tally and a fresh cache note
+// on its context.
 func withRecord(ctx context.Context, op string) context.Context {
 	ctx = context.WithValue(ctx, opKey{}, op)
 	ctx = context.WithValue(ctx, cacheNoteKey{}, &atomic.Int32{})
-	return context.WithValue(ctx, attemptsKey{}, &atomic.Int64{})
+	return context.WithValue(ctx, requestKey{}, &slot{t: tally{attempt: 1}})
 }
 
 // Call opens one operation and returns the context its every request is issued on,
@@ -316,7 +394,11 @@ func withRecord(ctx context.Context, op string) context.Context {
 // requests of one operation from several operations. A request issued outside a
 // Call is priced and bounded as a call of its own.
 func Call(ctx context.Context, op string) context.Context {
-	return context.WithValue(withStart(withPrice(ctx)), opKey{}, op)
+	ctx = withStart(withPrice(ctx))
+	if lastSent(ctx) == nil {
+		ctx = context.WithValue(ctx, lastSentKey{}, &slot{t: tally{attempt: 1}})
+	}
+	return context.WithValue(ctx, opKey{}, op)
 }
 
 // startKey carries the instant the operation a context belongs to began.
@@ -403,25 +485,6 @@ func opFrom(req *http.Request) string {
 	}
 	op, _ := req.Context().Value(opKey{}).(string)
 	return op
-}
-
-// attemptsFrom reads the attempt counter of the operation a context belongs to.
-func attemptsFrom(ctx context.Context) *atomic.Int64 {
-	counter, _ := ctx.Value(attemptsKey{}).(*atomic.Int64)
-	return counter
-}
-
-// attempts is the attempt count one request reached, which is one where the retry
-// seam never fired.
-func attempts(ctx context.Context) int {
-	counter := attemptsFrom(ctx)
-	if counter == nil {
-		return 1
-	}
-	if n := counter.Load(); n > 0 {
-		return int(n)
-	}
-	return 1
 }
 
 // retryCheck is this library's own retry predicate: a transport failure
@@ -944,7 +1007,9 @@ func (r *Response) Quote(text string) string {
 // What the call spent is published on EVERY arm it leaves by, the two refusals that
 // send nothing included: it is the last CALL's price, so one that sent nothing is 0.
 func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
+	last := lastSent(ctx)
 	if fe := c.permit(ctx, req); fe != nil {
+		last.store(tally{attempt: 1})
 		c.gov.price(price(ctx))
 		return nil, fe
 	}
@@ -954,6 +1019,8 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	ctx = withRecord(ctx, req.Op)
 	ctx = withPrice(ctx)
 	defer func() { c.gov.price(price(ctx)) }()
+	var started time.Time
+	defer func() { last.store(requestSlot(ctx).since(started)) }()
 
 	// A deadline already exhausted is reported rather than raced against the
 	// concurrency gate, whose select would otherwise admit the request as often
@@ -967,7 +1034,7 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	}
 	defer c.release(req)
 
-	started := time.Now()
+	started = time.Now()
 	//nolint:bodyclose // answer always reads the body through httpx.ReadLimitedBody, which closes it
 	resp, rv, err := c.sendRead(ctx, req, target)
 	out, kept, err := c.answer(ctx, req, target, resp, &rv, err, started)
@@ -978,20 +1045,21 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	if hit {
 		noteCache(ctx, cacheHit)
 	}
-	switch {
-	case errors.Is(err, errUndecodable):
-		c.log(ctx, req, exchange(req), resp.StatusCode, "", "", forgeapi.KindUnknown, out.Header, started, nil)
-		return out, c.FailBody(ctx, req.Op, exchange(req), out.Status)
-	case err != nil:
+	if bad, ok := errors.AsType[*undecodable](err); ok {
+		return out, c.failDecode(ctx, req, out, bad.cause, started)
+	}
+	if err != nil {
 		return out, err
 	}
-	c.log(ctx, req, exchange(req), resp.StatusCode, "", "", forgeapi.KindUnknown, out.Header, started, nil)
+	c.log(ctx, req, exchange(req), resp.StatusCode, "", "", forgeapi.KindUnknown, out.Header, started, "", false)
 	return out, nil
 }
 
-// errUndecodable is [Conn.answer]'s report of a body [Request.Into] could not take,
-// which [Conn.Do] records after the exchange's own line, as a family's refusal is.
-var errUndecodable = errors.New("response body did not decode")
+// undecodable is [Conn.answer]'s report of a body [Request.Into] could not take,
+// which [Conn.Do] records as the exchange's one line, beside the decode error.
+type undecodable struct{ cause error }
+
+func (e *undecodable) Error() string { return "response body did not decode: " + e.cause.Error() }
 
 // answer reads the exchange's answer and settles it by [judge]'s verdict on a 304:
 // a served one answers from the held entry, a refused one is mapped like any other
@@ -1023,8 +1091,10 @@ func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *ht
 	case rv.verdict == verdictRefuse, resp.StatusCode >= 300 && !slices.Contains(req.Answers, resp.StatusCode):
 		return out, nil, c.upstreamError(ctx, req, out, started)
 	}
-	if req.Into != nil && Decode(out.Body, req.Into) != nil {
-		return out, nil, errUndecodable
+	if req.Into != nil {
+		if err := Decode(out.Body, req.Into); err != nil {
+			return out, nil, &undecodable{cause: err}
+		}
 	}
 	if resp.StatusCode == http.StatusOK && rv.vouched(resp, body) {
 		kept = c.cache.keepable(resp, func() ([]byte, error) { return ownedBody(req.Into) })
@@ -1329,33 +1399,83 @@ func (c *Conn) Fail(ctx context.Context, op string, ex Exchange, code string, ki
 	return fe
 }
 
-// FailBody is what a response body this library could not read answers: the instance
-// replied, so the failure is upstream's shape rather than a local refusal, and it
-// carries the response's OWN status. Fabricating a 200 there would contradict the
-// published invariant that the status is the real one always, and it is immediately
-// wrong on a creation, which answers 201.
-//
-// The code is the validation one, which is the code a response this library will not
-// accept already carries where a family meets one it can read: a consumer branches on
-// that field, so leaving it empty would hand it nothing on exactly the failure it
-// cannot otherwise classify.
-func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, status int) *forgeapi.Error {
-	fe := c.fail(op, forgeapi.CodeValidation, forgeapi.KindUpstream, status, "response body did not decode")
-	c.record(ctx, op, ex, fe)
+// FailBody is what a response body that decoded but is not an answer earns. cause is
+// the non-nil sentinel naming the check that failed, which the line carries as its
+// error; the returned message is [bodyFailure]'s whatever the check.
+func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, status int, cause error) *forgeapi.Error {
+	fe := c.bodyFailure(op, status)
+	c.emit(ctx, &Request{Op: op}, familyEntry(ctx, ex, fe, cause.Error()))
 	return fe
+}
+
+// FailDecode is what a response body that did not decode earns, resp being the answer
+// whose body it is. The line carries the decode error through the exchange's quoter,
+// since a decode error can quote an instance string whole, and the body's content
+// type and length beside it, never the body.
+func (c *Conn) FailDecode(ctx context.Context, op string, ex Exchange, resp *Response, cause error) *forgeapi.Error {
+	fe := c.bodyFailure(op, resp.Status)
+	e := familyEntry(ctx, ex, fe, decodeText(resp, cause))
+	e.header, e.answer = resp.Header, resp
+	c.emit(ctx, &Request{Op: op}, e)
+	return fe
+}
+
+// failDecode is [Conn.FailDecode] for [Conn.Do]'s own decode into [Request.Into], whose
+// line is the exchange's one line, with that request's attempt, retry and duration.
+func (c *Conn) failDecode(ctx context.Context, req *Request, resp *Response, cause error, started time.Time) *forgeapi.Error {
+	fe := c.bodyFailure(req.Op, resp.Status)
+	c.emit(ctx, req, &entry{
+		header: resp.Header, answer: resp, ex: exchange(req), code: fe.Code, diag: fe.DiagID,
+		cause: decodeText(resp, cause), sent: requestSlot(ctx).since(started),
+		status: fe.Status, kind: fe.Kind, failed: true, operation: true,
+	})
+	return fe
+}
+
+// bodyFailure is the returned error both for a body that decoded but is not an answer
+// and for a body that did not decode: the instance replied, so the failure is
+// upstream's shape rather than a local refusal, and it carries the response's OWN
+// status. Fabricating a 200 there would contradict the published invariant that the
+// status is the real one always, and it is immediately wrong on a creation, which
+// answers 201. The code is the validation one, so a consumer branching on it is
+// handed the class a response this library will not accept already carries.
+func (c *Conn) bodyFailure(op string, status int) *forgeapi.Error {
+	return c.fail(op, forgeapi.CodeValidation, forgeapi.KindUpstream, status, "response body did not decode")
+}
+
+// decodeText is a decode error as a line carries it. A nil cause is a caller's bug,
+// named rather than left an empty attribute.
+func decodeText(resp *Response, cause error) string {
+	if cause == nil {
+		return "decode error missing"
+	}
+	return resp.Quote(cause.Error())
 }
 
 // refusal records a failure this library produced instead of a request and returns it,
 // so the diagnostic id the caller sees names a line here too.
 func (c *Conn) refusal(ctx context.Context, req *Request, fe *forgeapi.Error) *forgeapi.Error {
-	c.log(ctx, req, exchange(req), fe.Status, fe.Code, fe.DiagID, fe.Kind, nil, time.Now(), fe)
+	c.log(ctx, req, exchange(req), fe.Status, fe.Code, fe.DiagID, fe.Kind, nil, time.Now(), fe.Message, true)
 	return fe
 }
 
 // record is refusal for a failure reached with no request value in hand, which is the
 // shape a family's own post-response refusals take.
 func (c *Conn) record(ctx context.Context, op string, ex Exchange, fe *forgeapi.Error) {
-	c.log(ctx, &Request{Op: op}, ex, fe.Status, fe.Code, fe.DiagID, fe.Kind, nil, time.Now(), fe)
+	c.emit(ctx, &Request{Op: op}, familyEntry(ctx, ex, fe, fe.Message))
+}
+
+// familyEntry is a family's failure line, with cause as its error and, on a line
+// naming an exchange, its operation's last request ([lastSent]).
+func familyEntry(ctx context.Context, ex Exchange, fe *forgeapi.Error, cause string) *entry {
+	var sent tally
+	if ex != (Exchange{}) {
+		sent = lastSent(ctx).load()
+	}
+	return &entry{
+		ex: ex, code: fe.Code, diag: fe.DiagID, cause: cause, sent: sent,
+		status: fe.Status, kind: fe.Kind, failed: true, operation: true,
+	}
 }
 
 // Refuse is the capability refusal: no request, one dedicated code, and the
@@ -1469,7 +1589,7 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 			c.counters.RateLimited(c.family)
 		}
 	}
-	c.log(ctx, req, exchange(req), resp.Status, code, fe.DiagID, kind, resp.Header, started, nil)
+	c.log(ctx, req, exchange(req), resp.Status, code, fe.DiagID, kind, resp.Header, started, fe.Message, false)
 	return fe
 }
 
@@ -1605,50 +1725,82 @@ func canonicalJSON(v any) (string, error) {
 	return strings.TrimSuffix(buf.String(), "\n"), nil
 }
 
-// log is the per-request record: operation, family, sanitized instance, transport,
-// status, kind, code, diagnostic id, method, attempt, duration, page, cache result
-// and the upstream request id where the instance returned one. It never carries a
-// token, a URL's userinfo, a header value or an unbounded body.
-//
-// The transport and the method are the exchange's own, so both are EMPTY on a line
-// that describes a verdict this library reached rather than an exchange it had: a
-// capability refusal sends nothing, and a line claiming a method and an arm for it
-// describes a request that never existed.
-//
-// The page is the request's own, which is what a paged read has in hand; the
-// attempt is the count the retry seam reported onto this operation's context, which
-// is one where nothing was repeated.
-//
-// The diagnostic id is what makes the id on a user-visible error worth showing: the
-// value is minted per failed operation and retained only here, so a line without it
-// leaves the id a user reads out correlating with nothing. It is empty on the lines
-// that carry no failure and on a context sentinel, which names no operation for an
-// id to correlate.
-func (c *Conn) log(ctx context.Context, req *Request, ex Exchange, status int, code, diag string, kind forgeapi.ErrorKind, header http.Header, started time.Time, err error) {
+// log records one exchange [Conn.Do] had, or a refusal it reached instead, with the
+// attempt, retry and duration of that request. cause is the line's error attribute,
+// never a raw error, whose *url.Error would carry the full URL; failed marks the line
+// a failure whatever its status.
+func (c *Conn) log(ctx context.Context, req *Request, ex Exchange, status int, code, diag string, kind forgeapi.ErrorKind, header http.Header, started time.Time, cause string, failed bool) {
+	c.emit(ctx, req, &entry{
+		header: header, ex: ex, code: code, diag: diag, cause: cause,
+		sent: requestSlot(ctx).since(started), status: status, kind: kind, failed: failed,
+	})
+}
+
+// entry is one per-request line. operation adds the operation's own elapsed time, and
+// answer the size and type of a body that did not decode.
+type entry struct {
+	header    http.Header
+	answer    *Response
+	ex        Exchange
+	code      string
+	diag      string
+	cause     string
+	sent      tally
+	status    int
+	kind      forgeapi.ErrorKind
+	failed    bool
+	operation bool
+}
+
+// emit writes the line. It never carries a token, a URL's userinfo, a header value
+// or an unbounded body. The transport and method are empty, and the attempt absent,
+// on a line that describes no exchange ([Exchange]). The diagnostic id is retained
+// only here, so it is on every failure line but a context sentinel's, which names no
+// operation. A success the retry seam retried is logged at Info, so the retry's
+// cause reaches a log at that level.
+func (c *Conn) emit(ctx context.Context, req *Request, e *entry) {
 	level := slog.LevelDebug
-	if status >= 400 || err != nil {
+	switch {
+	case e.status >= 400 || e.failed:
 		level = slog.LevelWarn
+	case e.sent.retriedOn != "":
+		level = slog.LevelInfo
 	}
-	// The record goes out on a fresh context rather than the operation's own,
-	// because most of these lines describe a context that is already done: slog
-	// hands the context to the handler, and a handler that honours cancellation
-	// would drop exactly the failure line the diagnostic id has to correlate with.
-	c.logger.Log(context.Background(), level, "forgeapi request",
+	attrs := []any{
 		"op", req.Op,
 		"family", c.family.String(),
 		"instance", c.apiBase.Host,
-		"transport", ex.arm,
-		"status", status,
-		"kind", kind.String(),
-		"code", code,
-		"diag_id", diag,
-		"method", ex.method,
-		"attempt", attempts(ctx),
+		"transport", e.ex.arm,
+		"status", e.status,
+		"kind", e.kind.String(),
+		"code", e.code,
+		"diag_id", e.diag,
+		"method", e.ex.method,
+	}
+	if e.ex != (Exchange{}) {
+		attrs = append(attrs, "attempt", e.sent.attempt)
+	}
+	attrs = append(attrs,
 		"page", max(req.Page, 1),
-		"duration_ms", time.Since(started).Milliseconds(),
+		"duration_ms", e.sent.elapsed.Milliseconds(),
 		"cache", cacheNoted(ctx),
-		"upstream_request_id", upstreamRequestID(header),
+		"upstream_request_id", upstreamRequestID(e.header),
 	)
+	if e.cause != "" {
+		attrs = append(attrs, "error", e.cause)
+	}
+	if e.sent.retriedOn != "" {
+		attrs = append(attrs, "retried_on", e.sent.retriedOn)
+	}
+	if start, ok := ctx.Value(startKey{}).(time.Time); ok && e.operation {
+		attrs = append(attrs, "op_elapsed_ms", time.Since(start).Milliseconds())
+	}
+	if e.answer != nil {
+		attrs = append(attrs, "content_type", sanitize(e.answer.Header.Get("Content-Type")), "body_bytes", len(e.answer.Body))
+	}
+	// A fresh context, because most of these lines describe a context that is
+	// already done, and a handler that honours cancellation would drop them.
+	c.logger.Log(context.Background(), level, "forgeapi request", attrs...)
 }
 
 // upstreamRequestIDHeaders is every name an in-scope product returns its own

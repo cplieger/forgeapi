@@ -234,6 +234,7 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 		{fn: "WithRefreshLead", defaultClause: "Default: [DefaultRefreshLead].", zeroClause: "Zero refreshes a token only once it has expired.", names: []string{"CodeBudgetInvalid"}},
 		{fn: "WithPageBound", defaultClause: "Default: [DefaultPageBound].", names: []string{"CodePageBoundInvalid"}},
 		{fn: "WithSince", defaultClause: "Default: no bound,", names: []string{"CodeListSinceInvalid"}},
+		{fn: "WithMergeState", defaultClause: "Default: true.", names: []string{"CodeListMergeStateInvalid"}},
 		{fn: "WithReadCache", defaultClause: "Default: [DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and sends every read unconditionally.", names: []string{"CodeBudgetInvalid"}},
 		{file: "readcache/transport.go", fn: "WithMaxBytes", defaultClause: "Default: [forgeapi.DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and adds no validator,", names: []string{"CodeBudgetInvalid"}},
 		{file: "readcache/transport.go", fn: "WithFreeNotModified", defaultClause: "Default: false,"},

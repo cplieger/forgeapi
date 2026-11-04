@@ -115,7 +115,7 @@ func (c *Client) sendAt(ctx context.Context, op, method string, a *address, rest
 		return nil
 	}
 	if err := transport.Decode(resp.Body, out); err != nil {
-		return c.core.FailBody(ctx, op, transport.REST(method), resp.Status)
+		return c.core.FailDecode(ctx, op, transport.REST(method), resp, err)
 	}
 	return nil
 }
@@ -162,29 +162,17 @@ const (
 )
 
 // listOptions resolves one list call's options and refuses, before any request, the
-// ones its route cannot apply: a state filter on every list but a stateful one, an
-// owner on every list but the scoped ones and the repository listing, and a since
-// bound on every list but the run listing.
-//
-// An owner here is ONE name, a user or an organization: neither product nests
-// owners, so a path the shared form admits is refused by [forgeapi.ValidateOwner]
-// before it reaches a request rather than sent as a name no instance can hold.
+// ones its route cannot apply ([inapplicable]). An owner here is ONE name, a user or
+// an organization: neither product nests owners, so a path the shared form admits is
+// refused by [forgeapi.ValidateOwner] before it reaches a request rather than sent as
+// a name no instance can hold.
 func listOptions(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi.ListSettings, error) {
 	set, err := forgeapi.ResolveList(opts...)
 	if err != nil {
 		return set, err
 	}
-	if set.StateSet && kind != statefulList {
-		return set, transport.Local(forgeapi.CodeListStateInvalid,
-			op+" lists rows whose state the endpoint fixes, so a state filter cannot apply")
-	}
-	if set.OwnerSet && kind != scopedList && kind != repoList {
-		return set, transport.Local(forgeapi.CodeListOwnerInvalid,
-			op+" lists rows no owner scopes, so an owner cannot apply")
-	}
-	if set.SinceSet && kind != runList {
-		return set, transport.Local(forgeapi.CodeListSinceInvalid,
-			op+" lists rows no creation bound narrows, so a since bound cannot apply")
+	if fe := inapplicable(op, kind, &set); fe != nil {
+		return set, fe
 	}
 	if set.OwnerSet {
 		if err := forgeapi.ValidateOwner(forgeapi.FamilyGitea, set.Owner); err != nil {
@@ -196,6 +184,29 @@ func listOptions(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi
 			"an issue has no merged state")
 	}
 	return set, nil
+}
+
+// inapplicable is the refusal of an option the list cannot apply, nil where every
+// option set applies: a state filter on every list but a stateful one, an owner on
+// every list but the scoped ones and the repository listing, a since bound on every
+// list but the run listing, and a merge state option on every list but the pull
+// request lists.
+func inapplicable(op string, kind listKind, set *forgeapi.ListSettings) *forgeapi.Error {
+	switch {
+	case set.StateSet && kind != statefulList:
+		return transport.Local(forgeapi.CodeListStateInvalid,
+			op+" lists rows whose state the endpoint fixes, so a state filter cannot apply")
+	case set.OwnerSet && kind != scopedList && kind != repoList:
+		return transport.Local(forgeapi.CodeListOwnerInvalid,
+			op+" lists rows no owner scopes, so an owner cannot apply")
+	case set.SinceSet && kind != runList:
+		return transport.Local(forgeapi.CodeListSinceInvalid,
+			op+" lists rows no creation bound narrows, so a since bound cannot apply")
+	case set.MergeStateSet && op != "ListPRs" && op != "ListMyPRs":
+		return transport.Local(forgeapi.CodeListMergeStateInvalid,
+			op+" lists rows that carry no merge state, so a merge state option cannot apply")
+	}
+	return nil
 }
 
 // listing resolves one page-numbered list call: its options, the walk its

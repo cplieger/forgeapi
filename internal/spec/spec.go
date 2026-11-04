@@ -364,6 +364,16 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup",
 			},
+			{
+				Field: "Items[].Action.Mergeable, under WithMergeState(false)",
+				Kind:  CannotSupply,
+				Says:  "SupportUnknown on every row: the document leaves mergeable out of the request",
+			},
+			{
+				Field: "Items[].Action.MergeBlocked, under WithMergeState(false)",
+				Kind:  CannotSupply,
+				Says:  "MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request",
+			},
 		},
 	},
 	{
@@ -414,6 +424,16 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "nil: GraphQL sends no successor",
 			},
+			{
+				Field: "Items[].Action.Mergeable, under WithMergeState(false)",
+				Kind:  CannotSupply,
+				Says:  "SupportUnknown on every row: the document leaves mergeable out of the request, and the REST route reads none on a list row",
+			},
+			{
+				Field: "Items[].Action.MergeBlocked, under WithMergeState(false)",
+				Kind:  CannotSupply,
+				Says:  "MergeBlockUnknown on every row: the document leaves detailedMergeStatus out of the request, and the REST route reads none on a list row",
+			},
 		},
 	},
 	{
@@ -442,6 +462,11 @@ var Table = []Entry{
 				Field: "Items[].Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
+			},
+			{
+				Field: "Items[].Action.Mergeable, under WithMergeState(false)",
+				Kind:  CannotSupply,
+				Says:  "SupportUnknown on every row: the row's mergeable key is left unread",
 			},
 		},
 	},
@@ -477,6 +502,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
 			},
+			{
+				Field: "Items[].Action.Mergeable, under WithMergeState(false)",
+				Kind:  CannotSupply,
+				Says:  "SupportUnknown on every row: the row's mergeable key is left unread",
+			},
 		},
 	},
 	{
@@ -500,6 +530,16 @@ var Table = []Entry{
 				Field: "error, owner unresolved",
 				Kind:  CannotSupply,
 				Says:  "empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open",
+			},
+			{
+				Field: "Items[].Action.Mergeable, under WithMergeState(false)",
+				Kind:  CannotSupply,
+				Says:  "SupportUnknown on every row: the document leaves mergeable out of the request",
+			},
+			{
+				Field: "Items[].Action.MergeBlocked, under WithMergeState(false)",
+				Kind:  CannotSupply,
+				Says:  "MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request",
 			},
 		},
 	},

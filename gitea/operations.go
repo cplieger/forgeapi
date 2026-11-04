@@ -65,7 +65,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	items := make([]forgeapi.Repository, 0, len(rows))
 	for i := range rows {
 		if rows[i].FullName == "" {
-			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), http.StatusOK)
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), http.StatusOK, errFullNameEmpty)
 		}
 		items = append(items, c.normalizeRepo(&rows[i]))
 	}
@@ -122,13 +122,22 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	}
 	addr := &address{named: repo}
 	var rows []wirePull
-	if err := c.readPageAt(ctx, op, addr, "/pulls", query, &walk, set.PageBound, &rows); err != nil {
+	if err = c.readPageAt(ctx, op, addr, "/pulls", query, &walk, set.PageBound, &rows); err != nil {
 		if page, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
 			return page, nil
 		}
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	return c.pullPage(ctx, op, addr, rows, walk)
+	page, err := c.pullPage(ctx, op, addr, rows, walk)
+	if err != nil {
+		return forgeapi.Page[forgeapi.PullRequest]{}, err
+	}
+	if !set.MergeState {
+		for i := range page.Items {
+			blankMergeState(&page.Items[i])
+		}
+	}
+	return page, nil
 }
 
 // ListMyPRs implements [forgeapi.PullRequests].
@@ -181,7 +190,13 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		}
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	return c.myPullPage(rows, walk), nil
+	page := c.myPullPage(rows, walk)
+	if !set.MergeState {
+		for i := range page.Items {
+			blankMergeState(&page.Items[i])
+		}
+	}
+	return page, nil
 }
 
 // issueSearch is the cross-repository route both scoped lists read, the issue
@@ -214,7 +229,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 	}
 	for i := range rows {
 		if m := rows[i].Repository; m != nil && m.FullName == "" {
-			return forgeapi.Page[forgeapi.Issue]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), http.StatusOK)
+			return forgeapi.Page[forgeapi.Issue]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), http.StatusOK, errRepositoryFullNameEmpty)
 		}
 	}
 	return c.issuePage(&address{}, rows, walk), nil

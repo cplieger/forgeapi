@@ -108,8 +108,8 @@ func pullRequestFields(foldPage int, foldAfter string) string {
         headRepository { nameWithOwner }
         baseRefName
         headRefOid
-        mergeable
-        mergeStateStatus
+        mergeable @include(if: $mergeState)
+        mergeStateStatus @include(if: $mergeState)
         merged
         autoMergeRequest { enabledAt mergeMethod }
         mergeQueueEntry { state position }
@@ -138,11 +138,12 @@ type document struct {
 }
 
 // prList is the pull-request LIST document, whose caller is [Client.ListPRs]. Its
-// fold is BOUNDED, which is what the one-context page says, and its state filter and
-// page size are variables because the published list options reach them.
+// fold is BOUNDED, which is what the one-context page says, and its state filter,
+// merge state gate and page size are variables because the published list options
+// reach them.
 var prList = document{
 	name: "PRList",
-	text: `query PRList($owner: String!, $name: String!, $first: Int!, $after: String, $states: [PullRequestState!]) {` + rateLimitSelection + `
+	text: `query PRList($owner: String!, $name: String!, $first: Int!, $after: String, $states: [PullRequestState!], $mergeState: Boolean!) {` + rateLimitSelection + `
   repository(owner: $owner, name: $name) {
     nameWithOwner
     viewerPermission
@@ -174,7 +175,7 @@ const prListPageCeiling = 50
 // [forgeapi.Budget.StatusPages].
 var prRead = document{
 	name: "PRRead",
-	text: `query PRRead($owner: String!, $name: String!, $number: Int!, $checksAfter: String) {` + rateLimitSelection + `
+	text: `query PRRead($owner: String!, $name: String!, $number: Int!, $checksAfter: String, $mergeState: Boolean = true) {` + rateLimitSelection + `
   repository(owner: $owner, name: $name) {
     nameWithOwner
     viewerPermission
@@ -195,7 +196,7 @@ var prRead = document{
 // the whole property this operation exists for.
 var prMine = document{
 	name: "PRMine",
-	text: `query PRMine($q: String!, $first: Int!, $after: String) {` + rateLimitSelection + `
+	text: `query PRMine($q: String!, $first: Int!, $after: String, $mergeState: Boolean!) {` + rateLimitSelection + `
   search(query: $q, type: ISSUE, first: $first, after: $after) {
     issueCount
     pageInfo { hasNextPage endCursor }
@@ -522,13 +523,14 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	c.noteResponse(resp)
 	body, status := responseBody(resp)
 	var env envelope
-	decoded := len(body) > 0 && transport.Decode(body, &env) == nil
+	decodeErr := transport.Decode(body, &env)
+	decoded := decodeErr == nil
 	if err != nil && (!decoded || len(env.Errors) == 0) {
 		c.degradeOn(err)
 		return docResult{}, err
 	}
 	if !decoded {
-		return docResult{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), status)
+		return docResult{}, c.core.FailDecode(ctx, op, transport.Document(http.MethodPost), resp, decodeErr)
 	}
 	onlyNotFound, rootFailure := doc.absenceOf(env.Errors)
 	if len(env.Errors) > 0 && !env.carriesData() {
@@ -539,7 +541,7 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 		return docResult{Status: status}, nil
 	}
 	if err := transport.Decode(env.Data, out); err != nil {
-		return docResult{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), status)
+		return docResult{}, c.core.FailDecode(ctx, op, transport.Document(http.MethodPost), resp, err)
 	}
 	result := docResult{Cost: out.cost(), Status: status, Partial: len(env.Errors) > 0}
 	if result.Cost > 0 {
