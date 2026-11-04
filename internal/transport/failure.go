@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/httpx/v5"
-	"github.com/cplieger/ssrf/v4"
+	"github.com/cplieger/go/httpclient"
+	"github.com/cplieger/go/ssrf"
 )
 
 // Retryable is the one rule behind [forgeapi.Error.Retryable]: another attempt
 // may succeed after a transport failure or a throttle, and on a status saying the
 // instance could not answer this time (408, 429, any 5xx).
 func Retryable(kind forgeapi.ErrorKind, status int) bool {
-	return kind == forgeapi.KindTransient || kind == forgeapi.KindRateLimited || httpx.IsRetryableStatus(status)
+	return kind == forgeapi.KindTransient || kind == forgeapi.KindRateLimited || httpclient.IsRetryableStatus(status)
 }
 
 // failureOf classifies a failure that reached no status by what another attempt
@@ -103,7 +103,7 @@ func (c *Conn) bodyError(ctx context.Context, req *Request, status int, err erro
 		return ctxErr
 	}
 	var fe *forgeapi.Error
-	if _, tooLarge := errors.AsType[*httpx.ResponseTooLargeError](err); tooLarge {
+	if _, tooLarge := errors.AsType[*httpclient.ResponseTooLargeError](err); tooLarge {
 		fe = c.fail(req.Op, forgeapi.CodeResponseTooLarge, forgeapi.KindUpstream, status, sanitize(err.Error()))
 	} else {
 		fe = c.fail(req.Op, "", forgeapi.KindTransient, status,

@@ -15,7 +15,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
 )
 
 const (
@@ -40,7 +40,7 @@ type Dir struct {
 // dependency carries logger, since the dependency otherwise logs to a sink this
 // library does not own.
 func Open(dir string, logger *slog.Logger) (*Dir, error) {
-	if _, err := atomicfile.EnsurePrivateDir(dir, atomicfile.WithLogger(logger)); err != nil {
+	if _, err := filesafe.EnsurePrivateDir(dir, filesafe.WithLogger(logger)); err != nil {
 		return nil, fmt.Errorf("credential directory %s: %v", dir, err)
 	}
 	root, err := os.OpenRoot(dir)
@@ -80,7 +80,7 @@ func (d *Dir) Read(ctx context.Context, name string) (data []byte, found bool, e
 	if verifyErr := d.verify(); verifyErr != nil {
 		return nil, false, verifyErr
 	}
-	data, err = atomicfile.ReadBoundedInRoot(ctx, d.root, name, maxFileBytes)
+	data, err = filesafe.ReadBoundedInRoot(ctx, d.root, name, maxFileBytes)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false, nil
 	}
@@ -97,8 +97,8 @@ func (d *Dir) Write(ctx context.Context, name string, data []byte) (bool, error)
 	if err := d.verify(); err != nil {
 		return false, err
 	}
-	res, err := atomicfile.WriteFileInRoot(ctx, d.root, name, data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMaxBytes(maxFileBytes), atomicfile.WithLogger(d.logger))
+	res, err := filesafe.WriteFileInRoot(ctx, d.root, name, data,
+		filesafe.WithMode(fileMode), filesafe.WithMaxBytes(maxFileBytes), filesafe.WithLogger(d.logger))
 	if err != nil {
 		return false, fmt.Errorf("credential file %s: %v", name, err)
 	}
