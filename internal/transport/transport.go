@@ -35,11 +35,11 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/httpx/v5"
-	"github.com/cplieger/jsoncap/v2"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/ssrf/v4"
-	"github.com/cplieger/urlform"
+	"github.com/cplieger/go/httpclient"
+	"github.com/cplieger/go/jsonx"
+	"github.com/cplieger/go/ssrf"
+	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/go/urlform"
 )
 
 const (
@@ -243,13 +243,13 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 	c.cache = newReadCache(set.ReadCacheBytes, familyFields, opts.FreeNotModified)
 
 	policy := c.redirectPolicy(web, set)
-	c.read = httpx.NewRetryClient(base, policy, httpx.TransportConfig{
+	c.read = httpclient.NewRetry(base, policy, httpclient.TransportConfig{
 		MaxAttempts:        set.Budget.Retries + 1,
 		RetryNonIdempotent: true,
 		CheckRetry:         retryCheck,
 		OnRetry:            c.onRetry,
 	})
-	c.mutate = httpx.NewRetryClient(base, policy, httpx.TransportConfig{
+	c.mutate = httpclient.NewRetry(base, policy, httpclient.TransportConfig{
 		MaxAttempts: -1,
 		CheckRetry:  retryCheck,
 		OnRetry:     c.onRetry,
@@ -297,7 +297,7 @@ func causeText(err error) string {
 		if _, ok := errors.AsType[*url.Error](err); !ok {
 			return sanitize(err.Error())
 		}
-		err = httpx.LogSafeError(err)
+		err = httpclient.LogSafeError(err)
 	}
 }
 
@@ -1035,7 +1035,7 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	defer c.release(req)
 
 	started = time.Now()
-	//nolint:bodyclose // answer always reads the body through httpx.ReadLimitedBody, which closes it
+	//nolint:bodyclose // answer always reads the body through httpclient.ReadLimitedBody, which closes it
 	resp, rv, err := c.sendRead(ctx, req, target)
 	out, kept, err := c.answer(ctx, req, target, resp, &rv, err, started)
 	hit, ended := c.cache.conclude(ctx, &rv, kept, err == nil)
@@ -1075,7 +1075,7 @@ func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *ht
 		Header: resp.Header, Status: resp.StatusCode, quote: c.quoter(rv.token),
 		Redirected: followed(resp, target), Ended: ended(resp, target),
 	}
-	body, readErr := httpx.ReadLimitedBody(resp.Body, bodyLimit(req))
+	body, readErr := httpclient.ReadLimitedBody(resp.Body, bodyLimit(req))
 	if readErr != nil {
 		return nil, nil, c.bodyError(ctx, req, resp.StatusCode, readErr, started)
 	}
@@ -1370,7 +1370,7 @@ func Decode(body []byte, v any) error {
 	if len(body) == 0 {
 		return errors.New("empty response body")
 	}
-	d := jsoncap.NewDecoder(bytes.NewReader(body), maxDecodeElements)
+	d := jsonx.NewDecoder(bytes.NewReader(body), maxDecodeElements)
 	if err := d.Decode(v); err != nil {
 		return fmt.Errorf("decoding response: %w", err)
 	}
@@ -1584,7 +1584,7 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 	}
 	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
 	if kind == forgeapi.KindRateLimited {
-		fe.RetryAfter = httpx.ParseRetryAfter(resp.Header.Get("Retry-After"))
+		fe.RetryAfter = httpclient.ParseRetryAfter(resp.Header.Get("Retry-After"))
 		if c.counters.RateLimited != nil {
 			c.counters.RateLimited(c.family)
 		}
@@ -1672,7 +1672,7 @@ func (r *refusal) scoped(text string) string {
 // sanitize bounds and rune-sanitizes untrusted upstream text at the emit site,
 // because this library cannot know its consumer's log handler.
 func sanitize(s string) string {
-	out, _ := runesafe.SanitizeSingleLineCapped(s, maxMessageBytes, "...")
+	out, _ := textsafe.SanitizeSingleLineCapped(s, maxMessageBytes, "...")
 	return out
 }
 
@@ -1691,7 +1691,7 @@ func (c *Conn) quoter(token string) func(string) string {
 		secrets = append(secrets, secret, jsonForm(secret), received, jsonForm(received))
 	}
 	return func(text string) string {
-		out, _ := runesafe.RedactSingleLineCapped(text, maxMessageBytes, "...", secrets...)
+		out, _ := textsafe.RedactSingleLineCapped(text, maxMessageBytes, "...", secrets...)
 		return out
 	}
 }

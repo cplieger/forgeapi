@@ -15,7 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/cplieger/httpx/v5"
+	"github.com/cplieger/go/httpclient"
 )
 
 // cacheMode is how one send treats the read cache.
@@ -361,7 +361,7 @@ func judge(rc *readCache, rv *revalidation, resp *http.Response, resend bool) (v
 	if resp.StatusCode != http.StatusNotModified {
 		return verdictNone, nil
 	}
-	body, err := httpx.ReadLimitedBody(resp.Body, maxBodyBytes)
+	body, err := httpclient.ReadLimitedBody(resp.Body, maxBodyBytes)
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	switch {
 	case err == nil && rv.held != nil && rv.vouched(resp, body) && rv.held.answers(rc.held, resp.Header) && rc.current(rv.gen):

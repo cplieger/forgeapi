@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/forgeapi"
 )
 
-// drainFailure is the Debug line httpx.Drain logs through slog's default logger
+// drainFailure is the Debug line httpclient.Drain logs through slog's default logger
 // when the body it drains cannot be read, as a body already closed cannot.
 const drainFailure = "failed to drain response body"
 
