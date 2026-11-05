@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // maxStatusPageItems is the page size the folded-status read asks for, which is this
@@ -158,7 +158,7 @@ func (c *Client) ownerRoutes(ctx context.Context, op, owner string) (ownerRoutes
 	group, groupRead := globalID(payload.Group)
 	user, userRead := globalID(payload.User)
 	if !groupRead || !userRead {
-		return ownerRoutes{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status)
+		return ownerRoutes{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status, errGlobalIDUnreadable)
 	}
 	if group == "" && user == "" {
 		return ownerRoutes{}, c.ownerUnresolved(ctx, op)
@@ -239,7 +239,7 @@ func (c *Client) projectPage(ctx context.Context, op, route string, query url.Va
 // own SHA is not this pull request's head either, so it never fills
 // [forgeapi.PullRequest.HeadSHA], which reads the diff head instead.
 func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
-	const op = "ListPRs"
+	const op = opListPRs
 	ctx = transport.Call(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -261,10 +261,11 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	}
 	var payload docPayload
 	result, err := c.execute(ctx, op, prList, map[string]any{
-		varFullPath: repo.Selector,
-		"state":     listState(set.State),
-		"first":     set.PageBound,
-		"after":     nullableString(after),
+		varFullPath:  repo.Selector,
+		"state":      listState(set.State),
+		"first":      set.PageBound,
+		"after":      nullableString(after),
+		"mergeState": set.MergeState,
 	}, &payload)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
@@ -280,11 +281,15 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	c.recordPermissions(payload.Project)
 	rows := payload.Project.MergeRequests
 	if rows == nil {
-		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK)
+		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errMergeRequestsNull)
 	}
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
-		items = append(items, c.normalizeDocPull(&rows.Nodes[i], documentRepo(payload.Project, repo)))
+		item := c.normalizeDocPull(&rows.Nodes[i], documentRepo(payload.Project, repo))
+		if !set.MergeState {
+			blankMergeState(&item)
+		}
+		items = append(items, item)
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items}
 	if rows.PageInfo.HasNextPage {
@@ -373,7 +378,7 @@ func (c *Client) degradedPullPage(ctx context.Context, op string, repo forgeapi.
 // head pipeline and a merge status listing may leave stale, so its verdict and block
 // reason are unknown; [Client.ReadPR] names them where documents answer.
 func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
-	const op = "ListMyPRs"
+	const op = opListMyPRs
 	ctx = transport.Call(ctx, op)
 	set, err := listing(op, scopedList, opts)
 	if err != nil {

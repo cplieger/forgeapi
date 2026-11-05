@@ -21,8 +21,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/ssrf/v4"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/ssrf"
 )
 
 func TestTheRetryableRuleFollowsKindAndStatus(t *testing.T) {

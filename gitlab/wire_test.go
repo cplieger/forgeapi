@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // TestMapperAnswersOneCellPerStatus holds this family's error mapping to one case per
@@ -786,7 +786,7 @@ func TestTheAuthorKindIsTheUsersBotFlag(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(mergeRequestFields, "author { username bot }") {
+	if !strings.Contains(mergeRequestFields(""), "author { username bot }") {
 		t.Error("the merge-request documents select no author bot flag, so their rows answer AccountKindUnknown")
 	}
 }

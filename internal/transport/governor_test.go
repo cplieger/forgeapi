@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // TestTheLastCostIsTheCallsOwnPrice holds the three properties the published price

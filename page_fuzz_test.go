@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 func FuzzValidateCursor_accepts_only_what_resumes_a_list(f *testing.F) {

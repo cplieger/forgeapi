@@ -2,13 +2,14 @@ package gitlab
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // The operation names this family spells, which are the role methods' own. They are
@@ -17,6 +18,14 @@ import (
 const (
 	opMergePR    = "MergePR"
 	opListIssues = "ListIssues"
+	opListPRs    = "ListPRs"
+	opListMyPRs  = "ListMyPRs"
+)
+
+// The checks a decoded body can fail, each the cause its failure line names.
+var (
+	errGlobalIDUnreadable = errors.New("group or user id is not a gid://gitlab/ id")
+	errMergeRequestsNull  = errors.New("mergeRequests are null")
 )
 
 // developerAccess is the project role integer at which a credential may push, which
@@ -651,6 +660,12 @@ func (c *Client) normalizeDocPull(n *docMergeRequest, repo forgeapi.RepoRef) for
 			MergeBlocked:   c.blockReason("detailed merge status (document)", n.DetailedMergeStatus, ""),
 		},
 	}
+}
+
+// blankMergeState answers a row's merge state unknown.
+func blankMergeState(item *forgeapi.PullRequest) {
+	item.Action.Mergeable = forgeapi.SupportUnknown
+	item.Action.MergeBlocked = forgeapi.MergeBlockUnknown
 }
 
 // sigil is how a human writes this product's merge-request number. It is a rendering

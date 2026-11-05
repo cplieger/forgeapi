@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 const labelRows = `[{"name": "example-label", "color": "#ededed", "description": "Example label."}]`
@@ -156,6 +156,33 @@ func TestOnlyAScopeRefusalIsWhatTheGrantReads(t *testing.T) {
 			}
 			if !strings.HasPrefix(ev.Detail, test.detail) {
 				t.Errorf("GrantCaps after %s = evidence detail %q, want it to open %q", test.name, ev.Detail, test.detail)
+			}
+		})
+	}
+}
+
+func TestAMergeStateOptionIsRefusedOnEveryListButThePullRequestLists(t *testing.T) {
+	for _, read := range []bool{true, false} {
+		t.Run(strconv.FormatBool(read), func(t *testing.T) {
+			h := newHarness(t, nil)
+			opt := forgeapi.WithMergeState(read)
+			for name, call := range map[string]func() error{
+				"ListRepos":    func() error { _, err := h.client.ListRepos(t.Context(), opt); return err },
+				"ListIssues":   func() error { _, err := h.client.ListIssues(t.Context(), testRef(), opt); return err },
+				"ListMyIssues": func() error { _, err := h.client.ListMyIssues(t.Context(), opt); return err },
+				"ListRuns":     func() error { _, err := h.client.ListRuns(t.Context(), testRef(), opt); return err },
+				"ListReleases": func() error { _, err := h.client.ListReleases(t.Context(), testRef(), opt); return err },
+				"ListLabels":   func() error { _, err := h.client.ListLabels(t.Context(), testRef(), opt); return err },
+			} {
+				t.Run(name, func(t *testing.T) {
+					var fe *forgeapi.Error
+					if err := call(); !asForgeError(err, &fe) || fe.Code != forgeapi.CodeListMergeStateInvalid {
+						t.Errorf("%s(WithMergeState(%t)) = %v, want code %q", name, read, err, forgeapi.CodeListMergeStateInvalid)
+					}
+				})
+			}
+			if got := h.instance.count(); got != 0 {
+				t.Errorf("the refused lists sent %d request(s), want 0: %v", got, h.instance.arrived())
 			}
 		})
 	}

@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // An OAuth endpoint answers its outcomes in the body, at 400 on some products

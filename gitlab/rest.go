@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // cursorPrefix opens this family's continuation encoding. The continuation is this
@@ -159,7 +159,7 @@ func (c *Client) sendJSON(ctx context.Context, op, method, path string, body, ou
 		return nil
 	}
 	if err := transport.Decode(resp.Body, out); err != nil {
-		return c.core.FailBody(ctx, op, transport.REST(method), resp.Status)
+		return c.core.FailDecode(ctx, op, transport.REST(method), resp, err)
 	}
 	return nil
 }
@@ -183,10 +183,10 @@ const (
 	runList
 )
 
-// listing resolves one list call's options, refusing with a local code a state filter
-// on every list but a stateful one, an owner on every list but the scoped ones and the
-// project listing, and a since bound on every list but the pipeline listing. An owner
-// may be a PATH, since a group nests; [Client.ownerRoutes] decides its address.
+// listing resolves one list call's options. It refuses with a local code a state filter
+// off the stateful lists, an owner off the scoped lists and the project listing, a since
+// bound off the pipeline listing, and a merge state option off the pull request lists.
+// A group nests, so an owner may be a PATH; [Client.ownerRoutes] decides its address.
 //
 // It resolves NOT the continuation, which is the caller's: this family mints two
 // encodings, the REST page number and the list document's opaque cursor, and a shared
@@ -207,6 +207,10 @@ func listing(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi.Lis
 	if set.SinceSet && kind != runList {
 		return set, transport.Local(forgeapi.CodeListSinceInvalid,
 			op+" lists rows no creation bound narrows, so a since bound cannot apply")
+	}
+	if set.MergeStateSet && op != opListPRs && op != opListMyPRs {
+		return set, transport.Local(forgeapi.CodeListMergeStateInvalid,
+			op+" lists rows that carry no merge state, so a merge state option cannot apply")
 	}
 	if kind == statefulList && set.State == forgeapi.ListStateMerged && op == opListIssues {
 		return set, transport.Local(forgeapi.CodeListStateInvalid,

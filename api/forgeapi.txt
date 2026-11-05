@@ -90,6 +90,7 @@ const CodeGrantExpired = "grant_expired"
 const CodeGrantUnsupported = "grant_unsupported"
 const CodeHeaderReserved = "header_reserved"
 const CodeLabelPageTruncated = "label_page_truncated"
+const CodeListMergeStateInvalid = "list_merge_state_invalid"
 const CodeListOwnerInvalid = "list_owner_invalid"
 const CodeListSinceInvalid = "list_since_invalid"
 const CodeListStateInvalid = "list_state_invalid"
@@ -317,6 +318,8 @@ type ListSettings struct {
 	OwnerSet bool
 	Since time.Time
 	SinceSet bool
+	MergeState bool
+	MergeStateSet bool
 }
 type ListState int
 func (l ListState) String() string
@@ -580,6 +583,7 @@ func WithCounters(c Counters) Option
 func WithCredentialSource(src CredentialSource) Option
 func WithListPages(n int) Option
 func WithLogger(l *slog.Logger) Option
+func WithMergeState(read bool) ListOption
 func WithMutationConcurrency(n int) Option
 func WithMutationInterval(d time.Duration) Option
 func WithMutationReserve(n int) Option
@@ -771,19 +775,3 @@ func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (fo
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
-
-## package readcache (./readcache)
-
-func NewTransport(next http.RoundTripper, opts ...Option) (*Transport, error)
-type Option interface {
-	// contains unexported members
-}
-type Transport struct {
-	// contains unexported members
-}
-func (t *Transport) CloseIdleConnections()
-func (t *Transport) RoundTrip(r *http.Request) (*http.Response, error)
-func (t *Transport) State() forgeapi.ReadCacheState
-func WithFreeNotModified(free bool) Option
-func WithHeldFields(names ...string) Option
-func WithMaxBytes(maxBytes int64) Option

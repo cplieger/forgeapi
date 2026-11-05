@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // ownerArm is the owner scope's request for the canonical owner.

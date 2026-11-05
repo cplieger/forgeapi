@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // maxStatusPageItems is the page size the degraded folded-status reads ask for, which
@@ -35,6 +35,8 @@ const (
 	varName   = "name"
 	varFirst  = "first"
 	varAfter  = "after"
+
+	varMergeState = "mergeState"
 )
 
 // Whoami implements [forgeapi.Identity]. This product reports the credential's
@@ -99,7 +101,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	items := make([]forgeapi.Repository, 0, len(rows))
 	for i := range rows {
 		if rows[i].FullName == "" {
-			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status, errFullNameEmpty)
 		}
 		items = append(items, normalizeRepo(&rows[i]))
 	}
@@ -149,12 +151,12 @@ func (c *Client) ownedRepos(ctx context.Context, op string, set *forgeapi.ListSe
 	}
 	rows := payload.Owner.Repositories
 	if rows == nil {
-		return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status)
+		return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status, errRepositoriesNull)
 	}
 	items := make([]forgeapi.Repository, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
 		if rows.Nodes[i].NameWithOwner == "" {
-			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status)
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status, errNameWithOwnerEmpty)
 		}
 		items = append(items, c.normalizeOwnedRepo(&rows.Nodes[i]))
 	}
@@ -197,7 +199,7 @@ func (c *Client) ownedRepos(ctx context.Context, op string, set *forgeapi.ListSe
 // here is this call's failure and marks the connection, so the two reads that do have
 // a REST arm take it from their next call.
 func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
-	const op = "ListPRs"
+	const op = opListPRs
 	ctx = transport.Call(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -220,11 +222,12 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	}
 	var payload docPayload
 	result, err := c.execute(ctx, op, prList, map[string]any{
-		varOwner: owner,
-		varName:  name,
-		varFirst: min(set.PageBound, prListPageCeiling),
-		varAfter: nullableString(after),
-		"states": documentStates(set.State),
+		varOwner:      owner,
+		varName:       name,
+		varFirst:      min(set.PageBound, prListPageCeiling),
+		varAfter:      nullableString(after),
+		"states":      documentStates(set.State),
+		varMergeState: set.MergeState,
 	}, &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
@@ -239,16 +242,14 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	}
 	rows := payload.Repository.PullRequests
 	if rows == nil {
-		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK)
+		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errPullRequestsNull)
 	}
 	canonical, successor := documentRepo(payload.Repository, repo)
 	at := result.placed(pullListPath, true, func(i int) bool { return i < len(rows.Nodes) })
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
 		item := c.rowWithFold(&rows.Nodes[i], canonical)
-		if at.refused[i] {
-			c.refuseChecks(&item)
-		}
+		c.markListed(&item, at.refused[i], set.MergeState)
 		items = append(items, item)
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items, Next: documentNext(call, rows.PageInfo), Successor: successor}
@@ -256,6 +257,17 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		page.Partial = c.partial(forgeapi.PartialGraphQLPartial, len(items))
 	}
 	return page, nil
+}
+
+// markListed applies a listed row's own markers: the refused check rollup, and the
+// merge state blanked when the list was asked not to read it.
+func (c *Client) markListed(item *forgeapi.PullRequest, rollupRefused, mergeState bool) {
+	if rollupRefused {
+		c.refuseChecks(item)
+	}
+	if !mergeState {
+		blankMergeState(item)
+	}
 }
 
 // refuseChecks is a row whose check rollup the product refused to the credential: no
@@ -329,7 +341,7 @@ func documentRepo(repo *docRepository, asked forgeapi.RepoRef) (canonical forgea
 // continuation, and the page that ends it carries [forgeapi.PartialResultWindow]
 // wherever the search's own total states more than the walk was served.
 func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
-	const op = "ListMyPRs"
+	const op = opListMyPRs
 	ctx = transport.Call(ctx, op)
 	set, err := listOptions(op, scopedList, opts)
 	if err != nil {
@@ -345,8 +357,10 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	}
 	query := searchQuery(searchPulls, &set)
 	set.PageBound = min(set.PageBound, prSearchPageCeiling)
+	vars := searchVariables(query, &set, after)
+	vars[varMergeState] = set.MergeState
 	var payload docPayload
-	result, err := c.execute(ctx, op, prMine, searchVariables(query, &set, after), &payload)
+	result, err := c.execute(ctx, op, prMine, vars, &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
 			return deferred, nil
@@ -354,7 +368,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	if payload.Search == nil {
-		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK)
+		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errSearchNull)
 	}
 	rows := payload.Search
 	at := result.placed(searchPath, true, func(i int) bool {
@@ -371,9 +385,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	items := make([]forgeapi.PullRequest, 0, len(nodes))
 	for _, node := range nodes {
 		item := c.rowWithFold(&node.docPullRequest, rowRepo(node.Repository))
-		if refused[node] {
-			c.refuseChecks(&item)
-		}
+		c.markListed(&item, refused[node], set.MergeState)
 		items = append(items, item)
 	}
 	return c.searchPage(items, rows.PageInfo, searchWalk{call: call, served: served}, rows.IssueCount, at.unplaced()), nil
@@ -498,7 +510,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
 	if payload.Search == nil {
-		return forgeapi.Page[forgeapi.Issue]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK)
+		return forgeapi.Page[forgeapi.Issue]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errSearchNull)
 	}
 	rows := payload.Search
 	nodes, err := c.searchRows(ctx, op, rows.Nodes, (*docSearchIssue).typename, typeIssue, rows.IssueCount, result.Partial)
@@ -1153,7 +1165,7 @@ func (c *Client) mergeNow(ctx context.Context, repo forgeapi.RepoRef, pr forgeap
 	}
 	var answer restMergeAnswer
 	if err := transport.Decode(resp.Body, &answer); err != nil {
-		return forgeapi.MergeOutcome{}, c.core.FailBody(ctx, op, transport.REST(http.MethodPut), resp.Status)
+		return forgeapi.MergeOutcome{}, c.core.FailDecode(ctx, op, transport.REST(http.MethodPut), resp, err)
 	}
 	if resp.Status == http.StatusConflict {
 		return c.inFlight(ctx, &answer)
@@ -1372,7 +1384,7 @@ func (c *Client) followCommitContexts(ctx context.Context, op string, vars map[s
 		}
 		at.add(result.placed(commitPath, false, nil))
 		if payload.Repository == nil || payload.Repository.Object == nil {
-			return out, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK)
+			return out, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errCommitNull)
 		}
 		page := c.foldRollup(payload.Repository.Object.StatusCheckRollup)
 		out = merged(&out, &page)

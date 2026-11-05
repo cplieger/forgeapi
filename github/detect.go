@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // versionsPath is where this product publishes the REST API versions an instance
@@ -220,7 +220,7 @@ func (c *Client) readUser(ctx context.Context, op string) (restUser, []string, e
 	}
 	var user restUser
 	if err := transport.Decode(resp.Body, &user); err != nil {
-		return restUser{}, nil, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status)
+		return restUser{}, nil, c.core.FailDecode(ctx, op, transport.REST(http.MethodGet), resp, err)
 	}
 	return user, scopesOf(resp.Header), nil
 }

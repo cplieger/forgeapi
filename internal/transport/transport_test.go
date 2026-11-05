@@ -19,7 +19,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // counterSpy records every counter this library fires, by name, so an assertion names
@@ -220,6 +220,20 @@ func TestTheEnvironmentsProxyVariablesAreNeverRead(t *testing.T) {
 	// variables unreachable at every destination rather than at this one.
 	if c.wire.Proxy != nil {
 		t.Error("the assembled transport carries a proxy function for a connection that stated no proxy, want none: a fallback there is the whole environment reachable from a connection record that shows nothing")
+	}
+}
+
+// TestWirePingWindowFitsHeaderTimeout holds the invariant that a request on a silent
+// HTTP/2 connection ends as a lost connection before its header timeout, so the
+// retry dials a new connection rather than waiting on the dead one again.
+func TestWirePingWindowFitsHeaderTimeout(t *testing.T) {
+	c := openTestConn(t, forgeapi.Connection{WebBaseURL: "http://forge.example"})
+	if c.wire.HTTP2 == nil {
+		t.Fatal("the assembled transport carries no HTTP2 config, want the safe transport's PING health check")
+	}
+	window := c.wire.HTTP2.SendPingTimeout + c.wire.HTTP2.PingTimeout
+	if window <= 0 || window >= c.wire.ResponseHeaderTimeout {
+		t.Errorf("SendPingTimeout + PingTimeout = %v, want above 0 and below ResponseHeaderTimeout %v", window, c.wire.ResponseHeaderTimeout)
 	}
 }
 

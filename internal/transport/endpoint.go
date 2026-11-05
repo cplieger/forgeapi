@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/httpx/v5"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/httpclient"
 )
 
 // maxEndpointBytes bounds one OAuth endpoint answer, which is a handful of short
@@ -78,12 +78,12 @@ func (c *Conn) PostForm(ctx context.Context, op, path string, form url.Values) (
 	for _, h := range c.headers {
 		r.Header.Set(h.Name, h.Value)
 	}
-	//nolint:bodyclose // httpx.ReadLimitedBody below always closes the body, which the analyzer cannot follow
+	//nolint:bodyclose // httpclient.ReadLimitedBody below always closes the body, which the analyzer cannot follow
 	resp, err := c.mutate.Do(r)
 	if err != nil {
 		return nil, c.transportError(ctx, req, err, started)
 	}
-	body, err := httpx.ReadLimitedBody(resp.Body, maxEndpointBytes)
+	body, err := httpclient.ReadLimitedBody(resp.Body, maxEndpointBytes)
 	if err != nil {
 		lost := &Response{Header: resp.Header, Status: resp.StatusCode, quote: c.quoter("")}
 		return lost, c.bodyError(ctx, req, resp.StatusCode, err, started)

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // documentPath is this product's GraphQL endpoint, which sits beside the versioned
@@ -25,15 +25,19 @@ const documentPrefix = "g"
 // varFullPath is the variable every document addresses its project or namespace by.
 const varFullPath = "fullPath"
 
-// mergeRequestFields is the node selection both pull-request documents share, all a
-// normalized pull request needs from this product. `diffHeadSha` is the head a merge and a
-// re-run pin to; `headPipeline.sha` is a merged-results SHA, not the branch's.
-// `labels` is a connection of `title`s, one page of a set this product does not cap,
-// measured by `count` and `hasNextPage` ([Client.labelCut]). `headPipeline.status` is
-// one scalar, so no checks fold here can truncate. No merge-train field is selected:
-// introspected 2026-09-20, `Project.mergeTrains` and `MergeTrain.cars` are deprecated,
+// mergeRequestFields is the node selection both pull-request documents and the schema
+// probe share, all a normalized pull request needs. gate is a directive both merge
+// state fields carry, "" for none. `diffHeadSha` is the head a merge and a re-run pin
+// to; `headPipeline.sha` is a merged-results SHA. `labels` is one page of an uncapped
+// set, measured by `count` and `hasNextPage` ([Client.labelCut]). `headPipeline.status`
+// is one scalar, so no checks fold here can truncate. No merge-train field is selected:
+// `Project.mergeTrains` and `MergeTrain.cars` are deprecated (introspected 2026-09-20),
 // which the schema gate refuses.
-const mergeRequestFields = `
+func mergeRequestFields(gate string) string {
+	if gate != "" {
+		gate = " " + gate
+	}
+	return `
       iid
       title
       description
@@ -48,8 +52,8 @@ const mergeRequestFields = `
       state
       draft
       mergedAt
-      mergeable
-      detailedMergeStatus
+      mergeable` + gate + `
+      detailedMergeStatus` + gate + `
       autoMergeEnabled
       labels(first: 100) {
         count
@@ -57,6 +61,7 @@ const mergeRequestFields = `
         nodes { title color description }
       }
       headPipeline { status }`
+}
 
 // document is one named GraphQL document this family ships: its operation name, its
 // text and the variables its callers fill.
@@ -71,18 +76,18 @@ type document struct {
 }
 
 // prList is the pull-request LIST document. Its callers are [Client.ListPRs]. The
-// state filter is a variable rather than a literal because the published list
-// option reaches it, and the page size is a variable because the per-call page
-// bound does.
+// state filter and the merge state gate are variables rather than literals because
+// published list options reach them, and the page size is a variable because the
+// per-call page bound does.
 var prList = document{
 	name: "PRList",
-	text: `query PRList($fullPath: ID!, $state: MergeRequestState, $first: Int!, $after: String) {
+	text: `query PRList($fullPath: ID!, $state: MergeRequestState, $first: Int!, $after: String, $mergeState: Boolean!) {
   project(fullPath: $fullPath) {
     fullPath
     userPermissions { pushCode readMergeRequest }
     mergeRequests(state: $state, first: $first, after: $after) {
       pageInfo { hasNextPage endCursor }
-      nodes {` + mergeRequestFields + `
+      nodes {` + mergeRequestFields("@include(if: $mergeState)") + `
       }
     }
   }
@@ -101,7 +106,7 @@ var prRead = document{
   project(fullPath: $fullPath) {
     fullPath
     userPermissions { pushCode readMergeRequest }
-    mergeRequest(iid: $iid) {` + mergeRequestFields + `
+    mergeRequest(iid: $iid) {` + mergeRequestFields("") + `
     }
   }
   queryComplexity { score limit }
@@ -143,7 +148,7 @@ var docAcceptance = document{
       pageInfo { hasNextPage endCursor }
       nodes { iid }
     }
-    mergeRequest(iid: "0") {` + mergeRequestFields + `
+    mergeRequest(iid: "0") {` + mergeRequestFields("") + `
     }
   }
   queryComplexity { score limit }
@@ -236,19 +241,20 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	})
 	body, status := responseBody(resp)
 	var env envelope
-	decoded := len(body) > 0 && transport.Decode(body, &env) == nil
+	decodeErr := transport.Decode(body, &env)
+	decoded := decodeErr == nil
 	if err != nil && (!decoded || len(env.Errors) == 0) {
 		c.degradeOn(err)
 		return docResult{}, err
 	}
 	if !decoded {
-		return docResult{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), status)
+		return docResult{}, c.core.FailDecode(ctx, op, transport.Document(http.MethodPost), resp, decodeErr)
 	}
 	if len(env.Errors) > 0 && !env.carriesData() {
 		return docResult{}, c.refuseDocument(ctx, op, doc, resp, env.Errors)
 	}
 	if err := transport.Decode(env.Data, out); err != nil {
-		return docResult{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), status)
+		return docResult{}, c.core.FailDecode(ctx, op, transport.Document(http.MethodPost), resp, err)
 	}
 	result := docResult{Cost: complexityOf(out), Status: status, Partial: len(env.Errors) > 0}
 	if result.Cost > 0 {

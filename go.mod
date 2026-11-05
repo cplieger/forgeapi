@@ -1,12 +1,12 @@
-module github.com/cplieger/forgeapi
+module github.com/cplieger/forgeapi/v2
 
 go 1.27.3
 
 require (
-	github.com/cplieger/atomicfile/v4 v4.2.0
-	github.com/cplieger/httpx/v5 v5.2.0
-	github.com/cplieger/jsoncap/v2 v2.1.0
-	github.com/cplieger/runesafe/v3 v3.2.0
-	github.com/cplieger/ssrf/v4 v4.5.0
-	github.com/cplieger/urlform v1.5.0
+	github.com/cplieger/go/filesafe v1.0.0-dev.1
+	github.com/cplieger/go/httpclient v1.0.0-dev.3
+	github.com/cplieger/go/jsonx v1.0.0-dev.2
+	github.com/cplieger/go/ssrf v1.0.0-dev.1
+	github.com/cplieger/go/textsafe v1.0.0-dev.1
+	github.com/cplieger/go/urlform v1.0.0-dev.1
 )

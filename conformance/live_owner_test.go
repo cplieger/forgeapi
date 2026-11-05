@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // laneListInstance serves one cross-repository list's fixture to the live lane, once

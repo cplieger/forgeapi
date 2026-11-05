@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // TestTheReadCacheFollowsEachProductsRevalidationRow holds both products of this

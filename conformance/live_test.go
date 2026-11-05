@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/github"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/github"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // The live lane's variables, one pair per product: the instance URL and, where the

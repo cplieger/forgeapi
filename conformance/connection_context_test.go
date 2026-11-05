@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // Every operation answers nil, a *forgeapi.Error or a context sentinel returned

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // documentWrite is a GraphQL mutation, which travels as the same POST a query does

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // listCall drives one list operation with the options a case names.

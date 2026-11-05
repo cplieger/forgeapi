@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/internal/spec"
-	"github.com/cplieger/httpx/v5"
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/go/httpclient"
+	"github.com/cplieger/go/textsafe"
 )
 
 // The lane's marks. Everything a live mutation makes in a sandbox carries one
@@ -231,12 +231,12 @@ const laneSnippetBytes = 300
 // missed; the cut comes last and on a rune boundary, so it neither leaves a
 // partial token the needle no longer matches nor splits a rune.
 func laneSnippet(raw []byte, token string) string {
-	secret := httpx.Secret(token)
-	s := httpx.RedactSecretString(string(raw), secret)
-	s = strings.Join(strings.Fields(runesafe.SanitizeSingleLine(s)), " ")
-	s = httpx.RedactSecretString(s, secret)
+	secret := httpclient.Secret(token)
+	s := httpclient.RedactSecretString(string(raw), secret)
+	s = strings.Join(strings.Fields(textsafe.SanitizeSingleLine(s)), " ")
+	s = httpclient.RedactSecretString(s, secret)
 	if len(s) > laneSnippetBytes {
-		s = runesafe.CapBytes(s, laneSnippetBytes) + "..."
+		s = textsafe.CapBytes(s, laneSnippetBytes) + "..."
 	}
 	return s
 }

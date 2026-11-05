@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // gitlabMergeStatuses are the merge states the GitLab sandbox answered for one merge

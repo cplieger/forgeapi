@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 func clientPair(t *testing.T) (certPEM, keyPEM []byte) {

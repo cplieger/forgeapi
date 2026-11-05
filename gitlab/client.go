@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // Client is one GitLab connection: where the instance is, what the credential is

@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // check is one field of one operation's normalized answer. want is the contract's
@@ -263,7 +263,7 @@ var operations = []operation{
 		method:    "PullRequests.ListPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
 		rowArms:   []string{rowAuthorKind},
-		errorArms: []string{rowChecksUnderFineGrained},
+		errorArms: []string{rowChecksUnderFineGrained, rowMergeableUnderOption, rowMergeBlockedUnderOption},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -285,7 +285,7 @@ var operations = []operation{
 		method:    "PullRequests.ListMyPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
 		rowArms:   []string{rowAuthorKind},
-		errorArms: []string{rowChecksUnderFineGrained, ownerUnresolved, scopeInsufficient, archivedRowsForOwner},
+		errorArms: []string{rowChecksUnderFineGrained, ownerUnresolved, scopeInsufficient, archivedRowsForOwner, rowMergeableUnderOption, rowMergeBlockedUnderOption},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {

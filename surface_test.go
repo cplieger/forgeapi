@@ -2,7 +2,6 @@ package forgeapi_test
 
 import (
 	"bytes"
-	"cmp"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -10,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/internal/surface"
+	"github.com/cplieger/forgeapi/v2/internal/surface"
 )
 
 const (
@@ -71,8 +70,6 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"## package gitea (./gitea)",
 		"## package github (./github)",
 		"## package gitlab (./gitlab)",
-		"## package readcache (./readcache)",
-		"func NewTransport(next http.RoundTripper, opts ...Option) (*Transport, error)",
 		"type Core interface {",
 		"type Support int",
 		"const SupportUnknown Support = iota",
@@ -210,7 +207,6 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 	const options = "options.go"
 	const defaultPrefix = "Default:"
 	for _, test := range []struct {
-		file          string
 		fn            string
 		defaultClause string
 		zeroClause    string
@@ -234,13 +230,11 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 		{fn: "WithRefreshLead", defaultClause: "Default: [DefaultRefreshLead].", zeroClause: "Zero refreshes a token only once it has expired.", names: []string{"CodeBudgetInvalid"}},
 		{fn: "WithPageBound", defaultClause: "Default: [DefaultPageBound].", names: []string{"CodePageBoundInvalid"}},
 		{fn: "WithSince", defaultClause: "Default: no bound,", names: []string{"CodeListSinceInvalid"}},
+		{fn: "WithMergeState", defaultClause: "Default: true.", names: []string{"CodeListMergeStateInvalid"}},
 		{fn: "WithReadCache", defaultClause: "Default: [DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and sends every read unconditionally.", names: []string{"CodeBudgetInvalid"}},
-		{file: "readcache/transport.go", fn: "WithMaxBytes", defaultClause: "Default: [forgeapi.DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and adds no validator,", names: []string{"CodeBudgetInvalid"}},
-		{file: "readcache/transport.go", fn: "WithFreeNotModified", defaultClause: "Default: false,"},
-		{file: "readcache/transport.go", fn: "WithHeldFields", defaultClause: "Default: none."},
 	} {
 		t.Run(test.fn, func(t *testing.T) {
-			file := cmp.Or(test.file, options)
+			const file = options
 			doc := funcDoc(t, file, test.fn)
 			var stated []string
 			for line := range strings.SplitSeq(doc, "\n") {

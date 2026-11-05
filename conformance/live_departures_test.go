@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // liveDepartureCase names, in a child process of this test binary, the case the
