@@ -212,7 +212,8 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 	// The attempt hook sits beneath the retry round tripper, so it sees one call
 	// per attempt. The request hook sits above it, installed on the client below,
 	// so it sees one call per logical request whatever the attempt count. Both sit
-	// above wireGuard, which must see a request as either hook passes it on.
+	// above the cache guard ([httpclient.CacheGuard]), which must see a request as
+	// either hook passes it on.
 	if set.AttemptObserver != nil {
 		base = set.AttemptObserver(base)
 	}
@@ -879,7 +880,7 @@ type Request struct {
 	AbsoluteURL string
 	// Answers are the non-2xx statuses this request reads as an ANSWER rather than
 	// a refusal: [Conn.Do] returns such a response with its body and no error, and
-	// the family decodes the outcome from it. A 304 is never one: [judge]
+	// the family decodes the outcome from it. A 304 is never one: the read cache
 	// settles every 304. One route needs it: GitHub's
 	// asynchronous merge answers a merge already in flight with a 409 whose body
 	// names that merge's handle, which is the outcome, not a conflict.
@@ -998,9 +999,9 @@ func (r *Response) Quote(text string) string {
 
 // Do issues one request, maps its outcome and records what it cost. While the read
 // cache is on, a REST GET outside [CallWrite] that names [Request.Into], carries no
-// no-store and is not changed by an observer ([wireGuard]) is revalidated, and a
-// not-modified answer [judge] finds vouches for the held answer is served from
-// it ([readCache.serve], docs/read-cache.md).
+// no-store and is not changed by an observer ([httpclient.CacheGuard]) is
+// revalidated, and a 304 the cache vouches for is served from the held answer
+// ([httpclient.CacheRead.Serve], docs/read-cache.md).
 //
 // What the call spent is published on EVERY arm it leaves by, the two refusals that
 // send nothing included: it is the last CALL's price, so one that sent nothing is 0.
@@ -1114,7 +1115,7 @@ func bodyLimit(req *Request) int64 {
 func (c *Conn) readConfig(ctx context.Context, req *Request) httpclient.CacheReadConfig {
 	return httpclient.CacheReadConfig{
 		Variant:   shapeOf(req.Into),
-		Store:     c.cacheable(ctx, req),
+		Store:     cacheable(ctx, req),
 		Resend:    req.Method == http.MethodGet && !req.Document,
 		Discarded: func(h http.Header) { c.gov.observe(req.Op, h, c.signal, c.pool) },
 	}
@@ -1177,10 +1178,9 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 
 // send builds and issues the request on the client [Request.mutates] chooses,
 // passing it through prepare, the read cache's, after every other header is set.
-// It writes the credential it carried to token, "" until the credential source
-// answers, so the instance's text is redacted of that attempt's token alone.
+// It writes the credential it carried to token, so the instance's text is
+// redacted of that attempt's token alone.
 func (c *Conn) send(ctx context.Context, req *Request, target string, prepare func(*http.Request) *http.Request, token *string) (*http.Response, error) {
-	*token = ""
 	var payload []byte
 	if req.Body != nil {
 		encoded, marshalErr := marshal(req.Body)
@@ -1851,7 +1851,7 @@ func noteCache(ctx context.Context, v int32) {
 	}
 }
 
-// cacheNoted is the record's cache attribute, as [readCache.tally] counts: hit for a
+// cacheNoted is the record's cache attribute, as [httpclient.CacheState] counts: hit for a
 // read the held answer served, miss for any other cacheable read the instance
 // answered in full, off for every other line, a failure in transit included.
 func cacheNoted(ctx context.Context) string {
@@ -1871,7 +1871,7 @@ func cacheNoted(ctx context.Context) string {
 // cacheable reports whether a request is a read the cache may revalidate: a GET of
 // a REST route naming the value it decodes into, outside a write. A document is a
 // POST; the cache leaves a no-store request uncached, and keeps nothing when off.
-func (c *Conn) cacheable(ctx context.Context, req *Request) bool {
+func cacheable(ctx context.Context, req *Request) bool {
 	return req.Method == http.MethodGet && !req.Document && !writes(ctx) && req.Into != nil
 }
 

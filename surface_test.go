@@ -2,7 +2,6 @@ package forgeapi_test
 
 import (
 	"bytes"
-	"cmp"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -208,7 +207,6 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 	const options = "options.go"
 	const defaultPrefix = "Default:"
 	for _, test := range []struct {
-		file          string
 		fn            string
 		defaultClause string
 		zeroClause    string
@@ -236,7 +234,7 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 		{fn: "WithReadCache", defaultClause: "Default: [DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and sends every read unconditionally.", names: []string{"CodeBudgetInvalid"}},
 	} {
 		t.Run(test.fn, func(t *testing.T) {
-			file := cmp.Or(test.file, options)
+			const file = options
 			doc := funcDoc(t, file, test.fn)
 			var stated []string
 			for line := range strings.SplitSeq(doc, "\n") {

@@ -1366,3 +1366,24 @@ func TestADocumentsCostIsTheLastCostBesideCachedReads(t *testing.T) {
 		t.Errorf("the repeated document carried If-None-Match %q, want none", got)
 	}
 }
+
+// TestAReadIntoAnotherTypeIsNotServedFromTheFirst pins the Variant the read
+// cache is given: the held answer is the first read's projection, so a read of
+// the same route into another type must be read in full.
+func TestAReadIntoAnotherTypeIsNotServedFromTheFirst(t *testing.T) {
+	o := newOrigin(`{"login":"octo","id":7}`, `"v1"`)
+	c := openTestConn(t, forgeapi.Connection{WebBaseURL: serveOrigin(t, o).URL})
+	if _, _, err := read(t, c, nil); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	var other struct {
+		ID int `json:"id"`
+	}
+	resp, err := c.Do(Call(t.Context(), "Whoami"), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user", Into: &other})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := o.last().Get("If-None-Match"); got != "" || resp.Revalidated || other.ID != 7 {
+		t.Errorf("If-None-Match %q, revalidated %t, ID %d; want a full read with ID 7", got, resp.Revalidated, other.ID)
+	}
+}
