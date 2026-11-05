@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/textsafe"
 )

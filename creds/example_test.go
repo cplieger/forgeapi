@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/forgeapi/github"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v2/github"
 )
 
 // Example signs a user in to github.com through the OAuth device grant, stores the

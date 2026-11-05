@@ -14,8 +14,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // sandboxCase is the mutation the gate cases drive: one issue created on the Gitea

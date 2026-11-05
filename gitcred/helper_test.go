@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/forgeapi/gitcred"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v2/gitcred"
 )
 
 // tally records what the helper's two counters report.

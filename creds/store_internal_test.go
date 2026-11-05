@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 const custodyRotated = `{"access_token":"token-new","token_type":"bearer","scope":"repo","expires_in":28800,"refresh_token":"refresh-new","refresh_token_expires_in":15897600}`

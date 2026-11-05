@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // headerMeta is the header this product names itself with. It is the family witness

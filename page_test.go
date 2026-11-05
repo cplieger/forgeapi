@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 func TestValidateCursor_accepts_a_cursor_in_this_librarys_encoding(t *testing.T) {

@@ -8,7 +8,7 @@ This table has one row per operation and one column per forge product. Each oper
 
 `unsupported` says the product has no such operation, and no implementation can change that.
 
-Where a product departs from the normalized contract, the operation's own godoc on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi) lists each departure, so this table holds only the status.
+Where a product departs from the normalized contract, the operation's own godoc on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v2) lists each departure, so this table holds only the status.
 
 | Operation | GitHub | GitLab | Gitea | Forgejo |
 | --- | --- | --- | --- | --- |

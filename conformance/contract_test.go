@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // check is one field of one operation's normalized answer. want is the contract's

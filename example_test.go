@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/github"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/github"
 )
 
 // staticPAT is the smallest credential source there is: one personal access token,

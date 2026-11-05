@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // TestANotModifiedAnswerIsBilledAsSpecStates holds this family's price of a

@@ -19,7 +19,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // counterSpy records every counter this library fires, by name, so an assertion names

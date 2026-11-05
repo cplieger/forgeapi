@@ -10,8 +10,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/gitea"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/gitea"
 )
 
 // The three writer sets whose UNION is [forgeapi.ReservedHeaders], split by who

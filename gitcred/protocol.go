@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // maxBlock bounds the attribute block a helper reads. Git writes a few short

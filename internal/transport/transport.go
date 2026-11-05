@@ -34,7 +34,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/jsonx"
 	"github.com/cplieger/go/ssrf"
@@ -121,7 +121,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	read       *http.Client
 	mutate     *http.Client
 	gov        *governor
-	cache      *readCache
+	cache      *httpclient.Cache
 	counters   forgeapi.Counters
 	headers    []forgeapi.Header
 	budget     forgeapi.Budget
@@ -208,11 +208,12 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 	// answered: a repeated attempt spends the user's quota exactly as an answered
 	// one does.
 	base = pricedTransport{next: base, freeNotModified: opts.FreeNotModified}
-	base = wireGuard{next: base}
+	base = httpclient.CacheGuard(base)
 	// The attempt hook sits beneath the retry round tripper, so it sees one call
 	// per attempt. The request hook sits above it, installed on the client below,
 	// so it sees one call per logical request whatever the attempt count. Both sit
-	// above wireGuard, which must see a request as either hook passes it on.
+	// above the cache guard ([httpclient.CacheGuard]), which must see a request as
+	// either hook passes it on.
 	if set.AttemptObserver != nil {
 		base = set.AttemptObserver(base)
 	}
@@ -240,7 +241,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		mutations:  set.Mutations,
 	}
 	c.gov = newGovernor(set, &c.counters, opts.Family, opts.Clock, opts.PoolParent)
-	c.cache = newReadCache(set.ReadCacheBytes, familyFields, opts.FreeNotModified)
+	c.cache = httpclient.NewCache(httpclient.CacheConfig{Held: familyFields, MaxBytes: cmp.Or(set.ReadCacheBytes, -1), FreeNotModified: opts.FreeNotModified})
 
 	policy := c.redirectPolicy(web, set)
 	c.read = httpclient.NewRetry(base, policy, httpclient.TransportConfig{
@@ -779,7 +780,7 @@ func dialablePorts(web *url.URL, proxy string, set *forgeapi.Settings) []uint16 
 // written from outside.
 func (c *Conn) BudgetState() forgeapi.BudgetState {
 	state := c.gov.state()
-	state.ReadCache = c.cache.state()
+	state.ReadCache = forgeapi.ReadCacheState(c.cache.State())
 	return state
 }
 
@@ -844,9 +845,7 @@ func (c *Conn) Price(cost int) { c.gov.price(cost) }
 // wire is its author's, so Close never reaches it.
 func (c *Conn) Close() {
 	c.wire.CloseIdleConnections()
-	if c.cache != nil {
-		c.cache.clear()
-	}
+	c.cache.Clear()
 }
 
 // Request is one call this package makes for a family.
@@ -881,7 +880,7 @@ type Request struct {
 	AbsoluteURL string
 	// Answers are the non-2xx statuses this request reads as an ANSWER rather than
 	// a refusal: [Conn.Do] returns such a response with its body and no error, and
-	// the family decodes the outcome from it. A 304 is never one: [judge]
+	// the family decodes the outcome from it. A 304 is never one: the read cache
 	// settles every 304. One route needs it: GitHub's
 	// asynchronous merge answers a merge already in flight with a 409 whose body
 	// names that merge's handle, which is the outcome, not a conflict.
@@ -1000,9 +999,9 @@ func (r *Response) Quote(text string) string {
 
 // Do issues one request, maps its outcome and records what it cost. While the read
 // cache is on, a REST GET outside [CallWrite] that names [Request.Into], carries no
-// no-store and is not changed by an observer ([wireGuard]) is revalidated, and a
-// not-modified answer [judge] finds vouches for the held answer is served from
-// it ([readCache.serve], docs/read-cache.md).
+// no-store and is not changed by an observer ([httpclient.CacheGuard]) is
+// revalidated, and a 304 the cache vouches for is served from the held answer
+// ([httpclient.CacheRead.Serve], docs/read-cache.md).
 //
 // What the call spent is published on EVERY arm it leaves by, the two refusals that
 // send nothing included: it is the last CALL's price, so one that sent nothing is 0.
@@ -1035,10 +1034,14 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	defer c.release(req)
 
 	started = time.Now()
+	x := c.cache.Begin(c.readConfig(ctx, req))
+	var token string
 	//nolint:bodyclose // answer always reads the body through httpclient.ReadLimitedBody, which closes it
-	resp, rv, err := c.sendRead(ctx, req, target)
-	out, kept, err := c.answer(ctx, req, target, resp, &rv, err, started)
-	hit, ended := c.cache.conclude(ctx, &rv, kept, err == nil)
+	resp, err := x.Send(func(prepare func(*http.Request) *http.Request) (*http.Response, error) {
+		return c.send(ctx, req, target, prepare, &token)
+	})
+	out, err := c.answer(ctx, req, target, resp, x, token, err, started)
+	hit, ended := x.Finish(ctx, err == nil)
 	if err == nil && req.Into != nil && ended != nil {
 		out, err = nil, c.transportError(ctx, req, ended, started)
 	}
@@ -1061,45 +1064,41 @@ type undecodable struct{ cause error }
 
 func (e *undecodable) Error() string { return "response body did not decode: " + e.cause.Error() }
 
-// answer reads the exchange's answer and settles it by [judge]'s verdict on a 304:
-// a served one answers from the held entry, a refused one is mapped like any other
-// refusal, and a success is decoded into [Request.Into]. It answers the entry to
-// keep, a served 304's refreshed one or a vouched 200's, which [Conn.Do] hands
-// [readCache.conclude] once for the whole exchange.
-func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *http.Response, rv *revalidation, sendErr error, started time.Time) (*Response, *pageEntry, error) {
+// answer reads the exchange's answer and settles a 304 by the read cache's
+// verdict: a served one answers from the held entry, a refused one is mapped like
+// any other refusal, and a success is decoded into [Request.Into] and offered to
+// the cache, which [Conn.Do] finishes once for the whole exchange.
+func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *http.Response, x *httpclient.CacheRead, token string, sendErr error, started time.Time) (*Response, error) {
 	if sendErr != nil {
-		return refusedHop(resp), nil, c.transportError(ctx, req, sendErr, started)
+		return refusedHop(resp), c.transportError(ctx, req, sendErr, started)
 	}
 	c.gov.observe(req.Op, resp.Header, c.signal, c.pool)
 	out := &Response{
-		Header: resp.Header, Status: resp.StatusCode, quote: c.quoter(rv.token),
+		Header: resp.Header, Status: resp.StatusCode, quote: c.quoter(token),
 		Redirected: followed(resp, target), Ended: ended(resp, target),
 	}
 	body, readErr := httpclient.ReadLimitedBody(resp.Body, bodyLimit(req))
 	if readErr != nil {
-		return nil, nil, c.bodyError(ctx, req, resp.StatusCode, readErr, started)
+		return nil, c.bodyError(ctx, req, resp.StatusCode, readErr, started)
 	}
 	out.Body = body
-	rv.answered = rv.cacheable
-	if rv.answered {
+	if x.Answered() {
 		noteCache(ctx, cacheMissed)
 	}
-	var kept *pageEntry
+	header, held, served := x.Serve(out.Header)
 	switch {
-	case rv.verdict == verdictServe:
-		kept = c.serve(rv, out)
-	case rv.verdict == verdictRefuse, resp.StatusCode >= 300 && !slices.Contains(req.Answers, resp.StatusCode):
-		return out, nil, c.upstreamError(ctx, req, out, started)
+	case served:
+		out.Header, out.Body, out.Status, out.Revalidated = header, held, http.StatusOK, true
+	case resp.StatusCode == http.StatusNotModified, resp.StatusCode >= 300 && !slices.Contains(req.Answers, resp.StatusCode):
+		return out, c.upstreamError(ctx, req, out, started)
 	}
 	if req.Into != nil {
 		if err := Decode(out.Body, req.Into); err != nil {
-			return out, nil, &undecodable{cause: err}
+			return out, &undecodable{cause: err}
 		}
 	}
-	if resp.StatusCode == http.StatusOK && rv.vouched(resp, body) {
-		kept = c.cache.keepable(resp, func() ([]byte, error) { return ownedBody(req.Into) })
-	}
-	return out, kept, nil
+	x.Keep(resp, body, func() ([]byte, error) { return ownedBody(req.Into) })
+	return out, nil
 }
 
 // bodyLimit is the most of an answer's body this request reads.
@@ -1110,19 +1109,16 @@ func bodyLimit(req *Request) int64 {
 	return req.MaxBytes
 }
 
-// sendRead is [Conn.send] through the read cache's [readExchange]: a REST GET
-// whose 304 nothing held may serve is sent once more, and the discarded answer's
-// rate headers reach the governor.
-func (c *Conn) sendRead(ctx context.Context, req *Request, target string) (*http.Response, revalidation, error) {
-	return readExchange{
-		cache: c.cache,
-		send: func(mode cacheMode, gen uint64) (*http.Response, revalidation, error) {
-			return c.send(ctx, req, target, mode, gen)
-		},
-		discarded:  func(h http.Header) { c.gov.observe(req.Op, h, c.signal, c.pool) },
-		cacheable:  c.cacheable(ctx, req),
-		resendable: req.Method == http.MethodGet && !req.Document,
-	}.run()
+// readConfig is the read cache's view of req: a REST GET whose 304 nothing held
+// may serve is sent once more, and a discarded answer's rate headers reach the
+// governor.
+func (c *Conn) readConfig(ctx context.Context, req *Request) httpclient.CacheReadConfig {
+	return httpclient.CacheReadConfig{
+		Variant:   shapeOf(req.Into),
+		Store:     cacheable(ctx, req),
+		Resend:    req.Method == http.MethodGet && !req.Document,
+		Discarded: func(h http.Header) { c.gov.observe(req.Op, h, c.signal, c.pool) },
+	}
 }
 
 // followed reports whether this exchange took a redirect hop, by comparing the URL
@@ -1180,24 +1176,22 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 	return nil
 }
 
-// send builds and issues the request on the client [Request.mutates] chooses. It
-// answers what the read cache knows of the request beside the response: the
-// credential it carried, which the instance's text is redacted of, and on a
-// cacheable read its key and the entry held for it, whose validator rides the
-// request in the conditional mode.
-func (c *Conn) send(ctx context.Context, req *Request, target string, mode cacheMode, gen uint64) (*http.Response, revalidation, error) {
-	rv := revalidation{gen: gen}
+// send builds and issues the request on the client [Request.mutates] chooses,
+// passing it through prepare, the read cache's, after every other header is set.
+// It writes the credential it carried to token, so the instance's text is
+// redacted of that attempt's token alone.
+func (c *Conn) send(ctx context.Context, req *Request, target string, prepare func(*http.Request) *http.Request, token *string) (*http.Response, error) {
 	var payload []byte
 	if req.Body != nil {
 		encoded, marshalErr := marshal(req.Body)
 		if marshalErr != nil {
-			return nil, rv, marshalErr
+			return nil, marshalErr
 		}
 		payload = encoded
 	}
 	r, err := http.NewRequestWithContext(ctx, req.Method, target, bodyReader(payload))
 	if err != nil {
-		return nil, rv, err
+		return nil, err
 	}
 	if payload != nil {
 		r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(payload)), nil }
@@ -1206,15 +1200,15 @@ func (c *Conn) send(ctx context.Context, req *Request, target string, mode cache
 	}
 	r.Header.Set("Accept", "application/json")
 	r.Header.Set("User-Agent", userAgent)
-	token, err := c.credential.Token(ctx)
+	tok, err := c.credential.Token(ctx)
 	if err != nil {
-		return nil, rv, credentialError(err)
+		return nil, credentialError(err)
 	}
-	rv.token = token
+	*token = tok
 	// Bearer is the one scheme every product reads for every kind of token it
 	// issues; gitlab.com refuses the token scheme the others also accept.
-	if token != "" {
-		r.Header.Set("Authorization", "Bearer "+token)
+	if tok != "" {
+		r.Header.Set("Authorization", "Bearer "+tok)
 	}
 	for _, h := range req.Headers {
 		r.Header.Set(h.Name, h.Value)
@@ -1222,18 +1216,15 @@ func (c *Conn) send(ctx context.Context, req *Request, target string, mode cache
 	for _, h := range c.headers {
 		r.Header.Set(h.Name, h.Value)
 	}
-	if mode != cacheOff {
-		r = c.cache.revalidate(r, shapeOf(req.Into), mode, &rv)
-	}
+	r = prepare(r)
 	client := c.read
 	if req.mutates() {
 		if paceErr := c.pace(ctx); paceErr != nil {
-			return nil, rv, paceErr
+			return nil, paceErr
 		}
 		client = c.mutate
 	}
-	resp, err := client.Do(r)
-	return resp, rv, err
+	return client.Do(r)
 }
 
 // credentialError keeps a credential source's own failure from reading as an
@@ -1817,4 +1808,95 @@ func upstreamRequestID(header http.Header) string {
 		}
 	}
 	return ""
+}
+
+// familyFields are the fields a family reads from a served answer. GitHub's 304
+// omits Link (measured); [Response.Revalidated] tells the family so.
+var familyFields = []httpclient.HeldField{
+	{Name: "Link"},
+	{Name: "X-Next-Page", Required: true},
+	{Name: "X-Total-Count", Required: true},
+	{Name: "X-Gitlab-Meta", Required: true},
+	{Name: "X-Gitea-Version", Required: true},
+	{Name: "X-Forgejo-Version", Required: true},
+}
+
+// ownedBody encodes v and copies it out of the encoder's backing array.
+func ownedBody(v any) ([]byte, error) {
+	body, err := marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.Clone(body), nil
+}
+
+// shapeOf names the Go type a body decodes into, which is what the kept projection
+// answers for.
+func shapeOf(v any) string {
+	return fmt.Sprintf("%T", v)
+}
+
+// cacheNoteKey carries the per-request record's cache attribute.
+type cacheNoteKey struct{}
+
+// The values of the record's cache attribute.
+const (
+	cacheMissed int32 = iota + 1
+	cacheHit
+)
+
+func noteCache(ctx context.Context, v int32) {
+	if note, ok := ctx.Value(cacheNoteKey{}).(*atomic.Int32); ok {
+		note.Store(v)
+	}
+}
+
+// cacheNoted is the record's cache attribute, as [httpclient.CacheState] counts: hit for a
+// read the held answer served, miss for any other cacheable read the instance
+// answered in full, off for every other line, a failure in transit included.
+func cacheNoted(ctx context.Context) string {
+	note, ok := ctx.Value(cacheNoteKey{}).(*atomic.Int32)
+	if !ok {
+		return "off"
+	}
+	switch note.Load() {
+	case cacheHit:
+		return "hit"
+	case cacheMissed:
+		return "miss"
+	}
+	return "off"
+}
+
+// cacheable reports whether a request is a read the cache may revalidate: a GET of
+// a REST route naming the value it decodes into, outside a write. A document is a
+// POST; the cache leaves a no-store request uncached, and keeps nothing when off.
+func cacheable(ctx context.Context, req *Request) bool {
+	return req.Method == http.MethodGet && !req.Document && !writes(ctx) && req.Into != nil
+}
+
+// isValidator reports whether name is If-None-Match or If-Modified-Since, however
+// it is cased.
+func isValidator(name string) bool {
+	switch http.CanonicalHeaderKey(name) {
+	case "If-None-Match", "If-Modified-Since":
+		return true
+	}
+	return false
+}
+
+// carriesValidator reports whether h has a validator line with text under any
+// name net/http sends it by; an empty line names nothing (RFC 9110 section 5.6.1).
+func carriesValidator(h http.Header) bool {
+	for name, lines := range h {
+		if isValidator(name) && hasText(lines) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasText reports whether any of a field's lines is not empty.
+func hasText(lines []string) bool {
+	return slices.ContainsFunc(lines, func(line string) bool { return line != "" })
 }

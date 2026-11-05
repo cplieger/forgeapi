@@ -222,8 +222,7 @@ const (
 	// proxies over, or a [Header] entry with an empty name, or with a name or a
 	// value outside net/http's field grammar, which the transport would refuse
 	// on every request. It is the catch-all for a malformed connection and never
-	// the answer where a refusal below names the cause. It is also a
-	// readcache.NewTransport given no round tripper to send through.
+	// the answer where a refusal below names the cause.
 	CodeConnectionInvalid = "connection_invalid"
 	// CodeAnonymousRefused is a client built with no [CredentialSource], whose
 	// requests would be anonymous. It is its own code because its remedy is a
@@ -243,8 +242,8 @@ const (
 	// cannot offer without knowing that this was the refusal.
 	CodePrivateAddressRefused = "private_address_refused"
 	// CodeBudgetInvalid is a NEGATIVE value passed to one of the budget options,
-	// [WithMutationReserve], [WithRefreshLead] and readcache.WithMaxBytes included,
-	// the last two refused by the creds package's source and readcache.NewTransport.
+	// [WithMutationReserve] and [WithRefreshLead] included, the last refused by the
+	// creds package's source.
 	// It is refused rather than defaulted, because a negative deadline would expire
 	// every operation on the client and a negative bound, reserve or lead would read
 	// as a limit nobody set. A ZERO is never this refusal: with one configuration

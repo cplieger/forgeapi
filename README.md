@@ -1,10 +1,10 @@
 # forgeapi
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/forgeapi.svg)](https://pkg.go.dev/github.com/cplieger/forgeapi) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/forgeapi)](https://github.com/cplieger/forgeapi/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/forgeapi/badges/mutation.json)](https://github.com/cplieger/forgeapi/issues?q=label%3Agremlins-tracker)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/forgeapi/v2.svg)](https://pkg.go.dev/github.com/cplieger/forgeapi/v2) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/forgeapi)](https://github.com/cplieger/forgeapi/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/forgeapi/badges/mutation.json)](https://github.com/cplieger/forgeapi/issues?q=label%3Agremlins-tracker)
 
 forgeapi lets your Go code read and write pull requests, issues, merges, checks, releases and labels on GitHub, GitLab, Gitea and Forgejo through one set of types.
 
-It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It has no operations for comments, reviews or file contents. It needs Go 1.27.2 or later, is at v1 and is licensed under Apache-2.0. It depends only on filesafe, httpclient, jsonx, textsafe, ssrf and urlform, six modules by the same author.
+It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It has no operations for comments, reviews or file contents. It needs Go 1.27.2 or later, is at v2 and is licensed under Apache-2.0. It depends only on filesafe, httpclient, jsonx, textsafe, ssrf and urlform, six modules by the same author.
 
 ## Why use it
 
@@ -15,14 +15,13 @@ forgeapi is built for Go tools that span several forges.
 - It serves github.com, gitlab.com, and Gitea and Forgejo instances. GitHub Enterprise Server and self-managed GitLab run the same code but were not [measured](docs/tested-against.md).
 - A client [paces itself to the rate limit](docs/request-prices.md), [revalidates what it read before](docs/read-cache.md) where the forge sends validators, so an unchanged REST list on GitHub costs no request when the request carries an `Authorization` header (GraphQL documents are never cached), and [reports a repository that moved](docs/renames.md).
 - `creds` runs the OAuth device flow on GitHub and GitLab and refreshes tokens. `gitcred` hands them to git.
-- `readcache` puts the same read cache on an HTTP client of your own, for routes no operation covers.
 
 Consider [go-github](https://github.com/google/go-github) if you target GitHub alone and want services that mirror its API documentation. Consider [go-scm](https://github.com/drone/go-scm) if you need Bitbucket, Gitee or Gogs, or comment and file endpoints. Consider [git-pkgs/forge](https://github.com/git-pkgs/forge) if you need reviews, branches, Bitbucket Cloud or Gerrit, or a command-line tool.
 
 ## Install
 
 ```sh
-go get github.com/cplieger/forgeapi@latest
+go get github.com/cplieger/forgeapi/v2@latest
 ```
 
 ## Usage
@@ -64,7 +63,7 @@ The `github`, `gitlab` and `gitea` packages each hold one client, and `gitea` se
 - Every list answers a `Page` with a `Next` cursor, and [Pages and continuations](docs/pagination.md) covers short pages and resuming.
 - `creds` holds the device flow, the refreshing source and the file store. `gitcred` holds the git credential helper.
 
-Per-symbol detail is on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi).
+Per-symbol detail is on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v2).
 
 ## Every call answers nil, an Error or a context error
 
@@ -100,7 +99,7 @@ forgeapi leaves these out on purpose. [Non-goals](docs/non-goals.md) gives the r
 - [Lists across repositories](docs/cross-repository-lists.md) covers `ListMyPRs` and `ListMyIssues`.
 - [Renamed and moved repositories](docs/renames.md) says what a call answers after a move.
 - [Request prices and the budget](docs/request-prices.md) covers call costs and pacing.
-- [The read cache](docs/read-cache.md) covers revalidated reads, the memory bound and `readcache` for your own requests.
+- [The read cache](docs/read-cache.md) covers revalidated reads and the memory bound.
 - [Credentials](docs/credentials.md) covers sign-in, token refresh, the store and the git credential helper.
 - [Tested against](docs/tested-against.md) lists the measured instances and versions.
 - [Non-goals](docs/non-goals.md) explains what is left out and why.

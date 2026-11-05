@@ -3,7 +3,7 @@ package forgeapi_test
 import (
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 func TestEvidenceSource_String_renders_the_wire_spelling(t *testing.T) {
