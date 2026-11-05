@@ -47,7 +47,7 @@ A `304` that answers a request carrying no validator has nothing to be served fr
 
 ## The key
 
-Each client has a cache of its own, so two clients never share an entry. An entry's key is a SHA-256 digest of a digest of the token the request carried, the method, the host and the request URL, every other request header but the validators, such as `Accept`, `User-Agent` and the API version, and the Go type the answer decodes into. Every attempt is checked against the request the key describes before it is sent, and every answer against the request it reports it answered, so an answer is never served to, or kept from, a request with another credential or header. The token itself is never kept. A rotated token starts with nothing held, so it never revalidates an answer another credential received.
+Each client has a cache of its own, so two clients never share an entry. An entry's key is a SHA-256 digest of a digest of the request's `Authorization` lines, the method, the host and the request URL, every other request header but the validators, such as `Accept`, `User-Agent` and the API version, and the Go type the answer decodes into. Every attempt is checked against the request the key describes before it is sent, and every answer against the request it reports it answered, so an answer is never served to, or kept from, a request with another credential or header. The token itself is never kept. A rotated token starts with nothing held, so it never revalidates an answer another credential received.
 
 ## Memory
 
