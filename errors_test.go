@@ -3,7 +3,7 @@ package forgeapi_test
 import (
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 func TestError_Error_renders_only_the_parts_present(t *testing.T) {

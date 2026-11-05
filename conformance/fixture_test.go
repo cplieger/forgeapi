@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // TestEveryCaseHasALoadableFixture holds the fixture set to the table's shape and to

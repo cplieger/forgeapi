@@ -68,20 +68,4 @@ A request observer and an attempt observer see the `304` answers as the instance
 
 ## Caching requests your own client sends
 
-For a route no forgeapi operation covers, `readcache.NewTransport(next, opts...)` puts this same cache on an `http.RoundTripper` you build. It is one implementation with the cache above: the same validators, the same rules for when a `304` serves the held copy, the same bound and eviction. It knows nothing of any forge, so you state what this page otherwise takes from the product:
-
-- `readcache.WithFreeNotModified(true)` where the server bills nothing for a `304` to a conditional request carrying an `Authorization` header, as GitHub's REST API does. It decides only what `Saved` counts. Default: false.
-- `readcache.WithMaxBytes(n)` bounds what it holds, and `0` switches it off. Default: `DefaultReadCacheBytes`. A negative bound is refused.
-- `readcache.WithHeldFields(names...)` names the response header fields you read from a served answer, such as `Link` for paging. A held field the `304` carries takes the `304`'s value, and one it omits keeps the held value, which the `304` did not confirm. A field sent on several lines, such as `Set-Cookie`, keeps each line. Every other field of a served answer is the `304`'s own. Default: none.
-
-The transport differs from a client's cache only where it has to:
-
-- It revalidates a `GET` carrying no validator of its own in `If-None-Match` or `If-Modified-Since`. Every other request, a conditional one you built included, goes to `next` as given.
-- The key is a SHA-256 digest of the request's `Authorization` lines, its host, its URL and every other request header but the validators, `User-Agent` included, however each header name is cased. Requests with different credentials never share an entry, and the credential is never kept.
-- It keeps the body as `next` delivers it, decoded where `next` decoded it, up to a quarter of the bound. It does not keep an answer larger than that, one with a `Content-Encoding`, because the `304` that later serves it need not repeat the coding, or any answer this page says is never cached, and such an answer forgets what was held for the request. Each redirect hop your client follows is a request of its own.
-- A served answer reaches you as a `200` with the held body, the `304`'s headers but its `Content-Length` and `Content-Encoding`, and the held fields.
-- A `304` nothing held may serve is sent once more without a validator, as above, with the cache switched off or the request carrying `no-store` too. A second `304` reaches you as the `304` it is.
-- A read whose request context ends before the transport returns, even after its answer was read in full and whatever that answer was, answers the context's error and keeps nothing.
-- `State()` reports `Hits`, `Misses`, `Saved` and `Bytes` as `BudgetState().ReadCache` does. `Misses` counts every other `GET` it looked up that the server answered, an error status included.
-
-An observer you wrap around `next` sees every request that reaches the server and a `304` as the `304` it is; one around the transport sees a served answer as a `200`. Each answer from `next` must report the request it answered as its `Request`, as `net/http`'s `Transport` does. An answer to a request `next` changed, or one naming no request, is neither served from the held copy nor kept. So a round tripper that sets a credential or any other request header, such as an OAuth or signing transport, wraps the transport rather than sitting inside `next`, where the key would not see what it sets. The transport never answers without the server. It is only the cache: your requests get none of a client's pacing, retries, budget, error mapping or address policy, which stay whatever `next` does.
+For a route no forgeapi operation covers, put `httpclient.NewCacheRoundTripper` from [`github.com/cplieger/go/httpclient`](https://github.com/cplieger/go/tree/HEAD/httpclient) on an `http.RoundTripper` you build. It is the cache this page describes, with the same validators, the same rules for when a `304` serves the held copy, and the same bound and eviction. Its [caching guide](https://github.com/cplieger/go/blob/HEAD/httpclient/docs/caching.md) states what you configure in place of the product: whether a `304` is free, the memory bound and the header fields a served answer holds.

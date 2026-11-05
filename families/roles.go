@@ -1,10 +1,10 @@
 package families
 
 import (
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/gitea"
-	"github.com/cplieger/forgeapi/github"
-	"github.com/cplieger/forgeapi/gitlab"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/gitea"
+	"github.com/cplieger/forgeapi/v2/github"
+	"github.com/cplieger/forgeapi/v2/gitlab"
 )
 
 // The aggregate half of the role contract: every role each family claims,

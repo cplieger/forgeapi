@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/gitea"
-	"github.com/cplieger/forgeapi/github"
-	"github.com/cplieger/forgeapi/gitlab"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/gitea"
+	"github.com/cplieger/forgeapi/v2/github"
+	"github.com/cplieger/forgeapi/v2/gitlab"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // Open builds a client for conn by asking GitLab's connection read, then GitHub's, then the

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/internal/surface"
+	"github.com/cplieger/forgeapi/v2/internal/surface"
 )
 
 const (
@@ -71,8 +71,6 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"## package gitea (./gitea)",
 		"## package github (./github)",
 		"## package gitlab (./gitlab)",
-		"## package readcache (./readcache)",
-		"func NewTransport(next http.RoundTripper, opts ...Option) (*Transport, error)",
 		"type Core interface {",
 		"type Support int",
 		"const SupportUnknown Support = iota",
@@ -236,9 +234,6 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 		{fn: "WithSince", defaultClause: "Default: no bound,", names: []string{"CodeListSinceInvalid"}},
 		{fn: "WithMergeState", defaultClause: "Default: true.", names: []string{"CodeListMergeStateInvalid"}},
 		{fn: "WithReadCache", defaultClause: "Default: [DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and sends every read unconditionally.", names: []string{"CodeBudgetInvalid"}},
-		{file: "readcache/transport.go", fn: "WithMaxBytes", defaultClause: "Default: [forgeapi.DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and adds no validator,", names: []string{"CodeBudgetInvalid"}},
-		{file: "readcache/transport.go", fn: "WithFreeNotModified", defaultClause: "Default: false,"},
-		{file: "readcache/transport.go", fn: "WithHeldFields", defaultClause: "Default: none."},
 	} {
 		t.Run(test.fn, func(t *testing.T) {
 			file := cmp.Or(test.file, options)

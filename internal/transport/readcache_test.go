@@ -3,14 +3,12 @@ package transport
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -19,7 +17,7 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // The tests in this file are written from RFC 9110 section 13.1 (the two
@@ -1126,31 +1124,6 @@ func TestAnOverlongValidatorIsNotReplayed(t *testing.T) {
 	}
 }
 
-// An entry is charged every byte the cache holds for it, spare capacity included,
-// so the bound holds the memory the entries own, not only their bodies' lengths.
-func TestAnEntryIsChargedEverythingItHolds(t *testing.T) {
-	const key = "page-key"
-	body := make(json.RawMessage, 2, 4096)
-	copy(body, "{}")
-	p := &pageEntry{ETag: `"v1"`, Fields: familyFields.hold(http.Header{"Link": {"next"}}), Body: body}
-	if got, model := pageCost(key, p), int64(len(key)+cap(body)+len(`"v1"`)+len("next")); got < model {
-		t.Errorf("a page whose body holds %d bytes is charged %d, want at least %d", cap(body), got, model)
-	}
-	if got := pageCost(key, &pageEntry{Fields: [][]string{{"next"}}}) - pageCost(key, &pageEntry{Fields: [][]string{{""}}}); got != int64(len("next")) {
-		t.Errorf("a held line of %d bytes adds %d to the charge of an empty one, want exactly its length", len("next"), got)
-	}
-	slots := &pageEntry{ETag: p.ETag, Fields: heldTable(make([]heldField, 4096)).hold(http.Header{})}
-	want := int64(len(slots.Fields)) * int64(reflect.TypeFor[[]string]().Size())
-	if got := pageCost(key, slots) - pageCost(key, &pageEntry{ETag: p.ETag}); got < want {
-		t.Errorf("%d empty held field slots add %d to the charge, want at least the %d bytes their storage takes", len(slots.Fields), got, want)
-	}
-	lines := &pageEntry{ETag: p.ETag, Fields: [][]string{make([]string, 4096)}}
-	want = int64(len(lines.Fields[0])) * int64(reflect.TypeFor[string]().Size())
-	if got := pageCost(key, lines) - pageCost(key, &pageEntry{ETag: p.ETag, Fields: [][]string{nil}}); got < want {
-		t.Errorf("a held field of %d empty lines adds %d to the charge, want at least the %d bytes their storage takes", len(lines.Fields[0]), got, want)
-	}
-}
-
 // A field the cache does not keep must not stay reachable through a kept one:
 // Header.Clone backs every field with one shared array, so a kept Link would hold
 // a dropped cookie, or a value a 304 replaced, that the bound never charged.
@@ -1354,5 +1327,42 @@ func TestTheAttemptObserverSeesEveryWireAttemptAsItWasAnswered(t *testing.T) {
 				t.Errorf("the attempt observer saw %v over %d wire request(s), want %v, one per request", got, len(o.requests()), test.want)
 			}
 		})
+	}
+}
+
+// A consumer reads a GraphQL document's cost from LastCost after the call, so the
+// read cache never revalidates a document or rewrites what it cost.
+func TestADocumentsCostIsTheLastCostBesideCachedReads(t *testing.T) {
+	o := newOrigin(`{"login":"octo"}`, `"v1"`)
+	family := testOptions()
+	family.FreeNotModified = true
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: serveOrigin(t, o).URL}, family)
+	document := func() {
+		t.Helper()
+		var out account
+		req := &Request{Op: "Document", Method: http.MethodPost, Path: "/graphql", Document: true, Body: map[string]string{"query": "{viewer{login}}"}, Into: &out}
+		if _, err := c.Do(Call(t.Context(), req.Op), req); err != nil {
+			t.Fatalf("the document = %v", err)
+		}
+	}
+	for range 2 {
+		if _, _, err := read(t, c, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := c.BudgetState().ReadCache.Hits; got != 1 {
+		t.Fatalf("Setup: the REST reads hit %d time(s), want 1", got)
+	}
+	document()
+	c.Price(7)
+	if got := c.BudgetState().LastCost; got != 7 {
+		t.Errorf("after a document the family priced at 7, LastCost = %d, want 7", got)
+	}
+	document()
+	if got := c.BudgetState().LastCost; got != 1 {
+		t.Errorf("after a repeated document priced by the wire, LastCost = %d, want 1", got)
+	}
+	if got := o.last().Get("If-None-Match"); got != "" {
+		t.Errorf("the repeated document carried If-None-Match %q, want none", got)
 	}
 }

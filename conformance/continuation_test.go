@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // mintBound is the page bound every continuation below is minted at: small enough

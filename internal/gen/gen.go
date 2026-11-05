@@ -18,7 +18,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 const (
@@ -370,7 +370,7 @@ func renderSupport() []byte {
 	out.WriteString("Either no family implements the operation there, or the measured instance answered it in a way the normalized contract does not cover. ")
 	out.WriteString("In that second case, the operation's godoc states the difference field by field.\n\n")
 	out.WriteString("`unsupported` says the product has no such operation, and no implementation can change that.\n\n")
-	out.WriteString("Where a product departs from the normalized contract, the operation's own godoc on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi) lists each departure, so this table holds only the status.\n\n")
+	out.WriteString("Where a product departs from the normalized contract, the operation's own godoc on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v2) lists each departure, so this table holds only the status.\n\n")
 	out.WriteString("| Operation |")
 	for _, product := range spec.Products {
 		out.WriteString(" " + string(product) + " |")

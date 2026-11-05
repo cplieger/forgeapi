@@ -1,4 +1,4 @@
-module github.com/cplieger/forgeapi
+module github.com/cplieger/forgeapi/v2
 
 go 1.27.3
 
