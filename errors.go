@@ -73,8 +73,8 @@ var _ fmt.Stringer = ErrorKind(0)
 // constant and fails the build on any movement. That is also what holds the one
 // growth rule a 1.0 owes: a spelling can be ADDED and never changed or removed.
 // No count of this block appears anywhere, deliberately: a total is a number
-// every new refusal renegotiates, and it was never the gate. A reader who wants
-// the list reads the generated surface file or this block.
+// every new refusal renegotiates, and it was never the gate. Codes returns the
+// list; TestCodes_ListsTheBlock holds it to this block.
 const (
 	// CodeRepoRefInvalid is a decoded repository selector that failed
 	// validation. It is answered before any request.
@@ -366,6 +366,56 @@ const (
 	// runs no device grant for. It is refused before any request.
 	CodeGrantUnsupported = "grant_unsupported"
 )
+
+// Codes returns every declared Code constant's string, in declaration order. A
+// spelling is only ever added, so a later release returns a superset.
+func Codes() []string {
+	return []string{
+		CodeRepoRefInvalid,
+		CodeRepoRefStale,
+		CodeRepoOrPRNotVisible,
+		CodePRNotFound,
+		CodeOwnerUnresolved,
+		CodeNotMergeable,
+		CodeMissingSHA,
+		CodeNoMergePermission,
+		CodeStrategyNotAllowed,
+		CodeStaleHead,
+		CodeValidation,
+		CodeLabelPageTruncated,
+		CodeBranchCannotMerge,
+		CodeRepoArchived,
+		CodeScopeInsufficient,
+		CodeAlreadyEnqueued,
+		CodeAPIVersionRetired,
+		CodeMutationsDisabled,
+		CodeRedirectHopCap,
+		CodeRedirectPortRefused,
+		CodeTLSRefused,
+		CodeUnreachable,
+		CodeResponseTooLarge,
+		CodeConnectionInvalid,
+		CodeAnonymousRefused,
+		CodePlaintextRefused,
+		CodePrivateAddressRefused,
+		CodeBudgetInvalid,
+		CodePageBoundInvalid,
+		CodeListStateInvalid,
+		CodeListOwnerInvalid,
+		CodeListSinceInvalid,
+		CodeListMergeStateInvalid,
+		CodeRunUndated,
+		CodeCursorInvalid,
+		CodeRefInvalid,
+		CodeHeaderReserved,
+		CodeCapabilityUnsupported,
+		CodeFamilyUndetected,
+		CodeReconnectRequired,
+		CodeGrantDenied,
+		CodeGrantExpired,
+		CodeGrantUnsupported,
+	}
+}
 
 // DiagIDLength is the rendered length of [Error.DiagID]: 13 base32 characters,
 // because base32 carries 5 bits per character and 64 random bits need 13.
