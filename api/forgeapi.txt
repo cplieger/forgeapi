@@ -119,6 +119,7 @@ const CodeStrategyNotAllowed = "strategy_not_allowed"
 const CodeTLSRefused = "tls_refused"
 const CodeUnreachable = "instance_unreachable"
 const CodeValidation = "validation"
+func Codes() []string
 type CommitChecks struct {
 	Ref string
 	Contexts []CheckContext
