@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// admitted is every module this library's dependency set may contain: the five the
+// admitted is every module this library's dependency set may contain: the six the
 // transport is assembled from, the one the file-backed credential store is, and the
 // transitive closure those bring with them.
 //
@@ -20,6 +20,7 @@ import (
 var admitted = map[string]string{
 	"github.com/cplieger/forgeapi/v2":   "the main module",
 	"github.com/cplieger/go/httpclient": "retry, jittered backoff, retry-after parsing, transient classification, the retrying round tripper, the client constructor, the bounded body read, the drain and secret redaction",
+	"github.com/cplieger/go/httpcache":  "the read cache: the held answers, their revalidation and the guard that keeps an observed request out of them",
 	"github.com/cplieger/go/ssrf":       "the base transport: address policy, dialer control, per-phase attempt bounds and the port allowlist",
 	"github.com/cplieger/go/jsonx":      "bounding what an untrusted response costs to decode",
 	"github.com/cplieger/go/textsafe":   "sanitizing and bounding untrusted upstream text at the emit site",

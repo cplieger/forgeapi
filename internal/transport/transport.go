@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/httpcache"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/jsonx"
 	"github.com/cplieger/go/ssrf"
@@ -121,7 +122,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	read       *http.Client
 	mutate     *http.Client
 	gov        *governor
-	cache      *httpclient.Cache
+	cache      *httpcache.Cache
 	counters   forgeapi.Counters
 	headers    []forgeapi.Header
 	budget     forgeapi.Budget
@@ -208,11 +209,11 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 	// answered: a repeated attempt spends the user's quota exactly as an answered
 	// one does.
 	base = pricedTransport{next: base, freeNotModified: opts.FreeNotModified}
-	base = httpclient.CacheGuard(base)
+	base = httpcache.Guard(base)
 	// The attempt hook sits beneath the retry round tripper, so it sees one call
 	// per attempt. The request hook sits above it, installed on the client below,
 	// so it sees one call per logical request whatever the attempt count. Both sit
-	// above the cache guard ([httpclient.CacheGuard]), which must see a request as
+	// above the cache guard ([httpcache.Guard]), which must see a request as
 	// either hook passes it on.
 	if set.AttemptObserver != nil {
 		base = set.AttemptObserver(base)
@@ -241,7 +242,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		mutations:  set.Mutations,
 	}
 	c.gov = newGovernor(set, &c.counters, opts.Family, opts.Clock, opts.PoolParent)
-	c.cache = httpclient.NewCache(httpclient.CacheConfig{Held: familyFields, MaxBytes: cmp.Or(set.ReadCacheBytes, -1), FreeNotModified: opts.FreeNotModified})
+	c.cache = httpcache.New(httpcache.Config{Held: familyFields, MaxBytes: cmp.Or(set.ReadCacheBytes, -1), FreeNotModified: opts.FreeNotModified})
 
 	policy := c.redirectPolicy(web, set)
 	c.read = httpclient.NewRetry(base, policy, httpclient.TransportConfig{
@@ -999,9 +1000,9 @@ func (r *Response) Quote(text string) string {
 
 // Do issues one request, maps its outcome and records what it cost. While the read
 // cache is on, a REST GET outside [CallWrite] that names [Request.Into], carries no
-// no-store and is not changed by an observer ([httpclient.CacheGuard]) is
+// no-store and is not changed by an observer ([httpcache.Guard]) is
 // revalidated, and a 304 the cache vouches for is served from the held answer
-// ([httpclient.CacheRead.Serve], docs/read-cache.md).
+// ([httpcache.Read.Serve], docs/read-cache.md).
 //
 // What the call spent is published on EVERY arm it leaves by, the two refusals that
 // send nothing included: it is the last CALL's price, so one that sent nothing is 0.
@@ -1068,7 +1069,7 @@ func (e *undecodable) Error() string { return "response body did not decode: " +
 // verdict: a served one answers from the held entry, a refused one is mapped like
 // any other refusal, and a success is decoded into [Request.Into] and offered to
 // the cache, which [Conn.Do] finishes once for the whole exchange.
-func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *http.Response, x *httpclient.CacheRead, token string, sendErr error, started time.Time) (*Response, error) {
+func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *http.Response, x *httpcache.Read, token string, sendErr error, started time.Time) (*Response, error) {
 	if sendErr != nil {
 		return refusedHop(resp), c.transportError(ctx, req, sendErr, started)
 	}
@@ -1112,8 +1113,8 @@ func bodyLimit(req *Request) int64 {
 // readConfig is the read cache's view of req: a REST GET whose 304 nothing held
 // may serve is sent once more, and a discarded answer's rate headers reach the
 // governor.
-func (c *Conn) readConfig(ctx context.Context, req *Request) httpclient.CacheReadConfig {
-	return httpclient.CacheReadConfig{
+func (c *Conn) readConfig(ctx context.Context, req *Request) httpcache.ReadConfig {
+	return httpcache.ReadConfig{
 		Variant:   shapeOf(req.Into),
 		Store:     cacheable(ctx, req),
 		Resend:    req.Method == http.MethodGet && !req.Document,
@@ -1812,7 +1813,7 @@ func upstreamRequestID(header http.Header) string {
 
 // familyFields are the fields a family reads from a served answer. GitHub's 304
 // omits Link (measured); [Response.Revalidated] tells the family so.
-var familyFields = []httpclient.HeldField{
+var familyFields = []httpcache.HeldField{
 	{Name: "Link"},
 	{Name: "X-Next-Page", Required: true},
 	{Name: "X-Total-Count", Required: true},
@@ -1851,7 +1852,7 @@ func noteCache(ctx context.Context, v int32) {
 	}
 }
 
-// cacheNoted is the record's cache attribute, as [httpclient.CacheState] counts: hit for a
+// cacheNoted is the record's cache attribute, as [httpcache.State] counts: hit for a
 // read the held answer served, miss for any other cacheable read the instance
 // answered in full, off for every other line, a failure in transit included.
 func cacheNoted(ctx context.Context) string {

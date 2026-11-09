@@ -12,7 +12,7 @@ The same reason applies. A route added from outside also cannot appear in the ge
 
 ## A vendor SDK behind any client
 
-Each SDK's types would reach this library's signatures through the answers they return. That would put four other compatibility promises on this library's own. For the same reason, outside its tests forgeapi imports the six modules it depends on only from packages under `internal/`, so none of their types appears in an exported signature.
+Each SDK's types would reach this library's signatures through the answers they return. That would put four other compatibility promises on this library's own. For the same reason, outside its tests forgeapi imports the seven modules it depends on only from packages under `internal/`, so none of their types appears in an exported signature.
 
 ## Receiving webhooks
 
