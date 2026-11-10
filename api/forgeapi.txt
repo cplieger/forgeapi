@@ -625,7 +625,7 @@ type AppSource struct {
 	// contains unexported members
 }
 func (s *AppSource) Discard(token string) (retry bool)
-func (s *AppSource) Kind() forgeapi.CredKind
+func (*AppSource) Kind() forgeapi.CredKind
 func (s *AppSource) Mint(ctx context.Context) (InstallationToken, error)
 func (s *AppSource) Resolve(ctx context.Context) (int64, error)
 func (s *AppSource) State() forgeapi.CredState

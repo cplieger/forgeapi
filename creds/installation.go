@@ -14,8 +14,8 @@ import (
 type selector int
 
 const (
-	// selectNone is the zero Installation, which names nothing and is refused.
-	selectNone selector = iota
+	// The zero Installation names nothing and is refused.
+	_ selector = iota
 	selectByID
 	selectUser
 	selectOrg

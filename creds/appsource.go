@@ -176,7 +176,7 @@ func (s *AppSource) Token(ctx context.Context) (string, error) {
 }
 
 // Kind answers [forgeapi.CredKindAppInstallation].
-func (s *AppSource) Kind() forgeapi.CredKind { return forgeapi.CredKindAppInstallation }
+func (*AppSource) Kind() forgeapi.CredKind { return forgeapi.CredKindAppInstallation }
 
 // State answers where the source sits without sending anything: reconnect
 // required after a terminal answer until a mint succeeds, valid while the
