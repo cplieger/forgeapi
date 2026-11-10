@@ -1,6 +1,7 @@
-// Package creds is the credential machinery behind a forgeapi connection: the
-// refresh state machine a rotating OAuth credential runs under, the OAuth device
-// grant that mints one, and the file-backed store both of them read.
+// Package creds is the credential machinery behind a forgeapi connection:
+// stored credentials, a personal access token or a rotating OAuth grant with
+// its refresh machine, device grant and file store; and derived ones, a GitHub
+// App's installation tokens, minted from its key.
 //
 // The vocabulary it implements, [forgeapi.CredentialSource], [forgeapi.CredKind]
 // and [forgeapi.CredState], is the root package's. Nothing here reads the

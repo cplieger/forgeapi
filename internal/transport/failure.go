@@ -38,17 +38,13 @@ func failureOf(err error) (code string, kind forgeapi.ErrorKind) {
 	return forgeapi.CodeUnreachable, forgeapi.KindTransient
 }
 
-// transportError maps a failure that never reached a status. The operation's own
-// context having ended is the third arm of the three-way error contract, returned
-// UNCHANGED; a sentinel in the chain while that context is live is a dial timeout
-// (net's timeout error matches context.DeadlineExceeded) and is classified like
-// any other unreachable instance, so its host is not lost.
-//
-// A refusal this library itself produced below the call is recovered rather than
-// rebuilt. The redirect policy answers a *forgeapi.Error, net/http wraps whatever
-// a policy returns in *url.Error, and stringifying that chain would turn a
-// permanent containment refusal into a retryable unreachable one, and a stale
-// reference would lose its successor.
+// transportError maps a failure that never reached a status. The operation's
+// own context having ended is returned unchanged; a sentinel in the chain while
+// that context is live is a dial timeout, classified as unreachable so its host
+// is kept. A *forgeapi.Error this library produced below the call, such as the
+// redirect policy's inside net/http's *url.Error, is recovered rather than
+// rebuilt, so a containment refusal stays permanent and a stale reference keeps
+// its successor.
 func (c *Conn) transportError(ctx context.Context, req *Request, err error, started time.Time) error {
 	if ctxErr := ctx.Err(); ctxErr != nil && contextSentinel(err) != nil {
 		c.log(ctx, req, exchange(req), 0, "", "", forgeapi.KindUnknown, nil, started, ctxErr.Error(), true)

@@ -14,7 +14,7 @@ import (
 )
 
 // The source is the forgeapi.CredentialSource a client runs behind.
-var _ forgeapi.CredentialSource = (*creds.Source)(nil)
+var _ forgeapi.CredentialSource = (*creds.StoredSource)(nil)
 
 // The file store is the store every case below runs over.
 var _ creds.Store = (*creds.FileStore)(nil)
@@ -38,7 +38,7 @@ var refreshArms = []struct {
 	{family: forgeapi.FamilyGitLab, path: "/oauth/token", rotated: gitlabRotated},
 }
 
-func TestSource_hands_over_a_static_token_without_a_request(t *testing.T) {
+func TestStoredSource_hands_over_a_static_token_without_a_request(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	save(t, store, "conn", creds.Record{
@@ -62,7 +62,7 @@ func TestSource_hands_over_a_static_token_without_a_request(t *testing.T) {
 	}
 }
 
-func TestSource_requires_a_reconnect_for_a_static_token_past_its_expiry(t *testing.T) {
+func TestStoredSource_requires_a_reconnect_for_a_static_token_past_its_expiry(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	save(t, store, "conn", creds.Record{
@@ -83,7 +83,7 @@ func TestSource_requires_a_reconnect_for_a_static_token_past_its_expiry(t *testi
 	}
 }
 
-func TestSource_hands_over_a_fresh_rotating_token_without_a_request(t *testing.T) {
+func TestStoredSource_hands_over_a_fresh_rotating_token_without_a_request(t *testing.T) {
 	for _, arm := range refreshArms {
 		t.Run(arm.family.String(), func(t *testing.T) {
 			ep := newEndpoint(t, unreachable(t))
@@ -107,7 +107,7 @@ func TestSource_hands_over_a_fresh_rotating_token_without_a_request(t *testing.T
 
 // A lifetime shorter than the lead would make every fresh token due on arrival,
 // so the lead is clamped to half the lifetime the record was issued with.
-func TestSource_clamps_the_lead_to_half_a_short_lifetime(t *testing.T) {
+func TestStoredSource_clamps_the_lead_to_half_a_short_lifetime(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	// Four minutes of life, all of it left: inside the default five-minute lead,
@@ -123,7 +123,7 @@ func TestSource_clamps_the_lead_to_half_a_short_lifetime(t *testing.T) {
 	}
 }
 
-func TestSource_is_due_inside_the_clamped_lead_of_a_short_lifetime(t *testing.T) {
+func TestStoredSource_is_due_inside_the_clamped_lead_of_a_short_lifetime(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	// One minute left of four: inside half the lifetime.
@@ -135,7 +135,7 @@ func TestSource_is_due_inside_the_clamped_lead_of_a_short_lifetime(t *testing.T)
 	}
 }
 
-func TestSource_takes_the_refresh_lead_from_the_option(t *testing.T) {
+func TestStoredSource_takes_the_refresh_lead_from_the_option(t *testing.T) {
 	tests := []struct {
 		opts []forgeapi.Option
 		name string
@@ -168,7 +168,7 @@ func TestSource_takes_the_refresh_lead_from_the_option(t *testing.T) {
 	}
 }
 
-func TestSource_rotates_the_whole_record_when_due(t *testing.T) {
+func TestStoredSource_rotates_the_whole_record_when_due(t *testing.T) {
 	for _, arm := range refreshArms {
 		t.Run(arm.family.String(), func(t *testing.T) {
 			ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, arm.rotated })
@@ -207,7 +207,7 @@ func TestSource_rotates_the_whole_record_when_due(t *testing.T) {
 	}
 }
 
-func TestSource_takes_both_expiries_from_the_github_response(t *testing.T) {
+func TestStoredSource_takes_both_expiries_from_the_github_response(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, githubRotated })
 	store, _ := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -226,7 +226,7 @@ func TestSource_takes_both_expiries_from_the_github_response(t *testing.T) {
 	}
 }
 
-func TestSource_takes_the_gitlab_expiry_from_the_response_and_no_refresh_expiry(t *testing.T) {
+func TestStoredSource_takes_the_gitlab_expiry_from_the_response_and_no_refresh_expiry(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, gitlabRotated })
 	store, _ := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitLab, ep.srv.URL, 2*time.Hour, time.Minute))
@@ -245,7 +245,7 @@ func TestSource_takes_the_gitlab_expiry_from_the_response_and_no_refresh_expiry(
 	}
 }
 
-func TestSource_sends_the_github_refresh_with_no_secret_and_no_scope(t *testing.T) {
+func TestStoredSource_sends_the_github_refresh_with_no_secret_and_no_scope(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, githubRotated })
 	store, _ := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -265,7 +265,7 @@ func TestSource_sends_the_github_refresh_with_no_secret_and_no_scope(t *testing.
 	}
 }
 
-func TestSource_sends_the_gitlab_refresh_with_no_secret_no_scope_and_no_redirect(t *testing.T) {
+func TestStoredSource_sends_the_gitlab_refresh_with_no_secret_no_scope_and_no_redirect(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, gitlabRotated })
 	store, _ := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitLab, ep.srv.URL, 2*time.Hour, time.Minute))
@@ -308,7 +308,7 @@ func checkRefreshRequest(t *testing.T, x exchange, path string) {
 	}
 }
 
-func TestSource_requires_a_reconnect_after_a_terminal_refresh_answer(t *testing.T) {
+func TestStoredSource_requires_a_reconnect_after_a_terminal_refresh_answer(t *testing.T) {
 	tests := []struct {
 		body   string
 		family forgeapi.Family
@@ -346,7 +346,7 @@ func TestSource_requires_a_reconnect_after_a_terminal_refresh_answer(t *testing.
 	}
 }
 
-func TestSource_requires_a_reconnect_for_a_refresh_token_past_its_own_expiry(t *testing.T) {
+func TestStoredSource_requires_a_reconnect_for_a_refresh_token_past_its_own_expiry(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	rec := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute)
@@ -366,7 +366,7 @@ func TestSource_requires_a_reconnect_for_a_refresh_token_past_its_own_expiry(t *
 	}
 }
 
-func TestSource_hands_over_a_rotating_token_with_no_refresh_token_until_it_expires(t *testing.T) {
+func TestStoredSource_hands_over_a_rotating_token_with_no_refresh_token_until_it_expires(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	rec := rotating(forgeapi.FamilyGitLab, ep.srv.URL, 2*time.Hour, 2*time.Hour)
@@ -379,7 +379,7 @@ func TestSource_hands_over_a_rotating_token_with_no_refresh_token_until_it_expir
 	}
 }
 
-func TestSource_requires_a_reconnect_for_an_expired_token_with_no_refresh_token(t *testing.T) {
+func TestStoredSource_requires_a_reconnect_for_an_expired_token_with_no_refresh_token(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	rec := rotating(forgeapi.FamilyGitLab, ep.srv.URL, 2*time.Hour, -time.Minute)
@@ -395,7 +395,7 @@ func TestSource_requires_a_reconnect_for_an_expired_token_with_no_refresh_token(
 	}
 }
 
-func TestSource_requires_a_reconnect_for_a_key_with_no_record(t *testing.T) {
+func TestStoredSource_requires_a_reconnect_for_a_key_with_no_record(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	src := source(t, store, "never-connected", ep)
@@ -410,7 +410,7 @@ func TestSource_requires_a_reconnect_for_a_key_with_no_record(t *testing.T) {
 
 // A zero-valued record must not read as a static token that never needs
 // refreshing.
-func TestSource_requires_a_reconnect_for_a_record_of_unknown_kind(t *testing.T) {
+func TestStoredSource_requires_a_reconnect_for_a_record_of_unknown_kind(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	save(t, store, "conn", creds.Record{Family: forgeapi.FamilyGitHub, WebBaseURL: ep.srv.URL, Token: "token-old"})
@@ -424,7 +424,7 @@ func TestSource_requires_a_reconnect_for_a_record_of_unknown_kind(t *testing.T) 
 	}
 }
 
-func TestSource_keeps_the_still_valid_token_after_a_transient_refresh_failure(t *testing.T) {
+func TestStoredSource_keeps_the_still_valid_token_after_a_transient_refresh_failure(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) {
 		return http.StatusServiceUnavailable, `{"error":"temporarily_unavailable"}`
 	})
@@ -447,7 +447,7 @@ func TestSource_keeps_the_still_valid_token_after_a_transient_refresh_failure(t 
 	}
 }
 
-func TestSource_fails_a_transient_refresh_failure_once_the_token_has_expired(t *testing.T) {
+func TestStoredSource_fails_a_transient_refresh_failure_once_the_token_has_expired(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) {
 		return http.StatusServiceUnavailable, `{"error":"temporarily_unavailable"}`
 	})
@@ -496,7 +496,7 @@ func (g *gate) open() { g.opened.Do(func() { close(g.release) }) }
 // The refresh owner is the key's in its store, not a source's: a second source over
 // the same store waits on the refresh the first one holds, and fails at its own
 // deadline rather than sending a refresh of its own.
-func TestSource_refreshes_once_for_two_sources_on_one_key(t *testing.T) {
+func TestStoredSource_refreshes_once_for_two_sources_on_one_key(t *testing.T) {
 	g, ep := newGate(t, githubRotated)
 	store, _ := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -540,7 +540,7 @@ func TestSource_refreshes_once_for_two_sources_on_one_key(t *testing.T) {
 	}
 }
 
-func TestSource_fails_a_waiter_at_its_own_deadline(t *testing.T) {
+func TestStoredSource_fails_a_waiter_at_its_own_deadline(t *testing.T) {
 	g, ep := newGate(t, githubRotated)
 	store, _ := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -576,7 +576,7 @@ func TestSource_fails_a_waiter_at_its_own_deadline(t *testing.T) {
 
 // A consumer that reconnects while a refresh is in flight saved a newer record, and
 // the rotation that started from the older one must not overwrite it.
-func TestSource_does_not_overwrite_a_record_saved_during_the_refresh(t *testing.T) {
+func TestStoredSource_does_not_overwrite_a_record_saved_during_the_refresh(t *testing.T) {
 	store, _ := openStore(t)
 	saved := make(chan error, 1)
 	landed := make(chan struct{})
@@ -616,7 +616,7 @@ func TestSource_does_not_overwrite_a_record_saved_during_the_refresh(t *testing.
 	}
 }
 
-func TestSource_persists_a_rotation_for_the_next_store_opened_on_the_directory(t *testing.T) {
+func TestStoredSource_persists_a_rotation_for_the_next_store_opened_on_the_directory(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, githubRotated })
 	store, dir := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -639,7 +639,7 @@ func TestSource_persists_a_rotation_for_the_next_store_opened_on_the_directory(t
 // or expired, and the token would be handed over forever. It reads as
 // reconnect-required, the reading every record outside the two kinds gets, whether
 // or not it carries a refresh token, and nothing is sent to renew it.
-func TestSource_reads_a_rotating_record_without_an_expiry_as_reconnect_required(t *testing.T) {
+func TestStoredSource_reads_a_rotating_record_without_an_expiry_as_reconnect_required(t *testing.T) {
 	for name, refresh := range map[string]string{"with_a_refresh_token": "refresh-old", "without_one": ""} {
 		t.Run(name, func(t *testing.T) {
 			ep := newEndpoint(t, unreachable(t))

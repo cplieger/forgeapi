@@ -79,6 +79,8 @@ type Checks interface {
 const CodeAPIVersionRetired = "api_version_retired"
 const CodeAlreadyEnqueued = "already_enqueued"
 const CodeAnonymousRefused = "anonymous_refused"
+const CodeAppGrantInvalid = "app_grant_invalid"
+const CodeAppKeyInvalid = "app_key_invalid"
 const CodeBranchCannotMerge = "branch_cannot_merge"
 const CodeBudgetInvalid = "budget_invalid"
 const CodeCapabilityUnsupported = "capability_unsupported"
@@ -177,6 +179,7 @@ type Counters struct {
 }
 type CredKind int
 func (k CredKind) String() string
+const CredKindAppInstallation CredKind = iota + 3
 const CredKindRotatingOAuth CredKind = iota + 2
 const CredKindStaticPAT CredKind = iota + 1
 const CredKindUnknown CredKind = iota
@@ -609,6 +612,28 @@ func WithWireTransport(rt http.RoundTripper) Option
 
 ## package creds (./creds)
 
+type AppGrant struct {
+	Permissions map[string]string
+	Repositories []string
+	// contains unexported members
+}
+type AppKey struct {
+	// contains unexported members
+}
+func (k *AppKey) JWT(ctx context.Context) (string, error)
+type AppSource struct {
+	// contains unexported members
+}
+func (s *AppSource) Discard(token string) (retry bool)
+func (*AppSource) Kind() forgeapi.CredKind
+func (s *AppSource) Mint(ctx context.Context) (InstallationToken, error)
+func (s *AppSource) Resolve(ctx context.Context) (int64, error)
+func (s *AppSource) State() forgeapi.CredState
+func (s *AppSource) Token(ctx context.Context) (string, error)
+type AppSourceConfig struct {
+	Installation Installation
+	Grant AppGrant
+}
 type DeviceGrant struct {
 	UserCode string
 	VerificationURI string
@@ -625,12 +650,28 @@ func (s *FileStore) Delete(key string) error
 func (s *FileStore) Keys() ([]string, error)
 func (s *FileStore) Load(key string) (Record, bool, error)
 func (s *FileStore) Save(key string, rec Record) error
+func FullGrant() AppGrant
 type GrantRequest struct {
 	ClientID string
 	Scopes []string
 }
-func NewSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*Source, error)
+type Installation struct {
+	// contains unexported members
+}
+func InstallationByID(id int64) Installation
+func InstallationOfOrg(login string) Installation
+func InstallationOfRepo(fullName string) Installation
+func InstallationOfUser(login string) Installation
+type InstallationToken struct {
+	Token Secret
+	Expiry time.Time
+}
+func NewAppKey(issuer string, signer crypto.Signer) (*AppKey, error)
+func NewAppSource(conn forgeapi.Connection, key *AppKey, cfg AppSourceConfig, opts ...forgeapi.Option) (*AppSource, error)
+func NewStoredSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*StoredSource, error)
+func OnlyInstallation() Installation
 func OpenFileStore(dir string, opts ...forgeapi.Option) (*FileStore, error)
+func ParseAppKeyPEM(issuer string, pemBytes []byte) (*AppKey, error)
 type Record struct {
 	Family forgeapi.Family
 	WebBaseURL string
@@ -645,13 +686,15 @@ type Record struct {
 	Account string
 	Usability Usability
 }
-type Source struct {
+type Secret struct {
 	// contains unexported members
 }
-func (s *Source) Kind() forgeapi.CredKind
-func (s *Source) State() forgeapi.CredState
-func (s *Source) StoredToken() (token string, state forgeapi.CredState, err error)
-func (s *Source) Token(ctx context.Context) (string, error)
+func (s Secret) Format(f fmt.State, _ rune)
+func (s Secret) IsZero() bool
+func (s Secret) LogValue() slog.Value
+func (s Secret) MarshalJSON() ([]byte, error)
+func (s Secret) Reveal() string
+func (s Secret) String() string
 func StartDeviceGrant(ctx context.Context, conn forgeapi.Connection, family forgeapi.Family, req GrantRequest, opts ...forgeapi.Option) (*DeviceGrant, error)
 type Store interface {
 	Load(key string) (Record, bool, error)
@@ -660,6 +703,13 @@ type Store interface {
 	Keys() ([]string, error)
 	// contains unexported members
 }
+type StoredSource struct {
+	// contains unexported members
+}
+func (s *StoredSource) Kind() forgeapi.CredKind
+func (s *StoredSource) State() forgeapi.CredState
+func (s *StoredSource) StoredToken() (token string, state forgeapi.CredState, err error)
+func (s *StoredSource) Token(ctx context.Context) (string, error)
 type Usability int
 func (u Usability) String() string
 const UsabilityReconnectRequired Usability = iota + 2

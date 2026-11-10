@@ -13,7 +13,7 @@ import (
 // Both products spend the old pair the moment they issue the new one, so a rotation
 // the store refused leaves the stored token dead upstream: the call fails rather
 // than handing that token over as though nothing happened.
-func TestSource_fails_a_rotation_it_could_not_store(t *testing.T) {
+func TestStoredSource_fails_a_rotation_it_could_not_store(t *testing.T) {
 	store, dir := openStore(t)
 	ep := newEndpoint(t, func(int, exchange) (int, string) {
 		if err := os.Chmod(dir, 0o750); err != nil {
@@ -53,7 +53,7 @@ func heldEndpoint(t *testing.T, status int, body string) (arrived, release chan 
 // A reconnect saved while the old record's refresh was in flight is the
 // connection's credential, so an answer about the old refresh token says nothing
 // about it, whether the answer is terminal or a failure.
-func TestSource_hands_over_a_record_saved_while_its_refresh_failed(t *testing.T) {
+func TestStoredSource_hands_over_a_record_saved_while_its_refresh_failed(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		body   string
@@ -101,7 +101,7 @@ func TestSource_hands_over_a_record_saved_while_its_refresh_failed(t *testing.T)
 // A token answer whose lifetime is a zero or negative count is neither of the two
 // kinds the response decides, so it is refused rather than read as a static token
 // that never needs refreshing.
-func TestSource_refuses_a_refresh_answer_whose_lifetime_reads_as_neither_kind(t *testing.T) {
+func TestStoredSource_refuses_a_refresh_answer_whose_lifetime_reads_as_neither_kind(t *testing.T) {
 	for name, body := range unreadableTokens {
 		t.Run(name, func(t *testing.T) {
 			ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, body })
@@ -131,7 +131,7 @@ var unreadableTokens = map[string]string{
 // An endpoint can copy what it was sent into its error member, and that member
 // reaches an error a consumer logs or shows, so a member no OAuth document defines
 // is not quoted.
-func TestSource_does_not_quote_an_error_member_no_document_defines(t *testing.T) {
+func TestStoredSource_does_not_quote_an_error_member_no_document_defines(t *testing.T) {
 	ep := newEndpoint(t, func(_ int, x exchange) (int, string) {
 		return http.StatusBadRequest, `{"error":"` + x.form.Get("refresh_token") + `"}`
 	})
