@@ -1,7 +1,7 @@
 github.com/cplieger/go/filesafe v1.0.0 h1:V63mC2Kc1PlbAKhiCXMA5WiellXJtWPtNJwTG2Q37us=
 github.com/cplieger/go/filesafe v1.0.0/go.mod h1:Pu9t7x6mRQwXm09EdWaQvVK++fpjgGP7+58XiMxGYks=
-github.com/cplieger/go/httpcache v1.0.0 h1:E4CZnZS1hkPohuuye53JNTR8e+B4LWvrS5mMLgue+Vo=
-github.com/cplieger/go/httpcache v1.0.0/go.mod h1:WklLwWDbPjBKG+pc3BkoSNRF/lwxUuUa3Yi4oZRFJSw=
+github.com/cplieger/go/httpcache v1.1.0-dev.1 h1:vnWKrcI6++UOIKzfOLWZFjU1B6MmVtkIwuxu6pOrea8=
+github.com/cplieger/go/httpcache v1.1.0-dev.1/go.mod h1:LKPmkN87MBNw0M3Yb6iLiAq3EPDN1lxKipc18wrm2IQ=
 github.com/cplieger/go/httpclient v1.1.0-dev.1 h1:UIU9dimhFtx/ru3O7AqhqsznJoRIje91FGa9YLCf5Fc=
 github.com/cplieger/go/httpclient v1.1.0-dev.1/go.mod h1:zXZyXwYWXVujBH7qoNR16WYGHOGCo8hbJb0Gy8gNgBQ=
 github.com/cplieger/go/jsonx v1.0.0 h1:tk8DmKIHoMBVvNbFJ7a0IFNPo8vdLy4g9BOBj3HoE4Y=
