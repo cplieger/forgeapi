@@ -1,13 +1,13 @@
 github.com/cplieger/go/filesafe v1.1.0-dev.1 h1:Bq3CWSGT0LgHqQhqYwdkFBpLruQmIFk5+nWbgvuGoy8=
 github.com/cplieger/go/filesafe v1.1.0-dev.1/go.mod h1:ji4TnJD8S8kgKelJlCQxlHyX0UXQGTW1ylSBqH5xqhI=
-github.com/cplieger/go/httpcache v1.1.0-dev.4 h1:zFE6TF/4fXDGTzci/wW+J3V0XKVGMzBb3AAPU507yLY=
-github.com/cplieger/go/httpcache v1.1.0-dev.4/go.mod h1:nZwD9EiZQvdPYy0R6ejJ2IbrzCt7N5V8rSEIhuB+HsE=
+github.com/cplieger/go/httpcache v1.1.0-dev.5 h1:xZmQha9V3C2HpaNftuAot/dwbij/o5uH0LErcJdvJU4=
+github.com/cplieger/go/httpcache v1.1.0-dev.5/go.mod h1:gfWuZLFWwVZL2SYD1N/V7pH3qfQ2O1Z0hSFjYSFcBfI=
 github.com/cplieger/go/httpclient v1.2.0-dev.1 h1:4fjNLUM6A2yKu+yhWB/EibppR95uK5X5eXOo4NN+jKk=
 github.com/cplieger/go/httpclient v1.2.0-dev.1/go.mod h1:couTQSCNdgNwOotbaQREGcM4CjUKZJ4Bdb7FSkNwL8U=
 github.com/cplieger/go/jsonx v1.1.0-dev.1 h1:9Dm1B+MuplMxQRKcp+FucJLgf/xSSKWd68VMltqdIeo=
 github.com/cplieger/go/jsonx v1.1.0-dev.1/go.mod h1:ry6co0JYAadIhjHtkktBSK3to4YdtEak1P7mdmQlr7U=
-github.com/cplieger/go/ssrf v1.1.0-dev.4 h1:ekljf1s0hzaytlpyHAtggVGxmK81njKNIcHpdm9CR30=
-github.com/cplieger/go/ssrf v1.1.0-dev.4/go.mod h1:Ri03mZx7JVdjJFsSkIeAve+VZb7+R7vxkVNafIANfNw=
+github.com/cplieger/go/ssrf v1.1.0-dev.5 h1:lQkGcbD3hos5B7FyIXvRwPg4HyTo1m5s8ZBmUV508MY=
+github.com/cplieger/go/ssrf v1.1.0-dev.5/go.mod h1:5dfQr9A00dt0RZVj7ie4U+qk111sQ9TRQjBEp2s31ZM=
 github.com/cplieger/go/textsafe v1.1.0-dev.1 h1:hItEYflWq+6rzBEwsYe0PCJz/VC3K3eUSNjEMJCKLbQ=
 github.com/cplieger/go/textsafe v1.1.0-dev.1/go.mod h1:x29RmZpMO2yjPt1zRbjtcXWVdkekukl+jA5FN1wXUlI=
 github.com/cplieger/go/urlform v1.2.0-dev.1 h1:PvCjYv/0VPciZjyntYtz3uPr0RReD8ed9ytyvj/3biQ=
