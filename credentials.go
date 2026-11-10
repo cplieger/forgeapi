@@ -23,12 +23,16 @@ const (
 	// token from its device flow at all, so a connection of this kind can
 	// still reach [CredReconnectRequired] by construction.
 	CredKindRotatingOAuth
+	// CredKindAppInstallation is a GitHub App installation token, minted from
+	// the App's key and renewed by minting again, so it needs a human only
+	// once the key or the installation goes away.
+	CredKindAppInstallation
 )
 
 // String returns the member's spelling, which is what a log line carries:
-// "unknown", "static_pat" or "rotating_oauth".
+// "unknown", "static_pat", "rotating_oauth" or "app_installation".
 func (k CredKind) String() string {
-	return nameOf([]string{nameUnknown, "static_pat", "rotating_oauth"}, k)
+	return nameOf([]string{nameUnknown, "static_pat", "rotating_oauth", "app_installation"}, k)
 }
 
 var _ fmt.Stringer = CredKind(0)
@@ -52,7 +56,10 @@ const (
 	CredRefreshing
 	// CredReconnectRequired is terminal: the grant is gone and no further
 	// attempt is made. It surfaces on the connection, and the remedy is a
-	// human reconnecting rather than anything this library can retry.
+	// human reconnecting rather than anything this library can retry. A
+	// GitHub App source is the one exception, because its fix is made on
+	// GitHub: it re-probes on a bounded schedule and leaves this state when a
+	// mint succeeds.
 	CredReconnectRequired
 )
 
@@ -65,19 +72,14 @@ func (s CredState) String() string {
 
 var _ fmt.Stringer = CredState(0)
 
-// CredentialSource is where a connection's token comes from.
+// CredentialSource is where a connection's token comes from. It is called from
+// every operation, so an implementation must be safe for concurrent use.
 //
-// It is a real interface rather than a struct of functions, and it is one of
-// only two consumer-implementable shapes on this surface: a consumer supplying
-// its own credential source is a genuine case, and this is deliberately sized
-// at the minimum that serves it, because adding a method here is a breaking
-// change for every implementer.
-//
-// It lives in this package rather than beside the refresh machine because the
-// root's option vocabulary has to name it, and the root imports no subpackage.
-//
-// Implementations are called from every operation, so one must be safe for
-// concurrent use.
+// A method added here breaks every implementer, so an optional one is found by
+// type assertion. A source with Discard(token string) (retry bool) is told each
+// time the instance answers 401 to a request that carried token; answering
+// true keeps the token, and the request is sent again after 1 s, then 2 s,
+// within the operation's deadline.
 type CredentialSource interface {
 	// Token returns the token to authenticate with, refreshing first where
 	// that is this source's job. It is called per request rather than cached

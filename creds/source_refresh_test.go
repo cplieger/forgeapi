@@ -19,13 +19,13 @@ func TestNewSource_refuses_a_negative_refresh_lead(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 
-	_, err := creds.NewSource(store, "conn", ep.conn(), ep.options(forgeapi.WithRefreshLead(-time.Minute))...)
+	_, err := creds.NewStoredSource(store, "conn", ep.conn(), ep.options(forgeapi.WithRefreshLead(-time.Minute))...)
 	if code := codeOf(err); code != forgeapi.CodeBudgetInvalid {
-		t.Errorf("NewSource(WithRefreshLead(-1m)) = error %v (code %q), want code %q", err, code, forgeapi.CodeBudgetInvalid)
+		t.Errorf("NewStoredSource(WithRefreshLead(-1m)) = error %v (code %q), want code %q", err, code, forgeapi.CodeBudgetInvalid)
 	}
 }
 
-func TestSource_reports_refreshing_while_the_refresh_is_in_flight(t *testing.T) {
+func TestStoredSource_reports_refreshing_while_the_refresh_is_in_flight(t *testing.T) {
 	g, ep := newGate(t, githubRotated)
 	store, _ := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -51,7 +51,7 @@ func TestSource_reports_refreshing_while_the_refresh_is_in_flight(t *testing.T) 
 
 // The instance spends the old pair the moment it issues the new one, so a caller
 // that walks away mid-refresh must not cost the connection its only copy.
-func TestSource_keeps_a_rotation_whose_caller_cancelled_mid_flight(t *testing.T) {
+func TestStoredSource_keeps_a_rotation_whose_caller_cancelled_mid_flight(t *testing.T) {
 	cancelled := make(chan struct{})
 	arrived := make(chan struct{})
 	ep := newEndpoint(t, func(int, exchange) (int, string) {
@@ -81,7 +81,7 @@ func TestSource_keeps_a_rotation_whose_caller_cancelled_mid_flight(t *testing.T)
 	}
 }
 
-func TestSource_sends_no_authorization_with_the_refresh(t *testing.T) {
+func TestStoredSource_sends_no_authorization_with_the_refresh(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, githubRotated })
 	store, _ := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -114,7 +114,7 @@ func TestNewSource_takes_a_zero_refresh_lead(t *testing.T) {
 
 // Half the issued lifetime caps the lead only where the record states a lifetime;
 // one issued at its own expiry is refreshed at the configured lead.
-func TestSource_refreshes_a_record_stating_no_lifetime_at_the_configured_lead(t *testing.T) {
+func TestStoredSource_refreshes_a_record_stating_no_lifetime_at_the_configured_lead(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	rec := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute)
@@ -128,7 +128,7 @@ func TestSource_refreshes_a_record_stating_no_lifetime_at_the_configured_lead(t 
 
 // Each refresh outcome is one line on the source's own logger, naming the instance
 // and the state reached, at warning level where the refresh reached no valid token.
-func TestSource_logs_each_refresh_outcome_to_its_logger(t *testing.T) {
+func TestStoredSource_logs_each_refresh_outcome_to_its_logger(t *testing.T) {
 	for name, test := range map[string]struct {
 		body   string
 		state  string
@@ -165,7 +165,7 @@ func TestSource_logs_each_refresh_outcome_to_its_logger(t *testing.T) {
 }
 
 // A refresh cannot change the scopes, so an answer stating none keeps the record's.
-func TestSource_keeps_the_scopes_a_refresh_answer_does_not_state(t *testing.T) {
+func TestStoredSource_keeps_the_scopes_a_refresh_answer_does_not_state(t *testing.T) {
 	const unscoped = `{"access_token":"token-new","token_type":"bearer","expires_in":28800,"refresh_token":"refresh-new","refresh_token_expires_in":15897600}`
 	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, unscoped })
 	store, _ := openStore(t)
@@ -182,7 +182,7 @@ func TestSource_keeps_the_scopes_a_refresh_answer_does_not_state(t *testing.T) {
 // A token is valid until the time left to its expiry is inside the refresh lead,
 // and exactly the lead left is inside it. The bubble's clock stands still, so the
 // time left is the lead to the nanosecond.
-func TestSource_reads_a_token_exactly_its_lead_from_expiry_as_due(t *testing.T) {
+func TestStoredSource_reads_a_token_exactly_its_lead_from_expiry_as_due(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	synctest.Test(t, func(t *testing.T) {
 		store, _ := openStore(t)

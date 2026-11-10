@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/cplieger/forgeapi/v2"
@@ -11,15 +12,12 @@ import (
 	"github.com/cplieger/forgeapi/v2/github"
 )
 
-// Example signs a user in to github.com through the OAuth device grant, stores the
-// credential the grant answers, and runs a client behind the source that keeps that
-// credential fresh. It is the whole lifecycle a consumer wires: render the user
-// code, poll at the interval the grant states, save the record under the
-// consumer's own key for the connection, and hand the client a source over that
-// key rather than a token.
+// Example signs a user in to github.com through the OAuth device grant, saves
+// the record under the consumer's own key, and runs a client behind the source
+// that keeps that credential fresh, so the client never holds a token.
 //
-// The example carries no Output comment, so the toolchain compiles it and does not
-// run it: running it would open a real grant against github.com.
+// It has no Output comment, so it is compiled and not run: running it would
+// open a real grant against github.com.
 func Example() {
 	ctx := context.Background()
 	conn := forgeapi.Connection{WebBaseURL: "https://github.com"}
@@ -76,7 +74,7 @@ func Example() {
 
 	// The source refreshes the stored credential before it expires, so the client
 	// never holds a token of its own.
-	src, err := creds.NewSource(store, key, conn)
+	src, err := creds.NewStoredSource(store, key, conn)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -93,4 +91,66 @@ func Example() {
 		return
 	}
 	fmt.Println("signed in as", me.Login)
+}
+
+// ExampleAppSource runs a client as a GitHub App installation and mints a
+// token for a child process that reads it once. It is compiled and not run:
+// running it would mint against github.com.
+func ExampleAppSource() {
+	ctx := context.Background()
+	conn := forgeapi.Connection{WebBaseURL: "https://github.com"}
+
+	pemBytes, err := os.ReadFile("/etc/example/app-private-key.pem")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	key, err := creds.ParseAppKeyPEM("your-app-client-id", pemBytes)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	// The grant says what each token may do, here read pull requests on
+	// your-repo.
+	src, err := creds.NewAppSource(conn, key, creds.AppSourceConfig{
+		Installation: creds.InstallationOfRepo("your-org/your-repo"),
+		Grant: creds.AppGrant{
+			Permissions:  map[string]string{"metadata": "read", "pull_requests": "read"},
+			Repositories: []string{"your-repo"},
+		},
+	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	client, err := github.New(conn, forgeapi.WithCredentialSource(src))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer client.Close()
+
+	// An installation token cannot list GET /user/repos, so the list names the
+	// installation's account. Each RepoRef comes from that answer.
+	repos, err := client.ListRepos(ctx, forgeapi.WithOwner("your-org"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, repo := range repos.Items {
+		prs, err := client.ListPRs(ctx, repo.Ref, forgeapi.WithState(forgeapi.ListStateOpen))
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Println(repo.Ref.DisplayPath, len(prs.Items), "open pull requests")
+	}
+
+	tok, err := src.Mint(ctx)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("token valid until", tok.Expiry.Format(time.RFC3339))
 }

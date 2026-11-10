@@ -59,9 +59,8 @@ const (
 
 	// dialTimeout, handshakeTimeout and headerTimeout are the per-phase bounds.
 	// They sum to more than one operation's budget on purpose: on an instance
-	// that stalls at every phase the operation's context deadline fires first,
-	// which is what makes the retry count an upper bound rather than a
-	// behaviour.
+	// stalling at every phase the operation's deadline fires first, so the retry
+	// count is an upper bound rather than a behaviour.
 	dialTimeout      = 10 * time.Second
 	handshakeTimeout = 10 * time.Second
 	headerTimeout    = 15 * time.Second
@@ -275,7 +274,7 @@ func observe(client *http.Client, wrap func(http.RoundTripper) http.RoundTripper
 func (c *Conn) onRetry(attempt int, req *http.Request, resp *http.Response, err error) {
 	c.observeDropped(req, resp)
 	if req != nil {
-		requestSlot(req.Context()).store(tally{attempt: attempt + 1, retriedOn: retriedOn(resp, err)})
+		requestSlot(req.Context()).retried(attempt, retriedOn(resp, err))
 	}
 	if c.counters.Retried != nil {
 		c.counters.Retried(c.family, opFrom(req))
@@ -329,9 +328,34 @@ type tally struct {
 
 // slot holds one tally under a lock, because the requests of one operation may
 // write its slot concurrently. A nil slot holds a request that was never retried.
+// sent is the attempts the request's earlier sends made ([Conn.sendReplaying]),
+// which the retry seam, counting from one on every send, cannot know.
 type slot struct {
-	t  tally
-	mu sync.Mutex
+	t    tally
+	mu   sync.Mutex
+	sent int
+}
+
+// retried records the retry seam's retry number attempt of the current send.
+func (s *slot) retried(attempt int, cause string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.t = tally{attempt: s.sent + attempt + 1, retriedOn: cause}
+}
+
+// replayed records that the request is sent once more after its last attempt
+// was answered with cause.
+func (s *slot) replayed(cause string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sent = s.t.attempt
+	s.t = tally{attempt: s.sent + 1, retriedOn: cause}
 }
 
 func (s *slot) load() tally {
@@ -484,15 +508,14 @@ func opFrom(req *http.Request) string {
 	return op
 }
 
-// retryCheck is this library's own retry predicate: a transport failure
-// [Retryable] calls retryable, and the gateway statuses. It does not retry:
-//   - a 429, because the default sleeps a parsed retry-after after draining the
-//     response that carried it, so a throttle would reach the caller as a deadline
-//     cancellation rather than as a rate-limited error with its duration;
-//   - a 408 or a 5xx other than 502, 503 and 504, which the instance itself
-//     answered after reading the request, so the caller decides from Retryable;
-//   - a dial timeout, because a second attempt that also times out ends as the
-//     operation's own deadline and loses the host the first one names.
+// retryCheck retries a transport failure [Retryable] calls retryable, and the
+// gateway statuses. It does not retry:
+//   - a 429: the default sleeps its retry-after, so a throttle would reach the
+//     caller as a deadline rather than a rate-limited error with its duration;
+//   - a 408 or another 5xx, which the instance answered after reading the
+//     request, so the caller decides from Retryable;
+//   - a dial timeout: a second one ends as the operation's own deadline and
+//     loses the host the first one names.
 func retryCheck(ctx context.Context, resp *http.Response, err error) (bool, error) {
 	if ctx.Err() != nil {
 		return false, ctx.Err()
@@ -752,9 +775,10 @@ func allowedPorts(web *url.URL, set *forgeapi.Settings) []uint16 {
 }
 
 // dialablePorts is the set the SOCKET is held to, which is the set above plus the
-// stated proxy's own port. On a proxied connection every socket goes to the proxy, so
-// a proxy on anything but a scheme's default port would otherwise be refused at the
-// socket and the connection could not be used at all.
+// stated proxy's own port: the one its URL states, or else its scheme's default, the
+// port net/http dials then (schemePort in net/http/transport.go). On a proxied
+// connection every socket goes to the proxy, so a port missing here refuses every
+// request the connection makes.
 func dialablePorts(web *url.URL, proxy string, set *forgeapi.Settings) []uint16 {
 	ports := allowedPorts(web, set)
 	if proxy == "" {
@@ -764,12 +788,29 @@ func dialablePorts(web *url.URL, proxy string, set *forgeapi.Settings) []uint16 
 	if err != nil {
 		return ports
 	}
-	if p := u.Port(); p != "" {
-		if n, parseErr := strconv.ParseUint(p, 10, 16); parseErr == nil {
-			ports = append(ports, uint16(n))
-		}
+	p := u.Port()
+	if p == "" {
+		p = proxyDefaultPort(u.Scheme)
+	}
+	if n, parseErr := strconv.ParseUint(p, 10, 16); parseErr == nil {
+		ports = append(ports, uint16(n))
 	}
 	return ports
+}
+
+// proxyDefaultPort is the port net/http dials for a proxy URL of this scheme that
+// states none, "" for a scheme proxyFor refuses.
+func proxyDefaultPort(scheme string) string {
+	switch scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	case "socks5", "socks5h":
+		return "1080"
+	default:
+		return ""
+	}
 }
 
 // BudgetState is the governor's state for this connection, read-only and never
@@ -826,14 +867,10 @@ func (c *Conn) SpendFold(d time.Duration) { c.gov.spendFold(d) }
 
 // Price replaces what the governor reports as the last call's cost, for the one
 // product that prices a call by a figure in its own RESPONSE rather than by the
-// number of requests that left.
-//
-// [Conn.Do] publishes the wire count on every arm it leaves by, so a family calling
-// this AFTER Do has returned is stating the same call's cost in the units that
-// product bills in. Measured: GitLab's GraphQL endpoint answers a complexity object
-// beside the data, and the expectation table prices a document by that score and a
-// REST request at one. A family with no such figure never calls this and the wire
-// count stands.
+// number of requests that left. A family calls it after [Conn.Do], which published
+// the wire count, returned. Measured: GitLab's GraphQL endpoint answers a
+// complexity score beside the data, and the expectation table prices a document
+// by that score and a REST request at one.
 func (c *Conn) Price(cost int) { c.gov.price(cost) }
 
 // Close releases this connection's pool, the idle connections of the ssrf
@@ -853,60 +890,51 @@ type Request struct {
 	// because the cache keeps the decoded projection rather than the body.
 	Into any
 	// Headers are the FAMILY's own request headers for this request, written
-	// after the credential and before the consumer's. One family needs them and
-	// the reason is per request rather than per connection: its REST API-version
-	// pin is sent only to an instance known to carry that version, and what
-	// establishes that is a header riding a response the connection already
-	// received, so the first request of a connection carries no pin and the rest
-	// do. A name here is one the library writes, so it is on the reserved list and
-	// a consumer's own entry can never collide with it.
+	// after the credential and before the consumer's. They are per request
+	// because one family's API-version pin waits for a response proving the
+	// version; each name is on the reserved list, so no consumer entry collides.
 	Headers []forgeapi.Header
 	Query   url.Values
 	Op      string
 	Method  string
 	Path    string
 	// EscapedPath is this request's path ALREADY percent-encoded, taken in place
-	// of Path where it is set. Exactly one family needs it, and the reason is
-	// measured rather than stylistic: GitLab's repository selector is a full
-	// namespace path its API takes as ONE path segment with the separators
-	// encoded, and Path is assigned to [net/url.URL.Path], which is the DECODED
-	// path. So a selector encoded into Path leaves as %252F and one left decoded
-	// leaves as extra path segments, and gitlab.com answers 404 to both.
+	// of Path where it is set: GitLab takes a namespace path as ONE segment with
+	// its separators encoded, and Path, the DECODED path, sends it as %252F or
+	// as extra segments, both of which gitlab.com answers 404.
 	EscapedPath string
 	AbsoluteURL string
 	// Answers are the non-2xx statuses this request reads as an ANSWER rather than
 	// a refusal: [Conn.Do] returns such a response with its body and no error, and
 	// the family decodes the outcome from it. A 304 is never one: the read cache
-	// settles every 304. One route needs it: GitHub's
-	// asynchronous merge answers a merge already in flight with a 409 whose body
-	// names that merge's handle, which is the outcome, not a conflict.
+	// settles every 304.
 	Answers  []int
 	MaxBytes int64
 	// OwnerStatus is the status this request's route answers for an owner
 	// [forgeapi.WithOwner] named and the instance does not resolve, zero on a
 	// request no owner scopes. [Conn] maps exactly that status to
-	// [forgeapi.CodeOwnerUnresolved] before the family's [Mapper] is asked,
-	// because the cell is the scoped request's: the operation's default scope
-	// names no owner, and the same status there is the ordinary cell.
+	// [forgeapi.CodeOwnerUnresolved] before the family's [Mapper] is asked.
 	OwnerStatus int
 	// Page is which page of a paged read this request asks for, so the
 	// per-request record carries it. One where the read is not paged.
 	Page int
 	// Document says this request carries a GraphQL document rather than a REST
-	// route, which is what the per-request record's transport attribute names.
-	// One family in scope reaches an instance over two arms and degrades from
-	// the document one to the other at runtime, so the record has to say which
-	// arm a line describes: a constant there reports the refusal that degrades a
-	// connection as a REST failure, which is the one line an operator reads to
-	// learn why it degraded.
-	//
-	// A document request is a read whatever verb carries it, unless Mutation
-	// says otherwise: see [Request.mutates].
+	// route, which the per-request record's transport attribute names: one family
+	// degrades from the document arm to REST at runtime, and the line recording
+	// the refusal that degraded it must name the document arm. A document request
+	// is a read whatever verb carries it, unless Mutation says otherwise
+	// ([Request.mutates]).
 	Document bool
 	// Mutation says this document is a GraphQL mutation, which travels as the
 	// same POST a query does and changes the instance, so only the document's
 	// own kind tells the two apart.
 	Mutation bool
+	// Credential says this request is a credential source's own, a token mint
+	// or the lookup it needs, which changes no forge object: it meets neither
+	// the mutation gate, nor the write mark of the call that asked for the
+	// token, nor the interval. It takes one attempt: its source owns every
+	// retry, since only the source can read a malformed 2xx as worth another.
+	Credential bool
 }
 
 // mutates reports whether this request changes something on the instance, which is
@@ -915,8 +943,11 @@ type Request struct {
 // nothing, so the verb alone would refuse every document read on a read-only client
 // and pace it like a merge.
 func (r *Request) mutates() bool {
-	if r.Document {
+	switch {
+	case r.Document:
 		return r.Mutation
+	case r.Credential:
+		return false
 	}
 	return r.Method != http.MethodGet
 }
@@ -953,27 +984,18 @@ func exchange(req *Request) Exchange {
 // Response is what one call answered: the status, the headers, the decoded-ready
 // bytes, and whether a redirect was followed to get them.
 //
-// Redirected is the transport's record that this exchange took a hop, which is the
-// rename witness this layer owns rather than a family: one product
-// answers a renamed repository with a 301 the follow-and-revalidate policy would
-// otherwise follow silently, and a FINAL-PATH comparison cannot be the witness,
+// Redirected records that THIS request took a hop, the rename witness: one product
+// answers a renamed repository with a 301, and the final path cannot be the witness,
 // because the same product answers a repo-addressed list with an id-addressed link
-// header on repositories never renamed. So what is recorded is that a hop happened
-// on THIS request rather than what the last URL looks like.
-//
-// Ended is the address the LAST request of the exchange went to, which on a followed
-// hop is where that hop led. It is NOT a second witness, for the same reason: what
-// it is for is resolving the successor once a hop has already been recorded, because
-// the location that product sends addresses the repository by id and its canonical
-// name is one read from there.
-//
-// Refused is the address of a hop the redirect policy refused, answered beside that
-// refusal with the status and headers that asked for it. A write's hop is refused,
-// so this is where a family reads a successor without sending the write again.
+// header on repositories never renamed. Ended, where the last request went, is no
+// second witness: it resolves the successor once a hop is recorded.
 type Response struct {
-	Header     http.Header
-	quote      func(string) string
-	Ended      string
+	Header http.Header
+	quote  func(string) string
+	Ended  string
+	// Refused is the address of a hop the redirect policy refused, with the status
+	// and headers that asked for it: a write's hop is refused, so a family reads
+	// the successor here without sending the write again.
 	Refused    string
 	Body       []byte
 	Status     int
@@ -1034,7 +1056,7 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	var token string
 	//nolint:bodyclose // answer always reads the body through httpclient.ReadLimitedBody, which closes it
 	resp, err := x.Send(func(prepare func(*http.Request) *http.Request) (*http.Response, error) {
-		return c.send(ctx, req, target, prepare, &token)
+		return c.sendReplaying(ctx, req, target, prepare, &token)
 	})
 	out, err := c.answer(ctx, req, target, resp, x, token, err, started)
 	hit, ended := x.Finish(ctx, err == nil)
@@ -1159,7 +1181,7 @@ func ended(resp *http.Response, target string) string {
 // floor under what a merge the user is about to click will need, so a cycle of
 // ordinary reads that crossed it would empty the budget the reserve exists to hold.
 func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
-	if req.mutates() || writes(ctx) {
+	if req.mutates() || (writes(ctx) && !req.Credential) {
 		if c.mutations {
 			return nil
 		}
@@ -1170,6 +1192,83 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 		return c.refusal(ctx, req, c.deferred(req.Op))
 	}
 	return nil
+}
+
+// discarder is the optional method of a credential source that is told when the
+// instance answered 401 to a token it handed out ([forgeapi.CredentialSource]).
+type discarder interface {
+	Discard(token string) (retry bool)
+}
+
+// replayWaits are the pauses before each resend of a request answered 401 whose
+// source asks for a retry. GitHub's SDK waits the same steps for a just-minted
+// token to replicate (octokit/auth-app.js, sendRequestWithRetries).
+var replayWaits = [...]time.Duration{time.Second, 2 * time.Second}
+
+// sendReplaying is [Conn.send], with every 401 reported to a source that has
+// Discard and the request resent after each of [replayWaits] while Discard asks
+// for it. The 401's body is read before the wait is judged, so a resend the
+// operation's deadline cannot wait for is not made and the caller reads the 401
+// rather than a deadline; a body that cannot be read ends the request as it
+// would with no Discard.
+func (c *Conn) sendReplaying(ctx context.Context, req *Request, target string, prepare func(*http.Request) *http.Request, token *string) (*http.Response, error) {
+	source, hooked := c.credential.(discarder)
+	for _, wait := range replayWaits {
+		resp, err := c.send(ctx, req, target, prepare, token)
+		if !hooked || err != nil || resp.StatusCode != http.StatusUnauthorized || !source.Discard(*token) {
+			return resp, err
+		}
+		body, readErr := httpclient.ReadLimitedBody(resp.Body, bodyLimit(req))
+		resp.Body = heldBody(body, readErr)
+		if readErr != nil || !WaitFits(ctx, wait) {
+			return resp, nil
+		}
+		c.observeDropped(resp.Request, resp)
+		if err := sleep(ctx, wait); err != nil {
+			return nil, err
+		}
+		requestSlot(ctx).replayed(strconv.Itoa(resp.StatusCode))
+		if c.counters.Retried != nil {
+			c.counters.Retried(c.family, req.Op)
+		}
+	}
+	resp, err := c.send(ctx, req, target, prepare, token)
+	if hooked && err == nil && resp.StatusCode == http.StatusUnauthorized {
+		source.Discard(*token)
+	}
+	return resp, err
+}
+
+// heldBody answers a body already read as body, or as err where the read failed,
+// so [Conn.answer] maps it as it would the instance's own body.
+func heldBody(body []byte, err error) io.ReadCloser {
+	if err != nil {
+		return io.NopCloser(failedRead{err: err})
+	}
+	return io.NopCloser(bytes.NewReader(body))
+}
+
+// failedRead is a reader whose every read answers err.
+type failedRead struct{ err error }
+
+func (r failedRead) Read([]byte) (int, error) { return 0, r.err }
+
+// WaitFits reports whether ctx's deadline, if any, is past a wait from now.
+func WaitFits(ctx context.Context, wait time.Duration) bool {
+	deadline, ok := ctx.Deadline()
+	return !ok || time.Until(deadline) > wait
+}
+
+// sleep waits d or until ctx ends, answering ctx's error in that case.
+func sleep(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // send builds and issues the request on the client [Request.mutates] chooses,
@@ -1214,10 +1313,13 @@ func (c *Conn) send(ctx context.Context, req *Request, target string, prepare fu
 	}
 	r = prepare(r)
 	client := c.read
-	if req.mutates() {
+	switch {
+	case req.mutates():
 		if paceErr := c.pace(ctx); paceErr != nil {
 			return nil, paceErr
 		}
+		client = c.mutate
+	case req.Credential:
 		client = c.mutate
 	}
 	return client.Do(r)
@@ -1287,6 +1389,12 @@ func (c *Conn) withDeadline(ctx context.Context) (context.Context, context.Cance
 	return context.WithDeadline(ctx, start.Add(max(c.budget.OperationTimeout, 0)))
 }
 
+// Bound is ctx under the deadline [Conn.Do] gives the operation ctx belongs
+// to, for a caller that waits between that operation's requests.
+func (c *Conn) Bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	return c.withDeadline(ctx)
+}
+
 // acquire bounds concurrency per instance, more for reads than for mutations.
 func (c *Conn) acquire(ctx context.Context, req *Request) error {
 	slots := c.readSlots
@@ -1326,12 +1434,8 @@ func (c *Conn) pace(ctx context.Context) error {
 	}
 	if !c.lastMutate.IsZero() {
 		if wait := c.budget.MutationInterval - time.Since(c.lastMutate); wait > 0 {
-			timer := time.NewTimer(wait)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				return ctx.Err()
+			if err := sleep(ctx, wait); err != nil {
+				return err
 			}
 		}
 	}
@@ -1467,13 +1571,9 @@ func familyEntry(ctx context.Context, ex Exchange, fe *forgeapi.Error, cause str
 
 // Refuse is the capability refusal: no request, one dedicated code, and the
 // operation, the capability and the evidence detection holds for the verdict.
-//
-// The message is worded from the SUPPORT VALUE rather than from the refusal, because
-// the two verdicts it refuses on are different facts. A capability detection read as
-// absent is one thing; one it could not establish, which an instance with its
-// document switched off produces, is another, and asserting the first for the second
-// tells a user their forge lacks a feature it may well have. The evidence says which,
-// and now so does the message.
+// The message follows the support value, because a capability detected as absent
+// and one detection could not establish (an instance with its document switched
+// off) are different facts, and only the first says the forge lacks it.
 func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capability, support forgeapi.Support, ev forgeapi.Evidence) *forgeapi.Error {
 	message := "no " + string(capability) + " capability could be established on this instance"
 	if support == forgeapi.SupportNo {

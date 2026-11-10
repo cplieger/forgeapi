@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"log/slog"
 	"net/url"
 	"time"
 
@@ -51,66 +50,53 @@ func ended(rec *Record, st standing) error {
 // rotation lost its compare-and-swap to a record saved during the refresh.
 const maxTurns = 2
 
-// Source is the [forgeapi.CredentialSource] one connection runs behind: the
-// refresh state machine over the record a store holds under one key. A record is
-// valid until the time left to its expiry is inside the refresh lead, then due,
-// and the next Token refreshes it under the key's one owner in its store while
-// every other caller for that key waits, bounded by its own context. It is safe
-// for concurrent use.
-type Source struct {
-	store    Store
-	logger   *slog.Logger
-	counters forgeapi.Counters
-	conn     forgeapi.Connection
-	key      string
-	set      forgeapi.Settings
-	lead     time.Duration
+// StoredSource is the [forgeapi.CredentialSource] one connection runs behind:
+// the refresh state machine over the record a store holds under one key. A
+// record is valid until the time left to its expiry is inside the refresh lead,
+// then due, and the next Token refreshes it under the key's one owner in its
+// store while every other caller for that key waits, bounded by its own
+// context. It is safe for concurrent use.
+type StoredSource struct {
+	store Store
+	renew renewal
+	conn  forgeapi.Connection
+	key   string
+	set   forgeapi.Settings
 }
 
-var _ forgeapi.CredentialSource = (*Source)(nil)
+var _ forgeapi.CredentialSource = (*StoredSource)(nil)
 
-// NewSource builds the source for the record under key in store, refreshing it
-// through conn's trust material, proxy and address policy. It reads the refresh
-// lead, the logger, the counters and the two per-connection postures from opts,
-// sends nothing, and refuses a negative lead with [forgeapi.CodeBudgetInvalid] and
-// a connection a client could not run with that connection's own refusal.
+// NewStoredSource builds the source for the record under key in store,
+// refreshing it through conn's trust material, proxy and address policy. It
+// reads the refresh lead, the logger, the counters and the two per-connection
+// postures from opts, sends nothing, and refuses a negative lead with
+// [forgeapi.CodeBudgetInvalid] and a connection a client could not run with
+// that connection's own refusal.
 //
 //nolint:gocritic // hugeParam: the connection by value is the published signature's own parameter
-func NewSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*Source, error) {
+func NewStoredSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*StoredSource, error) {
 	set := forgeapi.Resolve(opts...)
-	if set.RefreshLead < 0 {
-		return nil, transport.Local(forgeapi.CodeBudgetInvalid, "the refresh lead is negative")
+	renew, err := newRenewal(&set)
+	if err != nil {
+		return nil, err
 	}
 	ep, err := transport.OpenEndpoint(&conn, &set, forgeapi.FamilyUnknown)
 	if err != nil {
 		return nil, err
 	}
 	ep.Close()
-	logger := set.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &Source{
-		store: store, logger: logger, counters: set.Counters, set: set,
-		conn: conn, key: key, lead: set.RefreshLead,
-	}, nil
+	return &StoredSource{store: store, renew: renew, set: set, conn: conn, key: key}, nil
 }
 
-// Token answers the stored token, refreshing it first where it is due. A refresh
-// that fails before the instance issues anything hands the still-valid token over,
-// and fails the call only once that token has expired. A refresh whose new pair
-// could not be read, its body undecodable or lost on the way, fails the call and
-// marks the record [UsabilitySpent], because the instance spent the stored pair. A
-// refresh whose new pair the store could not take fails the call with the store's
-// error and holds the pair: the next call for the key stores it before anything
-// else, sending no refresh, and answers from it, unless the stored record is no
-// longer the one the pair was rotated from. A waiter fails with its own context's
-// error. Reconnect-required fails with [forgeapi.CodeReconnectRequired], and so
-// does a record marked [UsabilitySpent] or [UsabilityReconnectRequired], with a
-// message naming the mark. What a refresh learns is written to the record, and a
-// mark the store could not take is written by the next call for the key whose
-// write succeeds.
-func (s *Source) Token(ctx context.Context) (string, error) {
+// Token answers the stored token, refreshing it first where it is due. A failed
+// refresh hands over the still-valid token, failing only once it has expired. A
+// lost or undecodable new pair fails the call and marks the record
+// [UsabilitySpent]. A new pair the store refused fails with the store's error and
+// is held: the next call stores it first, sending no refresh, unless the record
+// has changed since. A marked or reconnect-required record fails with
+// [forgeapi.CodeReconnectRequired] naming why; a waiter fails with its context's
+// error. A mark the store refused is written by the next call that can write.
+func (s *StoredSource) Token(ctx context.Context) (string, error) {
 	rot := s.store.acquire(s.key)
 	gone := false
 	defer func() { s.store.release(rot, gone) }()
@@ -146,7 +132,7 @@ func (s *Source) Token(ctx context.Context) (string, error) {
 
 // Kind answers the stored record's kind, the unknown member where none is stored
 // or the store cannot be read.
-func (s *Source) Kind() forgeapi.CredKind {
+func (s *StoredSource) Kind() forgeapi.CredKind {
 	rec, ok, err := s.store.Load(s.key)
 	if err != nil || !ok {
 		return forgeapi.CredKindUnknown
@@ -158,24 +144,24 @@ func (s *Source) Kind() forgeapi.CredKind {
 // anything, and [forgeapi.CredUnknown] where the store cannot be read. A record
 // whose rotated pair is held for the next call to store is refresh-due, since the
 // connection needs work from the library and not from a human.
-func (s *Source) State() forgeapi.CredState {
+func (s *StoredSource) State() forgeapi.CredState {
 	rec, ok, err := s.store.Load(s.key)
 	if err != nil {
 		return forgeapi.CredUnknown
 	}
 	rot := s.store.peek(s.key)
-	return stateOf(rot, s.standing(rot, &rec, ok, time.Now()))
+	return s.standing(rot, &rec, ok, time.Now()).phase().state(rot.owner)
 }
 
-// StoredToken answers the stored token and the state [Source.State] reports for it,
-// from one read of the store, without sending, writing or waiting on a refresh
-// another call holds. A record State reads as reconnect-required fails with
-// [forgeapi.CodeReconnectRequired] and a message naming why. Where a rotated pair
-// waits for the next [Source.Token] call to store it, the pair's token is answered. A
-// token past its expiry while its refresh is due or in flight, or a held pair whose
-// token expired or whose refresh token lapsed, fails as transient and retryable. A
-// store that cannot be read fails with the store's error and [forgeapi.CredUnknown].
-func (s *Source) StoredToken() (token string, state forgeapi.CredState, err error) {
+// StoredToken answers the stored token and the state [StoredSource.State]
+// reports for it, from one read of the store, never sending, writing or waiting
+// on a refresh. A reconnect-required record fails with
+// [forgeapi.CodeReconnectRequired] naming why. Where a rotated pair waits to be
+// stored, its token is answered. An expired token whose refresh is due or in
+// flight, or a held pair whose token expired or whose refresh token lapsed,
+// fails as transient and retryable. A store that cannot be read fails with the
+// store's error and [forgeapi.CredUnknown].
+func (s *StoredSource) StoredToken() (token string, state forgeapi.CredState, err error) {
 	rec, ok, err := s.store.Load(s.key)
 	if err != nil {
 		return "", forgeapi.CredUnknown, err
@@ -183,7 +169,7 @@ func (s *Source) StoredToken() (token string, state forgeapi.CredState, err erro
 	rot := s.store.peek(s.key)
 	now := time.Now()
 	st := s.standing(rot, &rec, ok, now)
-	state = stateOf(rot, st)
+	state = st.phase().state(rot.owner)
 	if state == forgeapi.CredReconnectRequired {
 		return "", state, ended(&rec, st)
 	}
@@ -208,19 +194,15 @@ func renewable(rec *Record, message string) error {
 	}
 }
 
-// stateOf is the state a record standing at st reports, refreshing where rot has a
-// refresh in flight.
-func stateOf(rot *rotation, st standing) forgeapi.CredState {
+// phase is where a record standing at st sits for the state it reports.
+func (st standing) phase() phase {
 	switch st {
 	case standValid:
-		return forgeapi.CredValid
+		return phaseValid
 	case standDue:
-		if rot.refreshing() {
-			return forgeapi.CredRefreshing
-		}
-		return forgeapi.CredRefreshDue
+		return phaseDue
 	}
-	return forgeapi.CredReconnectRequired
+	return phaseEnded
 }
 
 // standing reads a record against the machine. A marked record, by the store or by
@@ -231,7 +213,7 @@ func stateOf(rot *rotation, st standing) forgeapi.CredState {
 // token that never expires: it reads as reconnect-required, as an unknown kind does.
 // A record whose rotated pair the key's custody holds is due whatever its expiry,
 // because the next refresh stores that pair in place of sending one.
-func (s *Source) standing(rot *rotation, rec *Record, ok bool, now time.Time) standing {
+func (s *StoredSource) standing(rot *rotation, rec *Record, ok bool, now time.Time) standing {
 	mark := cmp.Or(rec.Usability, rot.markFor(rec))
 	switch {
 	case !ok:
@@ -249,7 +231,7 @@ func (s *Source) standing(rot *rotation, rec *Record, ok bool, now time.Time) st
 		return standValid
 	case rec.Kind != forgeapi.CredKindRotatingOAuth, rec.Expiry.IsZero():
 		return standGone
-	case rec.Expiry.Sub(now) > s.leadFor(rec):
+	case s.renew.fresh(rec.Issued, rec.Expiry, now):
 		return standValid
 	}
 	if _, refreshable := endpointsOf(rec.Family); !refreshable || rec.RefreshToken == "" {
@@ -264,27 +246,16 @@ func (s *Source) standing(rot *rotation, rec *Record, ok bool, now time.Time) st
 	return standDue
 }
 
-// leadFor is the refresh lead for one record: the option's value, or half the
-// lifetime the record was issued with where that is shorter, so a short lifetime
-// cannot make every fresh token due on arrival.
-func (s *Source) leadFor(rec *Record) time.Duration {
-	lifetime := rec.Expiry.Sub(rec.Issued)
-	if rec.Issued.IsZero() || lifetime <= 0 {
-		return s.lead
-	}
-	return min(s.lead, lifetime/2)
-}
-
 // refresh rotates the record under the key's single owner. It reads the record
 // again once it owns the key, because the owner before it may have rotated it
 // already. replaced reports a rotation that lost its compare-and-swap to a record
 // saved while it was in flight, or a held pair stored in place of a refresh, either
 // of which the caller reads afresh.
-func (s *Source) refresh(ctx context.Context, rot *rotation) (token string, replaced bool, err error) {
-	if waitErr := rot.take(ctx); waitErr != nil {
+func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string, replaced bool, err error) {
+	if waitErr := rot.owner.take(ctx); waitErr != nil {
 		return "", false, waitErr
 	}
-	defer rot.give()
+	defer rot.owner.give()
 	// A call this one waited behind may have held a pair it could not store, which
 	// replaced the stored refresh token, so that pair is stored rather than a
 	// refresh sent with a spent token.
@@ -308,9 +279,9 @@ func (s *Source) refresh(ctx context.Context, rot *rotation) (token string, repl
 		return "", false, ended(&cur, st)
 	}
 
-	rot.setBusy(true)
+	rot.owner.setBusy(true)
 	next, status, v, err := s.exchange(ctx, &cur)
-	rot.setBusy(false)
+	rot.owner.setBusy(false)
 	if v != rotated && s.replaced(&cur) {
 		return "", true, nil
 	}
@@ -337,7 +308,7 @@ func (s *Source) refresh(ctx context.Context, rot *rotation) (token string, repl
 // since the pair is live upstream and in this process's hands; one that reached the
 // file unproved fails the call too, with the pair at the name. A record saved while
 // the rotation was in flight keeps its place, and the caller reads it afresh.
-func (s *Source) storeRotated(rot *rotation, cur, next *Record, status int) (token string, replaced bool, err error) {
+func (s *StoredSource) storeRotated(rot *rotation, cur, next *Record, status int) (token string, replaced bool, err error) {
 	swapped, err := rot.swap(cur, next)
 	switch {
 	case errors.Is(err, errNotDurable):
@@ -359,14 +330,14 @@ func (s *Source) storeRotated(rot *rotation, cur, next *Record, status int) (tok
 // whose write failed: it takes the key's owner, bounded by ctx, and stores the pair
 // before anything else, so no refresh is sent with the refresh token that pair
 // replaced, and a pair whose base record is no longer stored is dropped at once.
-func (s *Source) storeHeld(ctx context.Context, rot *rotation) error {
+func (s *StoredSource) storeHeld(ctx context.Context, rot *rotation) error {
 	if _, _, ok := rot.held(); !ok {
 		return nil
 	}
-	if err := rot.take(ctx); err != nil {
+	if err := rot.owner.take(ctx); err != nil {
 		return err
 	}
-	defer rot.give()
+	defer rot.owner.give()
 	_, err := s.storeHeldOwned(rot)
 	return err
 }
@@ -379,7 +350,7 @@ func (s *Source) storeHeld(ctx context.Context, rot *rotation) error {
 // record the key no longer holds. A write that reached the file unproved has the
 // pair at the name, so it drops the pair too and answers its error, as a rotation's
 // own write does.
-func (s *Source) storeHeldOwned(rot *rotation) (bool, error) {
+func (s *StoredSource) storeHeldOwned(rot *rotation) (bool, error) {
 	base, pair, ok := rot.held()
 	if !ok {
 		return false, nil
@@ -403,7 +374,7 @@ func (s *Source) storeHeldOwned(rot *rotation) (bool, error) {
 // replaced reports whether the stored record is no longer cur, which is a connect
 // or a reconnect saved while cur's refresh was in flight. A refresh that did not
 // rotate then says nothing about the connection, and the caller reads it afresh.
-func (s *Source) replaced(cur *Record) bool {
+func (s *StoredSource) replaced(cur *Record) bool {
 	stored, ok, err := s.store.Load(s.key)
 	return err == nil && ok && !same(&stored, cur)
 }
@@ -437,7 +408,7 @@ const (
 // The request runs on a context the caller cannot cancel, bounded by the
 // connection's operation deadline: a refresh the instance has processed has
 // already spent the old pair, and the answer is the only copy of the new one.
-func (s *Source) exchange(ctx context.Context, cur *Record) (next Record, status int, v verdict, err error) {
+func (s *StoredSource) exchange(ctx context.Context, cur *Record) (next Record, status int, v verdict, err error) {
 	ends, _ := endpointsOf(cur.Family)
 	conn := s.conn
 	conn.WebBaseURL = cur.WebBaseURL
@@ -482,7 +453,7 @@ func keep(cur *Record, err error) (token string, replaced bool, failure error) {
 // lapse records a refresh token found past its own expiry, counting the outcome
 // the first time it is found for that record. It writes no mark, since every
 // reader derives the lapse from the record.
-func (s *Source) lapse(rot *rotation, rec *Record) {
+func (s *StoredSource) lapse(rot *rotation, rec *Record) {
 	if rot.end(rec, UsabilityUnmarked, false) {
 		s.outcome(rec, forgeapi.CredReconnectRequired, 0, "the refresh token is past its own expiry")
 	}
@@ -491,29 +462,15 @@ func (s *Source) lapse(rot *rotation, rec *Record) {
 // mark records a terminal refresh outcome for cur and writes its mark to the
 // store, by compare-and-swap over cur, so a record saved since is never marked.
 // Where the store cannot take it, the mark stays owed in the key's custody.
-func (s *Source) mark(rot *rotation, cur *Record, mark Usability, status int, failure string) {
+func (s *StoredSource) mark(rot *rotation, cur *Record, mark Usability, status int, failure string) {
 	rot.end(cur, mark, true)
 	rot.settle()
 	s.outcome(cur, forgeapi.CredReconnectRequired, status, failure)
 }
 
-// outcome counts and records one refresh outcome by the state it reached. The
-// line names the family, the instance and the status, never a token.
-func (s *Source) outcome(rec *Record, reached forgeapi.CredState, status int, failure string) {
-	if s.counters.RefreshOutcome != nil {
-		s.counters.RefreshOutcome(rec.Family, reached)
-	}
-	level := slog.LevelInfo
-	if reached != forgeapi.CredValid {
-		level = slog.LevelWarn
-	}
-	s.logger.Log(context.Background(), level, "forgeapi credential refresh",
-		"family", rec.Family.String(),
-		"instance", hostOf(rec.WebBaseURL),
-		"state", reached.String(),
-		"status", status,
-		"failure", failure,
-	)
+// outcome counts and logs one refresh outcome for rec by the state it reached.
+func (s *StoredSource) outcome(rec *Record, reached forgeapi.CredState, status int, failure string) {
+	s.renew.outcome(rec.Family, hostOf(rec.WebBaseURL), reached, status, failure)
 }
 
 // reconnect is the refusal Token answers once the machine is reconnect-required.

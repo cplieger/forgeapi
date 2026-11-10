@@ -455,12 +455,12 @@ func WithCredentialSource(src CredentialSource) Option {
 }
 
 // WithRefreshLead sets how long before its expiry a rotating credential is due
-// for refresh. The creds package's source reads it and clamps it to half the
+// for refresh. The creds package's sources read it and clamp it to half the
 // lifetime the credential was issued with, so a short lifetime cannot make every
 // fresh token due on arrival.
 //
 // Default: [DefaultRefreshLead]. Zero refreshes a token only once it has
-// expired. A negative d is refused by that source's constructor with
+// expired. A negative d is refused by those sources' constructors with
 // [CodeBudgetInvalid], because a lead of negative size hands over expired tokens.
 func WithRefreshLead(d time.Duration) Option {
 	return optionFunc(func(s *Settings) { s.RefreshLead = d })

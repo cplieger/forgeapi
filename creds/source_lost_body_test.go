@@ -64,7 +64,7 @@ func lostBodyEndpoint(t *testing.T, status int, body string) *endpoint {
 // A success says the instance issued a pair, and both products spend the old pair
 // the moment they issue a new one, so a success whose body did not arrive spent the
 // stored pair: the record says so and nothing is handed over again.
-func TestSource_writes_spent_for_a_success_whose_body_did_not_arrive(t *testing.T) {
+func TestStoredSource_writes_spent_for_a_success_whose_body_did_not_arrive(t *testing.T) {
 	for _, arm := range refreshArms {
 		t.Run(arm.family.String(), func(t *testing.T) {
 			ep := lostBodyEndpoint(t, http.StatusOK, arm.rotated)
@@ -84,7 +84,7 @@ func TestSource_writes_spent_for_a_success_whose_body_did_not_arrive(t *testing.
 // An instance that answered a failure status, or answered nothing, issued no pair,
 // so whatever happened to the body the stored pair is live: nothing is marked, the
 // still-valid token stays in use, and the next call refreshes again.
-func TestSource_reads_a_refresh_that_issued_nothing_as_unspent_whatever_reached_its_body(t *testing.T) {
+func TestStoredSource_reads_a_refresh_that_issued_nothing_as_unspent_whatever_reached_its_body(t *testing.T) {
 	answers := map[string]int{"failure_status_cut_off": http.StatusServiceUnavailable, "no_status": 0}
 	for _, arm := range refreshArms {
 		for name, status := range answers {

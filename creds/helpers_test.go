@@ -154,11 +154,11 @@ func load(t *testing.T, store creds.Store, key string) creds.Record {
 }
 
 // source builds the refresh machine over one stored key.
-func source(t *testing.T, store creds.Store, key string, ep *endpoint, extra ...forgeapi.Option) *creds.Source {
+func source(t *testing.T, store creds.Store, key string, ep *endpoint, extra ...forgeapi.Option) *creds.StoredSource {
 	t.Helper()
-	src, err := creds.NewSource(store, key, ep.conn(), ep.options(extra...)...)
+	src, err := creds.NewStoredSource(store, key, ep.conn(), ep.options(extra...)...)
 	if err != nil {
-		t.Fatalf("Setup: NewSource(%q) = error %v", key, err)
+		t.Fatalf("Setup: NewStoredSource(%q) = error %v", key, err)
 	}
 	return src
 }

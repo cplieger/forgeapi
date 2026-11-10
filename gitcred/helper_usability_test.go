@@ -87,14 +87,14 @@ func TestGet_declines_a_pair_the_servers_refresh_marked(t *testing.T) {
 			rec.Expiry = rec.Issued.Add(time.Minute)
 			rec.Issued = rec.Expiry.Add(-8 * time.Hour)
 			save(t, serverStore, "conn", rec)
-			src, err := creds.NewSource(serverStore, "conn", forgeapi.Connection{WebBaseURL: srv.URL, APIBaseURL: srv.URL},
+			src, err := creds.NewStoredSource(serverStore, "conn", forgeapi.Connection{WebBaseURL: srv.URL, APIBaseURL: srv.URL},
 				forgeapi.WithWireTransport(srv.Client().Transport),
 				forgeapi.WithPlaintextHTTP(true),
 				forgeapi.WithPrivateAddresses(true),
 				forgeapi.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 			)
 			if err != nil {
-				t.Fatalf("Setup: NewSource = error %v", err)
+				t.Fatalf("Setup: NewStoredSource = error %v", err)
 			}
 			if token, tokenErr := src.Token(t.Context()); tokenErr == nil || token != "" {
 				t.Fatalf("Setup: the server's Token() = (%q, %v), want no token: the refresh answer ends this pair", token, tokenErr)

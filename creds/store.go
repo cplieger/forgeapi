@@ -61,20 +61,13 @@ type FileStore struct {
 var _ Store = (*FileStore)(nil)
 
 // OpenFileStore opens the store in dir, an absolute path, creating that one
-// directory level at 0700 where it is absent. A directory that exists with group or
-// other access, or that another user owns, is refused rather than repaired, and so
-// is every later read or write once it is found that way. It reads the logger and
-// the counters from opts.
+// directory level at 0700 where it is absent. A directory with group or other
+// access, or owned by another user, is refused, then and at every later read or
+// write. It reads the logger and the counters from opts.
 //
-// A store directory has exactly one refreshing process: the one whose
-// [Source.Token] calls keep its records fresh. Another process may open the same
-// directory to read it, as the git credential helper does, since a reader never
-// refreshes. Two refreshing processes are outside what the store supports: a
-// terminal answer one meets for a refresh token the other just spent can mark the
-// record before the other stores the pair it rotated, and since a rotation's
-// compare-and-swap is over the whole record, the mark included, that pair is never
-// stored and the connection needs a reconnect. Nothing detects a second refreshing
-// process.
+// Exactly one process may refresh from a directory, the one calling
+// [StoredSource.Token]; readers such as the git credential helper may share it.
+// Nothing detects a second refresher, which can lose a rotated pair.
 func OpenFileStore(dir string, opts ...forgeapi.Option) (*FileStore, error) {
 	set := forgeapi.Resolve(opts...)
 	logger := set.Logger
@@ -176,7 +169,7 @@ func (s *FileStore) acquire(key string) *rotation {
 	defer s.custodyMu.Unlock()
 	r, ok := s.custody[key]
 	if !ok {
-		r = &rotation{owner: make(chan struct{}, 1), store: s, key: key}
+		r = &rotation{owner: newOwner(), store: s, key: key}
 		s.custody[key] = r
 	}
 	r.holders++
@@ -191,7 +184,7 @@ func (s *FileStore) peek(key string) *rotation {
 	if r, ok := s.custody[key]; ok {
 		return r
 	}
-	return &rotation{owner: make(chan struct{}, 1), store: s, key: key}
+	return &rotation{owner: newOwner(), store: s, key: key}
 }
 
 // release ends one holder's use of r; gone records that the holder found no
@@ -277,7 +270,7 @@ func (s *FileStore) write(recs map[string]Record, family forgeapi.Family) error 
 // different record is stored, and where the store could not take the mark, the mark
 // is owed until a later write for the key succeeds.
 type rotation struct {
-	owner chan struct{}
+	owner *owner
 	store *FileStore
 	// ended is the record the outcome was reached for, and mark what the outcome
 	// writes to it: UsabilityUnmarked for a refresh token past its own expiry,
@@ -294,39 +287,11 @@ type rotation struct {
 	mu   sync.Mutex
 	// holders and gone are the store's, under its custodyMu.
 	holders int
-	busy    bool
 	owed    bool
 	gone    bool
 }
 
-// take makes the caller the key's refresh owner, waiting no longer than ctx allows.
-func (r *rotation) take(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	select {
-	case r.owner <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (r *rotation) give() { <-r.owner }
-
 func (r *rotation) swap(prev, next *Record) (bool, error) { return r.store.swap(r.key, prev, next) }
-
-func (r *rotation) setBusy(busy bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.busy = busy
-}
-
-func (r *rotation) refreshing() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.busy
-}
 
 // end records the terminal outcome reached for rec and the mark it writes, owed
 // to the store where owed is set, and reports whether this call reached it first,
