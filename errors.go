@@ -502,8 +502,10 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// Kind is the class of failure.
 	Kind ErrorKind
 	// Retryable reports whether another attempt may succeed, not that this
-	// library made one: a transport failure, a throttle, and a 408, 429 or
-	// 5xx status. Whether to try again, and when, is the caller's decision.
+	// library made one: a transport failure other than a TLS or
+	// address-policy refusal, a throttle, and a 408, 429 or 5xx status other
+	// than 501, 505, 506, 508, 510 and 511, whose answer repeats. Whether to
+	// try again, and when, is the caller's decision.
 	Retryable bool
 	// Message is upstream's own message, with the request's credential and the
 	// connection's own header values redacted out of it, sanitized and bounded.

@@ -838,8 +838,5 @@ func mapper(op string, status int, header http.Header, _ string) (kind forgeapi.
 	case http.StatusTooManyRequests:
 		return forgeapi.KindRateLimited, ""
 	}
-	if status >= 500 {
-		return forgeapi.KindUpstream, ""
-	}
 	return forgeapi.KindUpstream, ""
 }

@@ -295,12 +295,7 @@ func retriedOn(resp *http.Response, err error) string {
 // since each carries a full URL. A wire transport that wraps a client returns one
 // of its own, which the client then wraps again.
 func causeText(err error) string {
-	for {
-		if _, ok := errors.AsType[*url.Error](err); !ok {
-			return sanitize(err.Error())
-		}
-		err = httpclient.LogSafeError(err)
-	}
+	return sanitize(httpclient.LogSafeError(err).Error())
 }
 
 // observeDropped hands the governor the budget reported by an answer [Conn.answer]
