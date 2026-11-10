@@ -2,10 +2,7 @@ package transport
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
-	"net"
-	"net/http"
 	"net/url"
 	"time"
 
@@ -15,17 +12,19 @@ import (
 )
 
 // Retryable is the one rule behind [forgeapi.Error.Retryable]: another attempt
-// may succeed after a transport failure or a throttle, and on a status saying the
-// instance could not answer this time (408, 429, any 5xx).
+// may succeed after a transport failure or a throttle, and on a status
+// httpclient's retry rule accepts, one saying the instance could not answer this
+// time (408, 429, and a 5xx other than 501, 505, 506, 508, 510 and 511).
 func Retryable(kind forgeapi.ErrorKind, status int) bool {
 	return kind == forgeapi.KindTransient || kind == forgeapi.KindRateLimited || httpclient.IsRetryableStatus(status)
 }
 
 // failureOf classifies a failure that reached no status by what another attempt
-// can change. A TLS verdict and an address-policy refusal need a changed
+// can change. A TLS verdict ([httpclient.CauseTLS]: a certificate, a fatal alert
+// or a plain-HTTP answer) and an address-policy refusal need a changed
 // connection; everything else the network did may pass on its own.
 func failureOf(err error) (code string, kind forgeapi.ErrorKind) {
-	if tlsRefused(err) {
+	if httpclient.CauseOf(err) == httpclient.CauseTLS {
 		return forgeapi.CodeTLSRefused, forgeapi.KindUpstream
 	}
 	if se, ok := errors.AsType[*ssrf.Error](err); ok && se.Kind != ssrf.KindDNSFailed {
@@ -38,24 +37,6 @@ func failureOf(err error) (code string, kind forgeapi.ErrorKind) {
 		return "", forgeapi.KindUpstream
 	}
 	return forgeapi.CodeUnreachable, forgeapi.KindTransient
-}
-
-// tlsRefused reports a handshake no retry fixes. A fatal alert from the peer is
-// an *net.OpError whose Op is "remote error", because crypto/tls keeps the alert
-// type unexported (go1.27 crypto/tls/conn.go, readRecordOrCCS); only its text
-// separates one alert from another, so every fatal alert counts.
-func tlsRefused(err error) bool {
-	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
-		return true
-	}
-	if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
-		return true
-	}
-	if errors.Is(err, http.ErrSchemeMismatch) {
-		return true
-	}
-	op, ok := errors.AsType[*net.OpError](err)
-	return ok && op.Op == "remote error"
 }
 
 // transportError maps a failure that never reached a status. The operation's own
