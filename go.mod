@@ -1,6 +1,6 @@
 module github.com/cplieger/forgeapi/v2
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/cplieger/go/filesafe v1.0.0
