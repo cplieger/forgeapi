@@ -2,8 +2,8 @@ github.com/cplieger/go/filesafe v1.0.0 h1:V63mC2Kc1PlbAKhiCXMA5WiellXJtWPtNJwTG2
 github.com/cplieger/go/filesafe v1.0.0/go.mod h1:Pu9t7x6mRQwXm09EdWaQvVK++fpjgGP7+58XiMxGYks=
 github.com/cplieger/go/httpcache v1.0.0 h1:E4CZnZS1hkPohuuye53JNTR8e+B4LWvrS5mMLgue+Vo=
 github.com/cplieger/go/httpcache v1.0.0/go.mod h1:WklLwWDbPjBKG+pc3BkoSNRF/lwxUuUa3Yi4oZRFJSw=
-github.com/cplieger/go/httpclient v1.0.0 h1:Zazv7T2hmdhEe6ESjQOULboadtGM/2PKRoBb9/Sf8mA=
-github.com/cplieger/go/httpclient v1.0.0/go.mod h1:zXZyXwYWXVujBH7qoNR16WYGHOGCo8hbJb0Gy8gNgBQ=
+github.com/cplieger/go/httpclient v1.1.0-dev.1 h1:UIU9dimhFtx/ru3O7AqhqsznJoRIje91FGa9YLCf5Fc=
+github.com/cplieger/go/httpclient v1.1.0-dev.1/go.mod h1:zXZyXwYWXVujBH7qoNR16WYGHOGCo8hbJb0Gy8gNgBQ=
 github.com/cplieger/go/jsonx v1.0.0 h1:tk8DmKIHoMBVvNbFJ7a0IFNPo8vdLy4g9BOBj3HoE4Y=
 github.com/cplieger/go/jsonx v1.0.0/go.mod h1:ank2TTHUDI/GrTBZ/KAwU72ECOdrCCDDYqlRSuR/+BQ=
 github.com/cplieger/go/ssrf v1.0.0 h1:AEex9GGBHsn+NL2ySAFETK3YwUk09Hi/Z7qNHhO3YcM=
