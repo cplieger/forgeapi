@@ -13,8 +13,7 @@ import (
 
 // Retryable is the one rule behind [forgeapi.Error.Retryable]: another attempt
 // may succeed after a transport failure or a throttle, and on a status
-// httpclient's retry rule accepts, one saying the instance could not answer this
-// time (408, 429, and a 5xx other than 501, 505, 506, 508, 510 and 511).
+// httpclient.IsRetryableStatus accepts.
 func Retryable(kind forgeapi.ErrorKind, status int) bool {
 	return kind == forgeapi.KindTransient || kind == forgeapi.KindRateLimited || httpclient.IsRetryableStatus(status)
 }
