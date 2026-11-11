@@ -427,9 +427,7 @@ func (c *Client) productDetail() string {
 // on this surface, the merge state, rides the pull-request record's own mergeable
 // flag, which every read of a pull request already carries. So a credential that can read a pull
 // request can read its merge state, and there is nothing separate to probe.
-//
-//nolint:revive // unused-parameter: the context is the published signature's, and this accessor answers from the record every pull-request read already carries, so it performs no I/O
-func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error) {
+func (*Client) GrantCaps(context.Context) (forgeapi.GrantCaps, error) {
 	return forgeapi.GrantCaps{
 		Caps: map[forgeapi.Capability]forgeapi.Support{forgeapi.CapReadMergeState: forgeapi.SupportYes},
 	}, nil
