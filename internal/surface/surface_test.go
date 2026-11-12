@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/internal/surface"
+	"github.com/cplieger/forgeapi/v2/internal/surface"
 )
 
 const fixtureModule = "module example.com/fx\n\ngo 1.27\n"

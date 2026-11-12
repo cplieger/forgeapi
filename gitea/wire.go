@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // The checks a decoded body can fail, each the cause its failure line names.
@@ -837,9 +837,6 @@ func mapper(op string, status int, header http.Header, _ string) (kind forgeapi.
 		return forgeapi.KindForbidden, forgeapi.CodeRepoArchived
 	case http.StatusTooManyRequests:
 		return forgeapi.KindRateLimited, ""
-	}
-	if status >= 500 {
-		return forgeapi.KindUpstream, ""
 	}
 	return forgeapi.KindUpstream, ""
 }

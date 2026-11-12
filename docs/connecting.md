@@ -10,7 +10,7 @@ This page covers how a client reaches an instance, with the connection settings,
 - `APIBaseURL` is optional. When it is empty, each family derives it from `WebBaseURL`.
 - `CABytes` is an optional PEM bundle for an instance with a private certificate authority. It replaces the system trust store for that connection rather than adding to it.
 - `ClientCert` and `ClientKey` are an optional pair for mutual TLS. A pair with only one half is refused.
-- `Proxy` is the proxy this connection's traffic leaves through, as a URL. The library never reads `HTTPS_PROXY`, `HTTP_PROXY` or `NO_PROXY`.
+- `Proxy` is the proxy this connection's traffic leaves through, as an `http`, `https`, `socks5` or `socks5h` URL. Any other scheme is refused with `CodeConnectionInvalid`. The library never reads `HTTPS_PROXY`, `HTTP_PROXY` or `NO_PROXY`.
 - `Headers` are extra request headers sent on every request to this connection, for a gateway in front of a self-hosted instance. A redirect that changes the scheme, host or port drops them. The names `forgeapi.ReservedHeaders` returns are refused rather than overridden.
 
 The credential is the `WithCredentialSource` option. A family's constructor refuses a connection without one rather than sending anonymous requests.

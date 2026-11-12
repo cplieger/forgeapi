@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,7 +20,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // counterSpy records every counter this library fires, by name, so an assertion names
@@ -310,6 +311,48 @@ func TestAMalformedProxyIsRefusedRatherThanDialledDirect(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAProxyWithNoPortIsDialableOnItsSchemesDefault holds the socket's port set to
+// the port net/http dials for a proxy URL that states none: 80 for http, 443 for
+// https, 1080 for socks5 and socks5h. A schemeless value never gets here: Open
+// refuses it (TestAMalformedProxyIsRefusedRatherThanDialledDirect).
+func TestAProxyWithNoPortIsDialableOnItsSchemesDefault(t *testing.T) {
+	web, err := url.Parse("https://forge.example.com")
+	if err != nil {
+		t.Fatalf("Setup: parsing the web base: %v", err)
+	}
+	set := settingsFor()
+	direct := allowedPorts(web, set)
+	for _, test := range []struct {
+		name  string
+		proxy string
+		want  uint16
+	}{
+		{name: "http", proxy: "http://proxy.example.com", want: 80},
+		{name: "http_with_credentials", proxy: "http://user:pass@proxy.example.com/", want: 80},
+		{name: "https", proxy: "https://proxy.example.com", want: 443},
+		{name: "socks5", proxy: "socks5://proxy.example.com", want: 1080},
+		{name: "socks5h", proxy: "socks5h://proxy.example.com", want: 1080},
+		{name: "a_stated_port_wins", proxy: "http://proxy.example.com:3128", want: 3128},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := dialablePorts(web, test.proxy, set)
+			if !slices.Contains(got, test.want) {
+				t.Errorf("dialablePorts with proxy %q = %v, want %d among them", test.proxy, got, test.want)
+			}
+		})
+	}
+	t.Run("a_stated_port_adds_no_default", func(t *testing.T) {
+		if got := dialablePorts(web, "http://proxy.example.com:3128", set); slices.Contains(got, 80) {
+			t.Errorf("dialablePorts with a proxy stating 3128 = %v, want no 80", got)
+		}
+	})
+	t.Run("an_unknown_scheme_adds_nothing", func(t *testing.T) {
+		if got := dialablePorts(web, "ftp://proxy.example.com", set); !slices.Equal(got, direct) {
+			t.Errorf("dialablePorts with an ftp proxy = %v, want %v", got, direct)
+		}
+	})
 }
 
 // TestADialFailureIsLoggedThroughTheConnectionsLogger holds WithLogger's contract
@@ -609,15 +652,10 @@ func TestAHeaderValueIsRefusedOnlyForAControlByte(t *testing.T) {
 	}
 }
 
-// TestAZeroConcurrencyLimitIsRefusedAtConstruction holds the two budget knobs whose
-// zero is refused rather than installed, against the doc comments that publish that.
-//
-// A concurrency limit of zero admits no request, so a client carrying one could run
-// no operation at all. Handing it back would make every call fail for a reason the
-// caller has to work out, where the named code at construction says which option did
-// it; and with one configuration door the zero cannot be read as a request for the
-// default. These two options have no other caller in the tree, which is what makes
-// the pairing between each clause and this refusal worth pinning.
+// TestAZeroConcurrencyLimitIsRefusedAtConstruction holds the two budget knobs
+// whose zero is refused rather than installed, against the doc comments that
+// publish that: a zero concurrency limit admits no request, so the named code at
+// construction says which option did it.
 func TestAZeroConcurrencyLimitIsRefusedAtConstruction(t *testing.T) {
 	for _, test := range []struct {
 		name   string

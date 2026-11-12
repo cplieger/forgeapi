@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // detectServer answers the two reads detection makes and nothing else: the version

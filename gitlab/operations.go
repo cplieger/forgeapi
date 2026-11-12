@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // maxStatusPageItems is the page size the folded-status read asks for, which is this

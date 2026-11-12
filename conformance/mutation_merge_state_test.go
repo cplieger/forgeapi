@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // githubMergeStates are the mergeability GitHub's REST pull-request record can carry:

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 const custodyRotated = `{"access_token":"token-new","token_type":"bearer","scope":"repo","expires_in":28800,"refresh_token":"refresh-new","refresh_token_expires_in":15897600}`
@@ -132,16 +132,16 @@ func (f *custodyFixture) remove(t *testing.T) {
 	}
 }
 
-func (f *custodyFixture) source(t *testing.T) *Source {
+func (f *custodyFixture) source(t *testing.T) *StoredSource {
 	t.Helper()
-	src, err := NewSource(f.store, "conn", forgeapi.Connection{WebBaseURL: f.srv.URL},
+	src, err := NewStoredSource(f.store, "conn", forgeapi.Connection{WebBaseURL: f.srv.URL},
 		forgeapi.WithWireTransport(f.srv.Client().Transport),
 		forgeapi.WithPlaintextHTTP(true),
 		forgeapi.WithPrivateAddresses(true),
 		forgeapi.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
 	if err != nil {
-		t.Fatalf("Setup: NewSource: %v", err)
+		t.Fatalf("Setup: NewStoredSource: %v", err)
 	}
 	return src
 }

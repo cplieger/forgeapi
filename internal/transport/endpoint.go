@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/httpx/v5"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/httpclient"
 )
 
 // maxEndpointBytes bounds one OAuth endpoint answer, which is a handful of short
@@ -41,19 +41,13 @@ func OpenEndpoint(conn *forgeapi.Connection, set *forgeapi.Settings, family forg
 }
 
 // PostForm sends one form-encoded POST to path under the web base and answers the
-// response WHATEVER its status: an OAuth endpoint answers its outcomes in the body,
-// at 200 on one product and at 400 on another, so the caller reads the body.
-//
-// A body that could not be read, the connection dropping mid-body or the body
-// passing the endpoint's bound, answers the response's status and headers with no
-// body beside the failure, because a token endpoint's success says the instance
-// issued a token whether or not its body arrived. Every other failure answers no
-// response.
-//
-// It takes one attempt, because a token request that reached the instance and lost
-// its answer has already spent the code or the refresh token it carried. It meets
-// neither the mutation gate nor the mutation interval, which govern forge objects
-// rather than the connection's own credential.
+// response whatever its status, since an OAuth endpoint answers its outcomes in the
+// body, at 200 on one product and 400 on another. A body that could not be read
+// answers the status and headers beside the failure, because a token endpoint's
+// success means a token was issued whether or not its body arrived; every other
+// failure answers no response. It takes one attempt, because a lost answer has
+// already spent the code or refresh token it carried, and meets neither the
+// mutation gate nor the interval, which govern forge objects, not credentials.
 func (c *Conn) PostForm(ctx context.Context, op, path string, form url.Values) (*Response, error) {
 	target := strings.TrimSuffix(c.web.String(), "/") + path
 	req := &Request{Op: op, Method: http.MethodPost, AbsoluteURL: target}
@@ -78,12 +72,12 @@ func (c *Conn) PostForm(ctx context.Context, op, path string, form url.Values) (
 	for _, h := range c.headers {
 		r.Header.Set(h.Name, h.Value)
 	}
-	//nolint:bodyclose // httpx.ReadLimitedBody below always closes the body, which the analyzer cannot follow
+	//nolint:bodyclose // httpclient.ReadLimitedBody below always closes the body, which the analyzer cannot follow
 	resp, err := c.mutate.Do(r)
 	if err != nil {
 		return nil, c.transportError(ctx, req, err, started)
 	}
-	body, err := httpx.ReadLimitedBody(resp.Body, maxEndpointBytes)
+	body, err := httpclient.ReadLimitedBody(resp.Body, maxEndpointBytes)
 	if err != nil {
 		lost := &Response{Header: resp.Header, Status: resp.StatusCode, quote: c.quoter("")}
 		return lost, c.bodyError(ctx, req, resp.StatusCode, err, started)
@@ -97,3 +91,9 @@ func (c *Conn) PostForm(ctx context.Context, op, path string, form url.Values) (
 // Sanitize bounds and rune-sanitizes untrusted upstream text for a package that
 // carries it on an error or a log line without importing the sanitizer itself.
 func Sanitize(s string) string { return sanitize(s) }
+
+// RetryAfter is the wait a response's Retry-After header asks for, uncapped,
+// and zero where the header is absent or malformed.
+func RetryAfter(header http.Header) time.Duration {
+	return httpclient.ParseRetryAfterResponse(&http.Response{Header: header})
+}

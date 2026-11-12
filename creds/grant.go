@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // defaultInterval is the polling interval of a device-code answer that states

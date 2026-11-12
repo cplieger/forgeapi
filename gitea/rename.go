@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // address is the repository one call addresses. Both products answer a moved

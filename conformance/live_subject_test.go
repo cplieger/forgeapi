@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // namedPullRequest is the pull request the cases below name through the live lane's

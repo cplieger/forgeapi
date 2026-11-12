@@ -12,7 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // refusingThenServing answers its first request with a 502 and every later one with

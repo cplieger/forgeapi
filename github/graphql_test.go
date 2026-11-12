@@ -2,25 +2,19 @@ package github
 
 import (
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
-// documentCost is the cost every document this family ships is asserted against, as a
-// CEILING at a stated page size rather than as an equality: a document whose cost
-// drops upstream keeps passing, and a caller raising the page size does not turn a
-// measurement into a failure.
-//
-// Measured on api.github.com: at a page of twenty both pull-request documents and the
-// cross-repository search charged one, and at a page of a hundred the list document
-// and the search charged three, which is where this ceiling comes from. The node
-// count tracks what a document REQUESTS rather than what came back, so it is not a
-// cost: the list document charged three at 2,300 requested nodes and at 10,300.
+// documentCost is the ceiling every document this family ships is held to at
+// documentPageSize, so a cost that drops upstream keeps passing. Measured on
+// api.github.com: at a page of a hundred the list document and the search charged
+// three. The node count a document requests is not its cost: the list document
+// charged three at 2,300 requested nodes and at 10,300.
 const documentCost = 3
 
 // documentPageSize is the page size that ceiling is stated at.
@@ -30,16 +24,10 @@ const documentPageSize = 100
 // assertions iterate.
 var documents = []document{prList, prRead, prMine, issueMine, commitRollup, enableAutoMerge, repoOwned}
 
-// TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn holds every document to
-// the selection their prices and their normalizers both rest on.
-//
-// The budget object is the one every query document must carry, because that is where
-// this product reports what the document cost, and a document that stopped selecting
-// it would leave the last call's cost at the request count rather than the billed one.
-//
-// A mutation is the exception the schema makes (ADR-0103): the Mutation root has no
-// rate-limit field, which the endpoint answers as an undefined field, so the arm
-// document opens a named mutation and selects no budget object.
+// TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn holds every query
+// document to selecting the budget object, where this product reports what the
+// document cost. A mutation is the schema's exception (ADR-0103): the Mutation root
+// has no rate-limit field, so the arm document selects no budget object.
 func TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn(t *testing.T) {
 	if len(documents) != 7 {
 		t.Errorf("this family ships %d document(s), want 7: the pull-request list, the single read, the two cross-repository searches, the commit rollup, the auto-merge arm and the owner's repositories", len(documents))
@@ -114,17 +102,10 @@ func TestTheTwoFoldPageSizesAreTheRuleTheyPublish(t *testing.T) {
 	}
 }
 
-// TestTheCommitDocumentResolvesACommitRatherThanAPullRequest holds the one thing that
-// makes the commit rollup a document of its own: the pull-request read resolves a pull
-// request and this one resolves a commit, so neither selection reaches the other's
-// subject.
-//
-// It resolves it by EXPRESSION rather than by object id, and that is what the published
-// parameter requires rather than a preference: the operation takes a REF, a branch name
-// is what a caller reading a repository view has, and the id-typed variable refuses one
-// outright. The live lane caught exactly that as a document refused for its variable's
-// type and a connection degraded to REST from then on, so this row is the one the
-// measurement moved.
+// TestTheCommitDocumentResolvesACommitRatherThanAPullRequest holds the commit
+// rollup to resolving a commit, by expression rather than object id, because the
+// operation takes a ref such as a branch name, which an id-typed variable refuses.
+// The live lane measured that refusal degrading a connection to REST.
 func TestTheCommitDocumentResolvesACommitRatherThanAPullRequest(t *testing.T) {
 	if !strings.Contains(commitRollup.text, "object(expression: $ref)") {
 		t.Error("the CommitRollup document does not resolve a commit by expression, which is what the ref this operation publishes needs: an object-id variable refuses a branch name")
@@ -301,41 +282,6 @@ func TestAnotherCallsContinuationIsRefusedWhereTheBoundAdmitsNoPage(t *testing.T
 			}
 			if got := h.instance.count(); got != 0 {
 				t.Errorf("%s under a zero page cap sent %d request(s), want 0", name, got)
-			}
-		})
-	}
-}
-
-// TestTheDocumentEndpointIsDerivedPerProduct holds the two addressings this family
-// meets. The hosted instance serves its API on a host of its own, so the document sits
-// under that host; an appliance serves a versioned REST root under its own web base and
-// the document endpoint sits BESIDE that root rather than under it, so appending would
-// address a path no instance serves.
-func TestTheDocumentEndpointIsDerivedPerProduct(t *testing.T) {
-	for _, test := range []struct {
-		web  string
-		api  string
-		want string
-	}{
-		{web: "https://github.com", api: "https://api.github.com", want: "https://api.github.com/graphql"},
-		{web: "https://www.github.com", api: "https://api.github.com", want: "https://api.github.com/graphql"},
-		{web: "https://forge.example", api: "https://forge.example/api/v3", want: "https://forge.example/api/graphql"},
-		{web: "http://127.0.0.1:8080", api: "http://127.0.0.1:8080/api/v3", want: "http://127.0.0.1:8080/api/graphql"},
-	} {
-		t.Run(test.web, func(t *testing.T) {
-			web, err := url.Parse(test.web)
-			if err != nil {
-				t.Fatalf("Setup: parsing %q: %v", test.web, err)
-			}
-			if got := deriveAPIBase(web); got != test.api {
-				t.Errorf("deriveAPIBase(%q) = %q, want %q", test.web, got, test.api)
-			}
-			api, err := url.Parse(test.api)
-			if err != nil {
-				t.Fatalf("Setup: parsing %q: %v", test.api, err)
-			}
-			if got := documentURL(api); got != test.want {
-				t.Errorf("documentURL(%q) = %q, want %q", test.api, got, test.want)
 			}
 		})
 	}

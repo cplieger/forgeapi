@@ -2,7 +2,6 @@ package forgeapi_test
 
 import (
 	"bytes"
-	"cmp"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -10,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/internal/surface"
+	"github.com/cplieger/forgeapi/v2/internal/surface"
 )
 
 const (
@@ -71,8 +70,6 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"## package gitea (./gitea)",
 		"## package github (./github)",
 		"## package gitlab (./gitlab)",
-		"## package readcache (./readcache)",
-		"func NewTransport(next http.RoundTripper, opts ...Option) (*Transport, error)",
 		"type Core interface {",
 		"type Support int",
 		"const SupportUnknown Support = iota",
@@ -95,7 +92,7 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"MergePR(ctx context.Context, repo RepoRef, pr PRRef, req MergeRequest) (MergeOutcome, error)",
 		"func Open(ctx context.Context, conn forgeapi.Connection, opts ...forgeapi.Option) (forgeapi.Core, forgeapi.Family, error)",
 		"func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)",
-		"func NewSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*Source, error)",
+		"func NewStoredSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*StoredSource, error)",
 		"func New(store creds.Store, opts ...forgeapi.Option) *Helper",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -136,14 +133,9 @@ func TestFamilyPackagesExportNoTypeButTheClient(t *testing.T) {
 }
 
 // typeName returns the type name a rendered declaration line declares, and
-// reports whether the line declares one at all.
-//
-// It reads the identifier rather than comparing the whole line, because the
-// rendering of one type is not stable under a change that is nobody's business
-// here: a struct with no members renders as "type Client struct{}" and one with
-// unexported members as "type Client struct {", so a line comparison would
-// accuse a family package of exporting some other type on the day Client's last
-// field moves into a shared core.
+// reports whether the line declares one at all. It reads the identifier, not the
+// line, because a struct renders as "type Client struct{}" with no members and
+// "type Client struct {" with unexported ones.
 func typeName(line string) (string, bool) {
 	rest, ok := strings.CutPrefix(line, "type ")
 	if !ok {
@@ -157,24 +149,11 @@ func typeName(line string) (string, bool) {
 }
 
 // TestNoExportedTypeEmbedsAnUnrenderedType closes the one drift class the golden
-// file cannot see on its own.
-//
-// An embedded type promotes ITS exported methods onto the embedding type, and the
-// generator renders declarations, so where the embedded type's own methods are
-// rendered nowhere they reach a consumer while every declaration in the golden
-// stays byte for byte the same. Both shapes are measured. An unexported core
-// carrying RawDo left the golden identical and all gates green, which is how the
-// Raw() escape hatch this design forbids would arrive; and an EXPORTED type in an
-// internal package did the same, which is the shape a transport core shared by
-// three family packages has to take, since it must be nameable there. The
-// interface half is the sharpest of the three: a method added to an interface a
-// consumer implements breaks every implementer, and an unrendered embed is the one
-// way that addition leaves no trace here.
-//
-// The generator renders such an embed as its own line, so its arrival is drift;
-// this names the failure rather than leaving a reader to interpret the diff. When
-// a shared core does land, the promoted surface is what has to be reviewed here,
-// not the line.
+// file cannot see: an embedded type promotes its exported methods onto the
+// embedding type while every rendered declaration stays the same. An unexported
+// core or an exported type in an internal package does that, and a method added
+// to an interface a consumer implements breaks every implementer. When a shared
+// core lands, its promoted surface is what gets reviewed here.
 func TestNoExportedTypeEmbedsAnUnrenderedType(t *testing.T) {
 	got, err := surface.Generate(".")
 	if err != nil {
@@ -210,7 +189,6 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 	const options = "options.go"
 	const defaultPrefix = "Default:"
 	for _, test := range []struct {
-		file          string
 		fn            string
 		defaultClause string
 		zeroClause    string
@@ -236,12 +214,9 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 		{fn: "WithSince", defaultClause: "Default: no bound,", names: []string{"CodeListSinceInvalid"}},
 		{fn: "WithMergeState", defaultClause: "Default: true.", names: []string{"CodeListMergeStateInvalid"}},
 		{fn: "WithReadCache", defaultClause: "Default: [DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and sends every read unconditionally.", names: []string{"CodeBudgetInvalid"}},
-		{file: "readcache/transport.go", fn: "WithMaxBytes", defaultClause: "Default: [forgeapi.DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and adds no validator,", names: []string{"CodeBudgetInvalid"}},
-		{file: "readcache/transport.go", fn: "WithFreeNotModified", defaultClause: "Default: false,"},
-		{file: "readcache/transport.go", fn: "WithHeldFields", defaultClause: "Default: none."},
 	} {
 		t.Run(test.fn, func(t *testing.T) {
-			file := cmp.Or(test.file, options)
+			const file = options
 			doc := funcDoc(t, file, test.fn)
 			var stated []string
 			for line := range strings.SplitSeq(doc, "\n") {

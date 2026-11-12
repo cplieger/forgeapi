@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 var errCut = errors.New("connection cut")
@@ -220,7 +220,6 @@ type gatedAccount struct {
 	account
 }
 
-//deadset:ignore DS1103 -- encoding/json calls it through json.Unmarshaler when the read decodes into a *gatedAccount.
 func (a *gatedAccount) UnmarshalJSON(b []byte) error {
 	if a.slow.Load() {
 		time.Sleep(300 * time.Millisecond)

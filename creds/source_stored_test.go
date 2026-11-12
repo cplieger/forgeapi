@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
 )
 
 // countingStore is a file store that counts its Load calls.
@@ -47,7 +47,7 @@ func widen(t *testing.T, dir string) {
 	})
 }
 
-func TestSource_StoredToken_reads_the_store_once_per_call(t *testing.T) {
+func TestStoredSource_StoredToken_reads_the_store_once_per_call(t *testing.T) {
 	cases := []struct {
 		setup func(t *testing.T, store *creds.FileStore, dir, base string)
 		name  string
@@ -87,7 +87,7 @@ func TestSource_StoredToken_reads_the_store_once_per_call(t *testing.T) {
 	}
 }
 
-func TestSource_StoredToken_hands_over_a_token_it_can_hand_over_without_a_request(t *testing.T) {
+func TestStoredSource_StoredToken_hands_over_a_token_it_can_hand_over_without_a_request(t *testing.T) {
 	cases := []struct {
 		rec   func(base string) creds.Record
 		name  string
@@ -125,7 +125,7 @@ func TestSource_StoredToken_hands_over_a_token_it_can_hand_over_without_a_reques
 
 // An expired token whose refresh is due is still refresh-due by State's reading, but
 // it is no credential to hand over, and renewing it is Token's job.
-func TestSource_StoredToken_fails_an_expired_due_token_without_refreshing_it(t *testing.T) {
+func TestStoredSource_StoredToken_fails_an_expired_due_token_without_refreshing_it(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	rec := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, -time.Minute)
@@ -147,7 +147,7 @@ func TestSource_StoredToken_fails_an_expired_due_token_without_refreshing_it(t *
 
 // A refresh another call holds in flight is no reason to wait: the stored token is
 // answered at once, as refreshing.
-func TestSource_StoredToken_answers_without_waiting_on_a_refresh_in_flight(t *testing.T) {
+func TestStoredSource_StoredToken_answers_without_waiting_on_a_refresh_in_flight(t *testing.T) {
 	g, ep := newGate(t, githubRotated)
 	store, _ := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -186,7 +186,7 @@ func TestSource_StoredToken_answers_without_waiting_on_a_refresh_in_flight(t *te
 
 // holdPair stores base, then fails the write of the pair the endpoint's answer
 // rotates it to, so the key's custody holds that pair, and restores the store.
-func holdPair(t *testing.T, rotated string, adjust func(*creds.Record)) (src *creds.Source, store *countingStore, ep *endpoint, base creds.Record, dir string) {
+func holdPair(t *testing.T, rotated string, adjust func(*creds.Record)) (src *creds.StoredSource, store *countingStore, ep *endpoint, base creds.Record, dir string) {
 	t.Helper()
 	file, dir := openStore(t)
 	ep, restore := failingWrite(t, dir, rotated)
@@ -224,7 +224,7 @@ func credentialFileState(t *testing.T, dir string) (os.FileInfo, []byte) {
 // is the one that pair replaced, and the pair's token is the one the forge issued:
 // StoredToken hands that over, whatever the replaced record's own refresh token
 // says, and leaves the pair held for Token to store.
-func TestSource_StoredToken_hands_over_the_token_of_a_rotated_pair_waiting_to_be_stored(t *testing.T) {
+func TestStoredSource_StoredToken_hands_over_the_token_of_a_rotated_pair_waiting_to_be_stored(t *testing.T) {
 	cases := []struct {
 		adjust   func(*creds.Record)
 		name     string
@@ -282,7 +282,7 @@ func TestSource_StoredToken_hands_over_the_token_of_a_rotated_pair_waiting_to_be
 
 // A reconnect saved after the failed write is a record the held pair was not rotated
 // from, so its own token is handed over and the pair never is.
-func TestSource_StoredToken_hands_over_a_reconnect_saved_over_a_held_pair(t *testing.T) {
+func TestStoredSource_StoredToken_hands_over_a_reconnect_saved_over_a_held_pair(t *testing.T) {
 	src, store, _, base, _ := holdPair(t, githubRotated, nil)
 	reconnected := rotating(forgeapi.FamilyGitHub, base.WebBaseURL, 8*time.Hour, 8*time.Hour)
 	reconnected.Token, reconnected.RefreshToken = "token-reconnected", "refresh-reconnected"
@@ -297,7 +297,7 @@ func TestSource_StoredToken_hands_over_a_reconnect_saved_over_a_held_pair(t *tes
 // A held pair whose own token has expired, or whose own refresh token has lapsed
 // inside its refresh lead, is no credential to hand over either: StoredToken fails as
 // transient, and the pair stays held for the next Token call to store.
-func TestSource_StoredToken_fails_while_a_held_rotated_pair_is_past_its_use(t *testing.T) {
+func TestStoredSource_StoredToken_fails_while_a_held_rotated_pair_is_past_its_use(t *testing.T) {
 	cases := []struct {
 		name    string
 		rotated string
@@ -349,7 +349,7 @@ func TestSource_StoredToken_fails_while_a_held_rotated_pair_is_past_its_use(t *t
 	}
 }
 
-func TestSource_StoredToken_requires_a_reconnect_where_State_does(t *testing.T) {
+func TestStoredSource_StoredToken_requires_a_reconnect_where_State_does(t *testing.T) {
 	cases := []struct {
 		rec   func(base string) *creds.Record
 		name  string
@@ -405,7 +405,7 @@ func TestSource_StoredToken_requires_a_reconnect_where_State_does(t *testing.T) 
 
 // The terminal answer's mark could not be written, so only this process's custody
 // knows it: StoredToken honours it and leaves it owed rather than writing it.
-func TestSource_StoredToken_honours_a_mark_still_owed_to_the_store(t *testing.T) {
+func TestStoredSource_StoredToken_honours_a_mark_still_owed_to_the_store(t *testing.T) {
 	store, dir := openStore(t)
 	ep := newEndpoint(t, func(n int, _ exchange) (int, string) {
 		if n == 1 {
@@ -436,7 +436,7 @@ func TestSource_StoredToken_honours_a_mark_still_owed_to_the_store(t *testing.T)
 	checkMarkStored(t, dir, markUnmarked)
 }
 
-func TestSource_StoredToken_fails_with_the_stores_error_where_it_cannot_be_read(t *testing.T) {
+func TestStoredSource_StoredToken_fails_with_the_stores_error_where_it_cannot_be_read(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, dir := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, 8*time.Hour))

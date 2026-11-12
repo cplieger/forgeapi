@@ -21,8 +21,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/ssrf/v4"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/ssrf"
 )
 
 func TestTheRetryableRuleFollowsKindAndStatus(t *testing.T) {
@@ -103,6 +103,9 @@ func failureCases(t *testing.T) []failureCase {
 		refused("a_peer_that_is_not_tls", tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}, forgeapi.CodeTLSRefused),
 		refused("a_plaintext_answer", http.ErrSchemeMismatch, forgeapi.CodeTLSRefused),
 		refused("a_peer_alert", &net.OpError{Op: "remote error", Err: errors.New("tls: certificate required")}, forgeapi.CodeTLSRefused),
+		refused("a_bare_unknown_authority", x509.UnknownAuthorityError{}, forgeapi.CodeTLSRefused),
+		refused("a_bare_hostname_mismatch", x509.HostnameError{Certificate: &x509.Certificate{}, Host: "forge.example"}, forgeapi.CodeTLSRefused),
+		refused("a_bare_invalid_certificate", x509.CertificateInvalidError{Cert: &x509.Certificate{}, Reason: x509.Expired}, forgeapi.CodeTLSRefused),
 	}
 }
 

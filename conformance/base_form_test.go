@@ -8,10 +8,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/forgeapi/families"
-	"github.com/cplieger/forgeapi/internal/spec"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v2/families"
+	"github.com/cplieger/forgeapi/v2/internal/spec"
 )
 
 // A base URL is an origin and a path: the scheme and host every request reaches,

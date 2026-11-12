@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 func sentBody(t *testing.T, h *harness, route string) map[string]any {

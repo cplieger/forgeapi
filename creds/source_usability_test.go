@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
 )
 
 // unreadablePair is a token endpoint's success answer cut short: the instance
@@ -35,7 +35,7 @@ func checkMarkStored(t *testing.T, dir string, want creds.Usability) {
 
 // checkDeclinedFor holds one Token call over a marked record to the refusal a mark
 // earns: no token, the reconnect code, a message naming the mark, and no request.
-func checkDeclinedFor(t *testing.T, src *creds.Source, ep *endpoint, sent int, mark creds.Usability) {
+func checkDeclinedFor(t *testing.T, src *creds.StoredSource, ep *endpoint, sent int, mark creds.Usability) {
 	t.Helper()
 	token, err := src.Token(t.Context())
 	if code := codeOf(err); code != forgeapi.CodeReconnectRequired || token != "" {
@@ -54,7 +54,7 @@ func checkDeclinedFor(t *testing.T, src *creds.Source, ep *endpoint, sent int, m
 
 // A marked record is never handed over and never refreshed, whatever its kind and
 // its expiry would decide without the mark.
-func TestSource_hands_over_nothing_from_a_marked_record(t *testing.T) {
+func TestStoredSource_hands_over_nothing_from_a_marked_record(t *testing.T) {
 	records := map[string]func(base string) creds.Record{
 		"fresh_rotating": func(base string) creds.Record {
 			return rotating(forgeapi.FamilyGitHub, base, 8*time.Hour, 8*time.Hour)
@@ -81,7 +81,7 @@ func TestSource_hands_over_nothing_from_a_marked_record(t *testing.T) {
 
 // The terminal verdict is written to the record the refresh started from, so it
 // outlives the process that reached it.
-func TestSource_writes_reconnect_required_to_the_record_a_terminal_answer_ended(t *testing.T) {
+func TestStoredSource_writes_reconnect_required_to_the_record_a_terminal_answer_ended(t *testing.T) {
 	tests := []struct {
 		body   string
 		family forgeapi.Family
@@ -107,7 +107,7 @@ func TestSource_writes_reconnect_required_to_the_record_a_terminal_answer_ended(
 // A stored record whose web base is not an origin and a path cannot be refreshed
 // over that base by any retry, so its refresh ends as a terminal answer does:
 // nothing is sent, the record is marked and Token answers a reconnect.
-func TestSource_writes_reconnect_required_to_a_record_whose_base_it_refuses(t *testing.T) {
+func TestStoredSource_writes_reconnect_required_to_a_record_whose_base_it_refuses(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, dir := openStore(t)
 	base := strings.Replace(ep.srv.URL, "://", "://user@", 1)
@@ -128,7 +128,7 @@ func TestSource_writes_reconnect_required_to_a_record_whose_base_it_refuses(t *t
 
 // An answer whose pair cannot be read is a rotation the instance made and this
 // machine lost, so the stored pair is spent and the record says so.
-func TestSource_writes_spent_to_the_record_whose_rotated_pair_it_could_not_read(t *testing.T) {
+func TestStoredSource_writes_spent_to_the_record_whose_rotated_pair_it_could_not_read(t *testing.T) {
 	for _, arm := range refreshArms {
 		t.Run(arm.family.String(), func(t *testing.T) {
 			ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, unreadablePair })
@@ -147,7 +147,7 @@ func TestSource_writes_spent_to_the_record_whose_rotated_pair_it_could_not_read(
 
 // A reader in another process honours a verdict this one reached, which is what a
 // verdict held in one process's memory could not do.
-func TestSource_honours_a_mark_another_process_wrote(t *testing.T) {
+func TestStoredSource_honours_a_mark_another_process_wrote(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, `{"error":"bad_refresh_token"}` })
 	store, dir := openStore(t)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -164,7 +164,7 @@ func TestSource_honours_a_mark_another_process_wrote(t *testing.T) {
 
 // The mark is written by compare-and-swap over the record the refresh started from,
 // so a reconnect saved while the refresh was in flight is never marked.
-func TestSource_marks_nothing_when_a_reconnect_replaced_the_record_its_refresh_ended(t *testing.T) {
+func TestStoredSource_marks_nothing_when_a_reconnect_replaced_the_record_its_refresh_ended(t *testing.T) {
 	tests := []struct {
 		name   string
 		body   string
@@ -226,7 +226,7 @@ func failingWrite(t *testing.T, dir, rotated string) (ep *endpoint, restore func
 // A reconnect saved after the failed write is a new record, so the rotated pair the
 // key's custody holds, which belongs to the record the rotation started from, never
 // reaches it.
-func TestSource_keeps_a_reconnect_saved_after_a_failed_rotation_write_unmarked(t *testing.T) {
+func TestStoredSource_keeps_a_reconnect_saved_after_a_failed_rotation_write_unmarked(t *testing.T) {
 	store, dir := openStore(t)
 	ep, restore := failingWrite(t, dir, githubRotated)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))
@@ -251,7 +251,7 @@ func TestSource_keeps_a_reconnect_saved_after_a_failed_rotation_write_unmarked(t
 
 // Every reader derives a refresh token's own expiry from the record, so reaching it
 // writes nothing.
-func TestSource_writes_no_mark_for_a_refresh_token_past_its_own_expiry(t *testing.T) {
+func TestStoredSource_writes_no_mark_for_a_refresh_token_past_its_own_expiry(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, dir := openStore(t)
 	rec := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, -time.Minute)
@@ -266,7 +266,7 @@ func TestSource_writes_no_mark_for_a_refresh_token_past_its_own_expiry(t *testin
 
 // A mark the store could not take when the refresh ended stays owed, and the next
 // call whose write succeeds writes it to the record.
-func TestSource_writes_a_mark_the_store_could_not_take_on_the_next_call(t *testing.T) {
+func TestStoredSource_writes_a_mark_the_store_could_not_take_on_the_next_call(t *testing.T) {
 	store, dir := openStore(t)
 	ep := newEndpoint(t, func(n int, _ exchange) (int, string) {
 		if n == 1 {
@@ -297,7 +297,7 @@ func TestSource_writes_a_mark_the_store_could_not_take_on_the_next_call(t *testi
 
 // Once written, a mark is settled: a record saved after it, even an identical copy of
 // the one it marked, is never marked by this process.
-func TestSource_never_marks_a_record_saved_after_its_mark_was_written(t *testing.T) {
+func TestStoredSource_never_marks_a_record_saved_after_its_mark_was_written(t *testing.T) {
 	ep := newEndpoint(t, func(int, exchange) (int, string) { return http.StatusOK, `{"error":"bad_refresh_token"}` })
 	store, dir := openStore(t)
 	rec := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute)

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // cursorPrefix opens this family's continuation encoding. The continuation is this

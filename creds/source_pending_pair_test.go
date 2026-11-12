@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
 )
 
 // unstoredRotation runs one refresh whose rotated pair the store could not take, on
 // one family, and answers the record the rotation started from, the source, its
 // endpoint, the store's directory and restore, which lets writes succeed again.
-func unstoredRotation(t *testing.T, family forgeapi.Family, rotated string) (base creds.Record, src *creds.Source, ep *endpoint, dir string, restore func()) {
+func unstoredRotation(t *testing.T, family forgeapi.Family, rotated string) (base creds.Record, src *creds.StoredSource, ep *endpoint, dir string, restore func()) {
 	t.Helper()
 	store, dir := openStore(t)
 	ep, restore = failingWrite(t, dir, rotated)
@@ -32,7 +32,7 @@ func unstoredRotation(t *testing.T, family forgeapi.Family, rotated string) (bas
 // The rotated pair is live upstream and in this process's hands after its write
 // failed, so the next call stores it before anything else and hands it over: no
 // further refresh, no reconnect, and no mark on the stored record.
-func TestSource_stores_the_rotated_pair_on_the_next_call_after_a_failed_rotation_write(t *testing.T) {
+func TestStoredSource_stores_the_rotated_pair_on_the_next_call_after_a_failed_rotation_write(t *testing.T) {
 	for _, arm := range refreshArms {
 		t.Run(arm.family.String(), func(t *testing.T) {
 			_, src, ep, dir, restore := unstoredRotation(t, arm.family, arm.rotated)
@@ -59,7 +59,7 @@ func TestSource_stores_the_rotated_pair_on_the_next_call_after_a_failed_rotation
 // holds whatever the record the rotation started from now reads as on its own: here
 // its refresh token's expiry passes while the pair is pending, which alone would read
 // as a reconnect, and the pending pair is still the credential.
-func TestSource_reads_a_pending_rotated_pair_as_refresh_due(t *testing.T) {
+func TestStoredSource_reads_a_pending_rotated_pair_as_refresh_due(t *testing.T) {
 	store, dir := openStore(t)
 	ep, restore := failingWrite(t, dir, githubRotated)
 	base := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute)
@@ -79,7 +79,7 @@ func TestSource_reads_a_pending_rotated_pair_as_refresh_due(t *testing.T) {
 
 // A second write that fails fails its own call and keeps the pair pending, so the
 // write after it still stores the pair, and no call refreshes a pair already spent.
-func TestSource_keeps_the_rotated_pair_pending_through_a_second_failed_write(t *testing.T) {
+func TestStoredSource_keeps_the_rotated_pair_pending_through_a_second_failed_write(t *testing.T) {
 	_, src, ep, dir, restore := unstoredRotation(t, forgeapi.FamilyGitHub, githubRotated)
 
 	if token, err := src.Token(t.Context()); err == nil || token != "" {
@@ -103,7 +103,7 @@ func TestSource_keeps_the_rotated_pair_pending_through_a_second_failed_write(t *
 // The pending pair belongs to the record the rotation started from, compared whole,
 // mark included, so once something marks that record the pair is dropped, the mark
 // stands and nothing is handed over.
-func TestSource_drops_a_pending_pair_whose_base_record_was_marked(t *testing.T) {
+func TestStoredSource_drops_a_pending_pair_whose_base_record_was_marked(t *testing.T) {
 	base, src, ep, dir, restore := unstoredRotation(t, forgeapi.FamilyGitHub, githubRotated)
 	restore()
 	save(t, reopen(t, dir), "conn", withMark(base, markReconnectRequired))
@@ -134,7 +134,7 @@ func (w *waitWatch) Done() <-chan struct{} {
 // is the next call for the key: once it owns the key it stores the pair the owner
 // holds rather than refreshing with the refresh token that pair replaced, which the
 // product answers as spent and which would cost the connection a reconnect.
-func TestSource_a_call_waiting_behind_a_failed_rotation_write_stores_the_pair(t *testing.T) {
+func TestStoredSource_a_call_waiting_behind_a_failed_rotation_write_stores_the_pair(t *testing.T) {
 	store, dir := openStore(t)
 	arrived, release := make(chan struct{}), make(chan struct{})
 	ep := newEndpoint(t, func(n int, _ exchange) (int, string) {
@@ -217,7 +217,7 @@ func TestSource_a_call_waiting_behind_a_failed_rotation_write_stores_the_pair(t 
 
 // Storing the held pair is the refresh reaching a valid token, so it is counted as
 // one, after the failed write's own outcome.
-func TestSource_counts_the_held_pair_it_stores_as_a_valid_outcome(t *testing.T) {
+func TestStoredSource_counts_the_held_pair_it_stores_as_a_valid_outcome(t *testing.T) {
 	store, dir := openStore(t)
 	ep, restore := failingWrite(t, dir, githubRotated)
 	save(t, store, "conn", rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, time.Minute))

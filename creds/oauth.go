@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // The OAuth error members this package acts on, and the two grant types it sends.

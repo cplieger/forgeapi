@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/forgeapi/creds"
+	"github.com/cplieger/forgeapi/v2/creds"
 )
 
 // The usability marks under the short names the cases use.

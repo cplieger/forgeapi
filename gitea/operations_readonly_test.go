@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // TestARerunOnAReadOnlyClientSendsNothing holds WithMutations(false) to the operation

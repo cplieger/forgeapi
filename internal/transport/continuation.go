@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // pageSeparator divides the fields of a continuation. No decimal and no character

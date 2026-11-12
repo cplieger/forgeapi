@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // TestAPullRequestNamesTheRepositoryItsHeadLivesIn holds ADR-0104 on this product's

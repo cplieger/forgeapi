@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// admitted is every module this library's dependency set may contain: the five the
+// admitted is every module this library's dependency set may contain: the six the
 // transport is assembled from, the one the file-backed credential store is, and the
 // transitive closure those bring with them.
 //
@@ -18,13 +18,14 @@ import (
 // a signature would put that dependency's next major on this library's next major,
 // and no release tool reports it because our own source did not move.
 var admitted = map[string]string{
-	"github.com/cplieger/forgeapi":      "the main module",
-	"github.com/cplieger/httpx/v5":      "retry, jittered backoff, retry-after parsing, transient classification, the retrying round tripper, the client constructor, the bounded body read, the drain and secret redaction",
-	"github.com/cplieger/ssrf/v4":       "the base transport: address policy, dialer control, per-phase attempt bounds and the port allowlist",
-	"github.com/cplieger/jsoncap/v2":    "bounding what an untrusted response costs to decode",
-	"github.com/cplieger/runesafe/v3":   "sanitizing and bounding untrusted upstream text at the emit site",
-	"github.com/cplieger/urlform":       "one refusal at entry: a pasted instance URL whose browser reading differs from net/url's",
-	"github.com/cplieger/atomicfile/v4": "the file-backed credential store, with its private-directory custody and enforced mode",
+	"github.com/cplieger/forgeapi/v2":   "the main module",
+	"github.com/cplieger/go/httpclient": "retry, jittered backoff, retry-after parsing, transient classification, the retrying round tripper, the client constructor, the bounded body read, the drain and secret redaction",
+	"github.com/cplieger/go/httpcache":  "the read cache: the held answers, their revalidation and the guard that keeps an observed request out of them",
+	"github.com/cplieger/go/ssrf":       "the base transport: address policy, dialer control, per-phase attempt bounds and the port allowlist",
+	"github.com/cplieger/go/jsonx":      "bounding what an untrusted response costs to decode",
+	"github.com/cplieger/go/textsafe":   "sanitizing and bounding untrusted upstream text at the emit site",
+	"github.com/cplieger/go/urlform":    "one refusal at entry: a pasted instance URL whose browser reading differs from net/url's",
+	"github.com/cplieger/go/filesafe":   "the file-backed credential store, with its private-directory custody and enforced mode",
 	"pgregory.net/rapid":                "a property-based testing dependency of the modules above, in the module graph and in no build of this library",
 }
 
@@ -85,7 +86,7 @@ func stdlib(path string) bool {
 // internal/ and is the second class the rule admits: a package of this module is
 // not a dependency of it.
 func ownPackage(path string) bool {
-	const module = "github.com/cplieger/forgeapi"
+	const module = "github.com/cplieger/forgeapi/v2"
 	return path == module || strings.HasPrefix(path, module+"/")
 }
 

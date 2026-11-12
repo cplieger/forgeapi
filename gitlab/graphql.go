@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
 // documentPath is this product's GraphQL endpoint, which sits beside the versioned

@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/families"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/families"
 )
 
 // giteaDocument is the API document of an instance of the family, trimmed to the field

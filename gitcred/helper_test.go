@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
-	"github.com/cplieger/forgeapi/gitcred"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v2/gitcred"
 )
 
 // tally records what the helper's two counters report.
@@ -394,14 +394,14 @@ func TestGet_reads_one_whole_record_while_the_server_rotates_it(t *testing.T) {
 	rec := record(forgeapi.FamilyGitHub, ep.URL)
 	rec.Issued, rec.Expiry = rec.Issued.Add(-2*time.Second), rec.Issued.Add(time.Second)
 	save(t, server, "conn", rec)
-	src, err := creds.NewSource(server, "conn", forgeapi.Connection{WebBaseURL: ep.URL, APIBaseURL: ep.URL},
+	src, err := creds.NewStoredSource(server, "conn", forgeapi.Connection{WebBaseURL: ep.URL, APIBaseURL: ep.URL},
 		forgeapi.WithWireTransport(ep.Client().Transport),
 		forgeapi.WithPlaintextHTTP(true),
 		forgeapi.WithPrivateAddresses(true),
 		forgeapi.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
 	if err != nil {
-		t.Fatalf("Setup: NewSource = error %v", err)
+		t.Fatalf("Setup: NewStoredSource = error %v", err)
 	}
 	reader, err := creds.OpenFileStore(dir)
 	if err != nil {

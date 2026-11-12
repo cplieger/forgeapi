@@ -8,26 +8,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/ssrf/v4"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/go/ssrf"
 )
 
-// redirectPolicy is this library's OWN redirect policy, on the client rather than
-// on the transport.
-//
-// Neither dependency's policy can be it. Go's default forwards every sensitive
-// header class on a hop it considers same-host and its match is the HOSTNAME
-// alone, so a subdomain change, a scheme downgrade and a port change all pass
-// through. One library's policy caps hops at ten through an unexported constant,
-// and the other's per-URL predicate never sees the hop chain, so neither can
-// supply this library's cap at its own number.
-//
-// Per hop it performs the scheme check against this connection's scheme set, the
-// port check against its allowlist, the empty-host and canonical-form check, and
-// the address verdict from this connection's own policy value. It does not RESOLVE
-// inside the check, because that would judge one answer and dial another: a
-// name-addressed hop takes its form checks here and its address verdict at the
-// socket, from the same policy value inside the transport's control hook.
+// redirectPolicy is this library's own redirect policy, on the client. Go's
+// default matches on hostname alone, so a subdomain, scheme or port change keeps
+// the sensitive headers, and neither dependency's policy can apply this library's
+// hop cap. Per hop it checks the scheme, the port allowlist, the host's form and
+// the connection's address policy. It does not resolve here, which would judge
+// one answer and dial another: a name-addressed hop gets its address verdict at
+// the socket, from the same policy value.
 func (c *Conn) redirectPolicy(web *url.URL, set *forgeapi.Settings) func(*http.Request, []*http.Request) error {
 	ports := allowedPorts(web, set)
 	origin := originOf(web)

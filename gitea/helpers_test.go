@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // The canonical subject these tests address. It is the same placeholder the

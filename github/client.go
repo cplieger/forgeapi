@@ -1,74 +1,30 @@
 package github
 
 import (
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/internal/transport"
+	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v2/internal/githubroot"
+	"github.com/cplieger/forgeapi/v2/internal/transport"
 )
 
-// APIVersionHeader is the header that pins this family's REST API version. It rides
-// every REST request of a connection whose instance SERVES [APIVersion], and no
-// request of a connection whose instance does not.
-//
-// Which of the two a connection is, is resolved once at connection setup from the
-// version set the instance publishes, and priced on the connection's own row. The
-// echo cannot resolve it, which is why the set is read: this product names the
-// version a response answered UNDER, and an unpinned request is answered under the
-// older version the instance serves, so a connection waiting for that echo to name
-// the pin waits forever and every request runs under the version this pin
-// supersedes.
-//
-// What an instance outside this version's reach answers is measured rather than
-// assumed, and it is why the set is read rather than the pin sent blind: a version
-// the instance does not serve is refused with 400, its body naming this header and
-// listing the versions served, and that refusal carries NO echo, because the request
-// is refused before any version is selected. An ordinary refusal does carry one,
-// measured on a 404 and on a 422. Those two readings are what [retiredVersion] holds
-// the answer to, on the requests that carried the pin.
-//
-// A connection whose instance serves no such version therefore runs under that
-// instance's own default rather than having every request refused, and so does one
-// whose setup has not run. That default is the version this package's field sets
-// were first measured against, and the breaking-changes reading for the pinned date
-// moved no field this library reads.
+// APIVersionHeader is the header that pins this family's REST API version. It
+// rides every REST request of a connection whose instance serves [APIVersion],
+// read once at connection setup from the version set the instance publishes, and
+// no request of one whose instance does not: an unserved version is refused with
+// 400 and no version echo, so the pin is never sent blind. A connection without
+// the pin, or whose setup has not run, runs under the instance's default.
+// [retiredVersion] reads the answers to pinned requests.
 const APIVersionHeader = "X-GitHub-Api-Version"
 
 // APIVersion is the pinned REST API version: the current one, with no end of
-// support scheduled. It supersedes
-// 2022-11-28, the older of the two versions this product serves, which closes on
-// 10 March 2028; that version is what the field sets in this package were first
-// measured against, and this product's breaking-changes list for this date was read
-// against every response field before any fixture was captured.
-//
-// The pin is a dated obligation, not a fixed input: an instance announces an
-// approaching close through headers this library counts, and an instance that
-// RETIRES this version while a connection is pinned to it stops answering under it,
-// which this family's error mapping reads off the echo as
-// [forgeapi.CodeAPIVersionRetired]. The obligation is to move this constant before
-// that date, which is why it is one named constant with one test row behind it.
+// support scheduled. It supersedes 2022-11-28, which closes on 10 March 2028 and
+// which this package's field sets were first measured against; this date's
+// breaking changes were read against every response field. An instance that
+// retires it answers [forgeapi.CodeAPIVersionRetired], so move this constant
+// before that date.
 const APIVersion = "2026-03-10"
-
-// dotcomHost is this product's hosted instance, whose API and web bases are two
-// DIFFERENT hosts. Every other instance is an appliance, whose API root sits under
-// its own web base, so the two derivations are one branch on this name.
-const dotcomHost = "github.com"
-
-// dotcomAPIBase is the hosted instance's API root, which is the addressing the
-// expectation table spells this product's routes in: no path prefix at all.
-const dotcomAPIBase = "https://api.github.com"
-
-// applianceAPIPath and applianceDocumentPath are an appliance's two roots under its
-// own web base. The REST root carries a version segment and the document endpoint
-// sits BESIDE it rather than under it, which is why the document URL is derived by
-// replacing that segment rather than by appending to it.
-const (
-	applianceAPIPath      = "/api/v3"
-	applianceDocumentPath = "/api/graphql"
-)
 
 // Client is one GitHub connection: where the instance is, what the credential is
 // trusted with, and what the budget allows.
@@ -102,33 +58,15 @@ type Client struct { //nolint:govet // fieldalignment: the field order is this t
 	mu       sync.Mutex
 }
 
-// New builds a client for one connection.
-//
-// It performs no I/O. Every capability this instance's version decides is
-// resolved by the accessor that needs it, so an instance that is down fails at
-// the operation rather than at construction, and a consumer can build its
-// clients before it can reach anything.
-//
-// What it does refuse at entry is a client it cannot run honestly, and every
-// refusal carries a code of its own, because a consumer names the remedy for the
-// refusal it got rather than showing a generic warning: no credential source,
-// which is [forgeapi.CodeAnonymousRefused] rather than a client that sends
-// anonymous requests; no web base URL, a half-present certificate pair, a
-// [forgeapi.Connection.Proxy] URL net/url refuses or carrying no scheme this
-// library proxies over, or a malformed [forgeapi.Header] entry, which is
-// [forgeapi.CodeConnectionInvalid]; an
-// extra header whose name this library or the HTTP stack writes itself, which is
-// [forgeapi.CodeHeaderReserved] naming it; a plaintext URL without
-// [forgeapi.WithPlaintextHTTP], which is [forgeapi.CodePlaintextRefused]; a
-// private-range or single-label host without [forgeapi.WithPrivateAddresses],
-// which is [forgeapi.CodePrivateAddressRefused]; a negative value passed to any
-// budget option, [forgeapi.WithRetries] and [forgeapi.WithMutationReserve]
-// included, which is [forgeapi.CodeBudgetInvalid]; and a
-// [forgeapi.RotationCursor] that is not well formed, which is
-// [forgeapi.CodeCursorInvalid].
-//
-//nolint:gocritic // hugeParam: the connection record is the published signature's own parameter
-func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error) {
+// New builds a client for one connection. It performs no I/O, so an instance
+// that is down fails at the operation, not at construction. It refuses a missing
+// credential source ([forgeapi.CodeAnonymousRefused]), a malformed connection
+// ([forgeapi.CodeConnectionInvalid]), a reserved extra header
+// ([forgeapi.CodeHeaderReserved]), plaintext without [forgeapi.WithPlaintextHTTP]
+// ([forgeapi.CodePlaintextRefused]), a private host without [forgeapi.WithPrivateAddresses]
+// ([forgeapi.CodePrivateAddressRefused]), a negative budget value
+// ([forgeapi.CodeBudgetInvalid]) and a malformed cursor ([forgeapi.CodeCursorInvalid]).
+func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error) { //nolint:gocritic // hugeParam: the connection record is the published signature's own parameter
 	return open(&conn, time.Now, opts...)
 }
 
@@ -146,7 +84,7 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 		Mapper:        client.mapper,
 		Signal:        signal,
 		Pool:          pool,
-		DeriveAPIBase: deriveAPIBase,
+		DeriveAPIBase: githubroot.API,
 		Clock:         clock,
 		Family:        forgeapi.FamilyGitHub,
 		// A not-modified answer to an authorized conditional request bills
@@ -158,54 +96,14 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 		return nil, err
 	}
 	client.core = core
-	client.documentURL = documentURL(core.APIBase())
+	client.documentURL = githubroot.Document(core.APIBase())
 	return client, nil
 }
 
-// deriveAPIBase is this product's API root under the web base, used where the
-// connection names no API base of its own.
-//
-// The hosted instance serves its API on a host of its OWN rather than under the web
-// base, which is why this is a branch rather than a suffix: the routes the
-// expectation table spells carry no prefix because that host's root is the prefix.
-// Every other instance is an appliance, whose documented root is a version segment
-// under its own web base.
-func deriveAPIBase(web *url.URL) string {
-	if isDotcom(web) {
-		return dotcomAPIBase
-	}
-	return strings.TrimSuffix(web.String(), "/") + applianceAPIPath
-}
-
-// isDotcom reports whether a URL addresses the hosted instance, by host rather than
-// by anything a response carries, because the answer decides where the first request
-// goes.
-func isDotcom(u *url.URL) bool {
-	host := strings.ToLower(u.Hostname())
-	return host == dotcomHost || host == "www."+dotcomHost || host == "api."+dotcomHost
-}
-
-// documentURL is where this connection posts its documents, derived from the API root
-// the connection resolved: beside the REST routes on an appliance, whose root carries
-// a version segment the document endpoint does not, and under the API host on the
-// hosted instance.
-func documentURL(api *url.URL) string {
-	base := strings.TrimSuffix(api.String(), "/")
-	if trimmed, ok := strings.CutSuffix(base, applianceAPIPath); ok {
-		return trimmed + applianceDocumentPath
-	}
-	return base + "/graphql"
-}
-
-// noteResponse records what a response tells this connection about its instance, for
-// the two facts that ride traffic already sent and therefore cost nothing: that this
-// product answered at all, which is the family witness; and an announced window
-// closing, which is counted because the remedy is moving the pin in a release and a
-// library cannot take it at run time.
-//
-// The version an answer came under is NOT among them. It is read per response by the
-// error mapping rather than held, because the pin rides every request, so the echo
-// carries no per-connection fact left to learn.
+// noteResponse records what a response tells this connection for free: that this
+// product answered, the family witness, and an announced window closing, counted
+// because the remedy is moving the pin in a release. The version an answer came
+// under is read per response by the error mapping, not held here.
 func (c *Client) noteResponse(resp *transport.Response) {
 	if resp == nil || resp.Header == nil {
 		return
@@ -223,15 +121,10 @@ func (c *Client) noteResponse(resp *transport.Response) {
 	c.witness = true
 }
 
-// restHeaders is this family's own header set for one REST request, which is the
-// version pin where this connection's instance serves it and nothing where it does
-// not.
-//
-// The pin is the REST surface's obligation alone: the date version names a REST API
-// version, the header naming the version an instance answered under rides REST
-// responses, and this product's document surface is versioned by its schema and its
-// deprecation window instead. So a document request carries no header from this
-// family, which is why [Client.execute] sets none rather than calling this.
+// restHeaders is this family's header set for one REST request: the version pin
+// where this connection's instance serves it, nothing where it does not. The pin
+// is the REST surface's alone, since documents are versioned by their schema, so
+// [Client.execute] sets no header on a document request.
 func (c *Client) restHeaders() []forgeapi.Header {
 	if !c.sendsPin() {
 		return nil

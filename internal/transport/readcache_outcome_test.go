@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/forgeapi/v2"
 )
 
 // scriptedCredential answers a fixed token, except that its third token, the one
@@ -164,7 +164,7 @@ type slowAccount struct {
 	account
 }
 
-//deadset:ignore DS1103 -- encoding/json calls it through json.Unmarshaler when the read decodes into a *slowAccount.
+//deadset:ignore DS1101 -- encoding/json calls it through json.Unmarshaler when the read decodes into a *slowAccount.
 func (a *slowAccount) UnmarshalJSON(b []byte) error {
 	time.Sleep(300 * time.Millisecond)
 	return json.Unmarshal(b, &a.account)
