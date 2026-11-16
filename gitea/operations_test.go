@@ -224,9 +224,9 @@ func TestACreationWithNoLabelsCostsOneRequest(t *testing.T) {
 //
 // A name with no identifier behind it is refused rather than dropped, because a
 // creation that silently lost a label the caller asked for is the worse answer. What
-// the refusal may SAY is bounded by what was read: one page at the instance maximum,
-// which carries none of an organization's own labels, so a message asserting the
-// repository has no such label states a fact that read cannot establish. A page that
+// the refusal may SAY is bounded by what was read: one page at the instance maximum
+// of the repository's labels and one of its organization's, so a message asserting
+// the repository has no such label states a fact that read cannot establish. A page that
 // came back short IS the whole list this route can reach, so this arm keeps the code
 // it carried before the truncated one existed, which is the rule for this pair.
 // Its kind is the upstream one for the same reason the sibling refusal over an
@@ -235,7 +235,8 @@ func TestACreationWithNoLabelsCostsOneRequest(t *testing.T) {
 // resolve.
 func TestACreationRefusesALabelTheWholeListItReadDoesNotCarry(t *testing.T) {
 	h := newHarness(t, map[string]string{
-		"GET /api/v1/repos/example/example/labels":  labelBody,
+		"GET /api/v1/repos/example/example/labels": labelBody,
+		orgLabelsRoute: `[]`,
 		"POST /api/v1/repos/example/example/issues": issueBody,
 	})
 	_, err := h.client.CreateIssue(t.Context(), testRef(), forgeapi.NewIssue{
@@ -275,7 +276,8 @@ func TestACreationRefusesALabelTheWholeListItReadDoesNotCarry(t *testing.T) {
 // to avoid, so the arms are held here by the code and not by the text.
 func TestACreationRefusesALabelBeyondAFullPageUnderItsOwnCode(t *testing.T) {
 	h := newHarness(t, map[string]string{
-		"GET /api/v1/repos/example/example/labels":  fullLabelPage(),
+		"GET /api/v1/repos/example/example/labels": fullLabelPage(),
+		orgLabelsRoute: `[]`,
 		"POST /api/v1/repos/example/example/issues": issueBody,
 	})
 	_, err := h.client.CreateIssue(t.Context(), testRef(), forgeapi.NewIssue{
@@ -1604,6 +1606,49 @@ func TestARowNamingARepositoryWithNoFullNameFailsTheCall(t *testing.T) {
 			if fe.Code != forgeapi.CodeValidation || fe.Kind != forgeapi.KindUpstream || fe.Retryable {
 				t.Errorf("%s = code %q kind %v retryable %v, want code %q kind %v retryable false",
 					test.name, fe.Code, fe.Kind, fe.Retryable, forgeapi.CodeValidation, forgeapi.KindUpstream)
+			}
+		})
+	}
+}
+
+// orgLabelsRoute is the label page of the organization owning the canonical
+// repository.
+const orgLabelsRoute = "GET /api/v1/orgs/example/labels"
+
+// A name the repository's page lacks is resolved on its organization's page, whose
+// ids both products' option also takes, and either page coming back full is the
+// truncated refusal.
+func TestALabelResolutionReadsTheOrganizationsLabelsForANameTheRepositoryLacks(t *testing.T) {
+	const added = "POST /api/v1/repos/example/example/issues/1/labels"
+	for _, test := range []struct {
+		name, org, code, message string
+	}{
+		{name: "an_organization_label", org: `[{"id":71,"name":"org-label"}]`},
+		{name: "an_organization_page_without_it", org: `[{"id":72,"name":"other"}]`, code: forgeapi.CodeValidation, message: "or of its organization's"},
+		{name: "a_full_organization_page", org: fullLabelPage(), code: forgeapi.CodeLabelPageTruncated, message: "came back full"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{
+				"GET /api/v1/repos/example/example/labels": labelBody,
+				orgLabelsRoute: test.org,
+				added:          `[]`,
+			})
+			err := h.client.AddLabels(t.Context(), testRef(), forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{"org-label"})
+			if test.code == "" {
+				if err != nil {
+					t.Fatalf("AddLabels of an organization label = %v, want nil", err)
+				}
+				if got := h.instance.body(added); !strings.Contains(got, "71") {
+					t.Errorf("AddLabels of an organization label sent %s, want the organization label's id 71", got)
+				}
+				return
+			}
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != test.code || !strings.Contains(fe.Message, test.message) {
+				t.Errorf("AddLabels = %v, want code %q with a message naming %q", err, test.code, test.message)
+			}
+			if slices.Contains(h.instance.arrived(), added) {
+				t.Errorf("AddLabels sent %v, want no write", h.instance.arrived())
 			}
 		})
 	}

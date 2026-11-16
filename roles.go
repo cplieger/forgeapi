@@ -346,8 +346,8 @@ type PullRequests interface {
 	//
 	//	GitHub   POST /repos/{owner}/{repo}/pulls, then POST /repos/{owner}/{repo}/issues/{number}/labels where the caller names labels, which is the route this product declares for them because its creation takes none, plus one read against the id-addressed location to resolve the successor where either of them answered from another address, 1 to 3 requests
 	//	GitLab   POST /api/v4/projects/{id}/merge_requests, 1 request
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/pulls, 1 to 2 requests
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/pulls, 1 to 2 requests
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls, 1 to 3 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls, 1 to 3 requests
 	//
 	// GitHub departs from the normalized contract:
 	//
@@ -929,8 +929,8 @@ type Issues interface {
 	//
 	//	GitHub   POST /repos/{owner}/{repo}/issues, whose own body carries the labels the caller named, then one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 2 requests
 	//	GitLab   POST /api/v4/projects/{id}/issues, 1 request
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues, 1 to 2 requests
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues, 1 to 2 requests
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues, 1 to 3 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues, 1 to 3 requests
 	//
 	// GitLab departs from the normalized contract:
 	//
@@ -1183,17 +1183,18 @@ type Labels interface {
 
 	// AddLabels puts labels the repository already defines on target, matched by
 	// name exactly as the repository spells them, and never creates a label: a name
-	// the first page of the repository's labels lacks is refused before any write,
-	// with [CodeValidation], or [CodeLabelPageTruncated] where that page came back
-	// full. No names send nothing. It answers no item: read it back with
+	// the first page of the labels the repository can use lacks (its own, and its
+	// group's or organization's where the forge has them) is refused before any
+	// write, with [CodeValidation], or [CodeLabelPageTruncated] where a page came
+	// back full. No names send nothing. It answers no item: read it back with
 	// [PullRequests.ReadPR] or [Issues.ReadIssue].
 	//
 	// Per forge:
 	//
 	//	GitHub   GET /repos/{owner}/{repo}/labels, its first page at the most a page serves, to refuse a name the repository does not define before anything is written, then POST /repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the read's hop and one read against the id-addressed location resolve the successor the stale refusal carries, and nothing is written, 2 to 3 requests
 	//	GitLab   GET /api/v4/projects/{id}/labels, its first page at the most a page serves, to refuse a name the project does not define, since this product's add_labels creates one, then PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}, 2 requests
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written, 2 requests
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written, 2 requests
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written, 2 to 3 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written, 2 to 3 requests
 	//
 	// GitHub sends this, where a wrong default would change the request silently:
 	//

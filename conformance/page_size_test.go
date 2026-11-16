@@ -242,6 +242,7 @@ func TestAGiteaFamilyLabelLookupAsksForTheInstancesStatedMaximum(t *testing.T) {
 					pi.extras = append(pi.extras, w)
 				}
 			}
+			pi.extras = append(pi.extras, userOwner)
 			client := pagedClient(t, p, pi.serve(t), forgeapi.WithMutations(true))
 			issues, ok := client.(forgeapi.Issues)
 			if !ok {

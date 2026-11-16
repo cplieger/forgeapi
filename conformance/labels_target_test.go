@@ -197,7 +197,7 @@ func TestAnAdditionOfAnUndefinedLabelWritesNothing(t *testing.T) {
 		} {
 			t.Run(string(p)+"_"+name, func(t *testing.T) {
 				arrived, _, err := labelCall(t, p, "Labels.AddLabels", forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{labelName},
-					wire{Method: http.MethodGet, Path: labelReadPath(p), Status: http.StatusOK, Body: jsonBody(t, labelRows(tc.rows))})
+					wire{Method: http.MethodGet, Path: labelReadPath(p), Status: http.StatusOK, Body: jsonBody(t, labelRows(tc.rows))}, userOwner)
 				var fe *forgeapi.Error
 				if !asForgeError(err, &fe) || fe.Code != tc.code || !strings.Contains(fe.Message, labelName) {
 					t.Errorf("AddLabels of an undefined label on %s over %d rows = %v, want code %q naming %q", p, tc.rows, err, tc.code, labelName)
@@ -207,6 +207,50 @@ func TestAnAdditionOfAnUndefinedLabelWritesNothing(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// userOwner is the Gitea family's answer to the organization label read for a
+// repository a user owns, which the other products never send; it is matched by
+// path, so it answers nothing they do send.
+var userOwner = wire{Method: http.MethodGet, Path: giteaOrgLabels, Status: http.StatusNotFound, Body: json.RawMessage(`{"message":"GetOrgByName"}`)}
+
+// giteaOrgLabels is the label page of the organization owning the canonical
+// repository, as the Gitea family reads it.
+const giteaOrgLabels = "/api/v1/orgs/example/labels"
+
+// Both Gitea-family products' label option takes an organization label's id
+// (orgListLabels; routers/api/v1/repo/issue_label.go, prepareForReplaceOrAdd), so a
+// name the repository's page lacks is resolved on its organization's page, and on a
+// repository a user owns, whose organization read answers 404, it stays refused.
+func TestAGiteaFamilyAdditionResolvesAnOrganizationLabel(t *testing.T) {
+	repoPage := func(t *testing.T, p spec.Product) wire {
+		return wire{Method: http.MethodGet, Path: labelReadPath(p), Status: http.StatusOK, Body: jsonBody(t, labelRows(2))}
+	}
+	for _, p := range giteaFamilyProducts {
+		t.Run(string(p)+"_an_organization_label", func(t *testing.T) {
+			orgRows := jsonBody(t, []map[string]any{{"id": 71, "name": labelName, "color": "ededed"}})
+			org := wire{Method: http.MethodGet, Path: giteaOrgLabels, Status: http.StatusOK, Body: orgRows}
+			arrived, _, err := labelCall(t, p, "Labels.AddLabels", forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{labelName}, repoPage(t, p), org,
+				wire{Method: http.MethodPost, Path: "/api/v1/repos/example/example/issues/1/labels", Status: http.StatusOK, Body: json.RawMessage(`[]`)})
+			if err != nil {
+				t.Fatalf("AddLabels of an organization label on %s = %v, want nil", p, err)
+			}
+			w := writes(arrived)
+			if len(w) != 1 || !strings.Contains(string(w[0].body), "71") {
+				t.Errorf("AddLabels of an organization label on %s wrote %s, want one write carrying its id 71", p, describeRequests(w))
+			}
+		})
+		t.Run(string(p)+"_a_user_owned_repository", func(t *testing.T) {
+			arrived, _, err := labelCall(t, p, "Labels.AddLabels", forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{labelName}, repoPage(t, p), userOwner)
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeValidation || strings.Contains(fe.Message, "organization") {
+				t.Errorf("AddLabels on a user's repository on %s = %v, want code %q naming the repository's page alone", p, err, forgeapi.CodeValidation)
+			}
+			if w := writes(arrived); len(w) != 0 {
+				t.Errorf("AddLabels on a user's repository on %s wrote %s, want nothing", p, describeRequests(w))
+			}
+		})
 	}
 }
 

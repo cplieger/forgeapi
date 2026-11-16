@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
@@ -1134,11 +1135,13 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 
 // labelIDs resolves the caller's label NAMES onto the numeric ids both products'
 // creation and label addition options take, from ONE page of the repository's labels
-// at the instance's stated maximum, which holds no organization label. A name that
-// page lacks is refused, never dropped: under the truncated code where the page came
-// back full, the only witness this product gives that the list continues, and as a
-// validation where it was the whole list. A read that meets a move refuses with the
-// successor and sends no write: writing to another repository is the caller's call.
+// at the instance's stated maximum, and where a name is missing there, ONE page of
+// its owner's organization labels at the same bound, which both products' option
+// also takes. A name both pages lack is refused, never dropped: under the truncated
+// code where either page came back full, the only witness this product gives that a
+// list continues, and as a validation where each was the whole list. A read that
+// meets a move refuses with the successor and sends no write: writing to another
+// repository is the caller's call.
 func (c *Client) labelIDs(ctx context.Context, op string, addr *address, names []string) ([]int64, error) {
 	if len(names) == 0 {
 		return nil, nil
@@ -1152,8 +1155,8 @@ func (c *Client) labelIDs(ctx context.Context, op string, addr *address, names [
 		keyLimit: {strconv.Itoa(limit)},
 	}
 	var rows []wireLabel
-	if err := c.readAt(ctx, op, addr, "/labels", query, &rows); err != nil {
-		return nil, err
+	if readErr := c.readAt(ctx, op, addr, "/labels", query, &rows); readErr != nil {
+		return nil, readErr
 	}
 	if stale := c.moved(ctx, op, addr); stale != nil {
 		return nil, stale
@@ -1162,15 +1165,57 @@ func (c *Client) labelIDs(ctx context.Context, op string, addr *address, names [
 	for _, row := range rows {
 		byName[row.Name] = row.ID
 	}
+	read := labelRead{repo: len(rows), limit: limit}
+	if slices.ContainsFunc(names, func(name string) bool { _, ok := byName[name]; return !ok }) {
+		if read.org, read.orgFound, err = c.addOrgLabels(ctx, op, addr, query, byName); err != nil {
+			return nil, err
+		}
+	}
 	ids := make([]int64, 0, len(names))
 	for _, name := range names {
 		id, ok := byName[name]
 		if !ok {
-			return nil, c.unresolvedLabel(ctx, op, name, len(rows), limit)
+			return nil, c.unresolvedLabel(ctx, op, name, read)
 		}
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+// addOrgLabels adds to byName each label of [Client.orgLabels] whose name the
+// repository's own page did not carry, which keeps a repository label first, and
+// answers how many rows that page held and whether the owner is an organization.
+func (c *Client) addOrgLabels(ctx context.Context, op string, addr *address, query url.Values, byName map[string]int64) (rows int, found bool, err error) {
+	org, found, err := c.orgLabels(ctx, op, addr, query)
+	if err != nil {
+		return 0, false, err
+	}
+	for _, row := range org {
+		if _, ok := byName[row.Name]; !ok {
+			byName[row.Name] = row.ID
+		}
+	}
+	return len(org), found, nil
+}
+
+// orgLabels is the first page of the labels the organization owning the call's
+// repository defines, read under query, and whether the owner is an organization:
+// the route answers 404 for a user, which owns no organization label.
+func (c *Client) orgLabels(ctx context.Context, op string, addr *address, query url.Values) ([]wireLabel, bool, error) {
+	owner, _, _ := strings.Cut(addr.current().Selector, "/")
+	var rows []wireLabel
+	_, err := c.get(ctx, op, "/orgs/"+owner+"/labels", query, http.StatusNotFound, &rows)
+	if fe, ok := errors.AsType[*forgeapi.Error](err); ok && fe.Code == forgeapi.CodeOwnerUnresolved {
+		return nil, false, nil
+	}
+	return rows, err == nil, err
+}
+
+// labelRead is how many rows each label page the resolution read answered, at the
+// bound both were read at, and whether the owner's organization page was read.
+type labelRead struct {
+	repo, org, limit int
+	orgFound         bool
 }
 
 // unresolvedLabel is the refusal a label name with no identifier behind it gets,
@@ -1180,16 +1225,18 @@ func (c *Client) labelIDs(ctx context.Context, op string, addr *address, names [
 // read already uses: no request carrying the label was sent, the request that WAS
 // sent answered 200, and nothing here is a merge, so the merge kind would tell a
 // caller their pull request is unmergeable because an issue's label did not resolve.
-func (c *Client) unresolvedLabel(ctx context.Context, op, name string, rows, limit int) *forgeapi.Error {
+func (c *Client) unresolvedLabel(ctx context.Context, op, name string, read labelRead) *forgeapi.Error {
 	code := forgeapi.CodeValidation
-	read := "which was the whole list"
-	if rows >= limit {
+	pages, verdict := "the first page of this repository's labels", "which was the whole list"
+	if read.orgFound {
+		pages, verdict = "the first page of this repository's labels or of its organization's", "each the whole list"
+	}
+	if read.repo >= read.limit || read.org >= read.limit {
 		code = forgeapi.CodeLabelPageTruncated
-		read = "which came back full, so the list continues past it"
+		verdict = "and a page came back full, so its list continues past it"
 	}
 	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), code, forgeapi.KindUpstream, http.StatusOK,
-		"no label named "+name+" on the first page of this repository's labels, bounded at "+
-			strconv.Itoa(limit)+", "+read)
+		"no label named "+name+" on "+pages+", bounded at "+strconv.Itoa(read.limit)+", "+verdict)
 }
 
 // CloseIssue implements [forgeapi.Issues].
