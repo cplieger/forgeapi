@@ -423,11 +423,11 @@ func WithRotationCursor(c RotationCursor) Option {
 
 // WithMutationReserve sets the budget the governor holds back from reads, in the
 // instance's own units: a read is deferred, marked [PartialRateLimited] and counted
-// by [Counters.ReadDeferred] while a rate-limit pool it draws on reports n or less,
-// and no mutation is held back. A read is held against the pool its operation's last
-// answer named, and on GitLab also against the authenticated API throttle; a pool
-// whose whole limit is n or less is not held, and Gitea reports no figure to hold.
-// Zero holds nothing back, and a family's constructor refuses a negative n with [CodeBudgetInvalid].
+// by [Counters.ReadDeferred] while a rate-limit pool it draws on reports n or less;
+// no mutation is deferred, nor an [ActionReads] read within its bound above zero.
+// A read is held against its operation's last-answered pool, and on GitLab the API
+// throttle too; a pool whose whole limit is n or less is not held, and Gitea reports
+// none. Zero holds nothing back, and a negative n is refused with [CodeBudgetInvalid].
 // Default: [DefaultMutationReserve].
 func WithMutationReserve(n int) Option {
 	return optionFunc(func(s *Settings) { s.MutationReserve = n })

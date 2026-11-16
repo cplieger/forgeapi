@@ -15,6 +15,7 @@ func (a AccountKind) String() string
 const AccountKindBot AccountKind = iota + 2
 const AccountKindUnknown AccountKind = iota
 const AccountKindUser AccountKind = iota + 1
+func ActionReads(ctx context.Context, n int) context.Context
 type ActionState struct {
 	Mergeable Support
 	Checks CheckState
@@ -389,6 +390,7 @@ type Merges interface {
 	MergePR(ctx context.Context, repo RepoRef, pr PRRef, req MergeRequest) (MergeOutcome, error)
 	MergeStatus(ctx context.Context, repo RepoRef, pr PRRef) (MergeStatus, error)
 }
+func Mutates(r *http.Request) bool
 type NewIssue struct {
 	Title string
 	Body string

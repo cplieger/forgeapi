@@ -182,6 +182,12 @@ func (g *governor) price(cost int) {
 // owns why). A deferral publishes the pool it held, so the published figure is
 // the budget that stopped the read.
 func (g *governor) admit(op string) (forgeapi.PartialReason, bool) {
+	return g.admitWithin(op, g.reserve)
+}
+
+// admitWithin is [governor.admit] holding reserve of each pool rather than the
+// client's own reserve.
+func (g *governor) admitWithin(op string, reserve int) (forgeapi.PartialReason, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.expire()
@@ -191,7 +197,7 @@ func (g *governor) admit(op string) (forgeapi.PartialReason, bool) {
 	}
 	for _, name := range held {
 		p, ok := g.pools[name]
-		if !ok || p.remaining == forgeapi.BudgetRemainingUnknown || !p.holds(g.reserve) {
+		if !ok || p.remaining == forgeapi.BudgetRemainingUnknown || !p.holds(reserve) {
 			continue
 		}
 		g.remaining, g.reset = p.remaining, p.reset

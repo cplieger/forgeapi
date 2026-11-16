@@ -164,7 +164,7 @@ func TestTheDeferralRendersWithNoGapWhereACauseWouldBe(t *testing.T) {
 	if fe.Code != "" {
 		t.Fatalf("the deferral = code %q, want none: this is the one failure with no code, and a code here would be a second spelling of the throttle", fe.Code)
 	}
-	if got, want := fe.Error(), "ListPRs: this read was deferred to hold the mutation reserve"; got != want {
+	if got, want := fe.Error(), "ListPRs: this read was deferred: a rate-limit pool it draws on is at or under the mutation reserve"; got != want {
 		t.Errorf("the deferral renders as %q, want %q: the separator belongs to the cause, so a failure with no cause has no slot for one", got, want)
 	}
 }
@@ -358,7 +358,7 @@ func TestAFoldedReadIsAdmittedOnlyWhereItsMeasuredCostFitsTheIntervalLeft(t *tes
 	}
 }
 
-func pooledConn(t *testing.T, pools map[string][3]string, reserve int, parent budgetParent) (*Conn, func(path string) int64) {
+func pooledConn(t *testing.T, pools map[string][3]string, reserve int, parent budgetParent, extra ...forgeapi.Option) (*Conn, func(path string) int64) {
 	t.Helper()
 	var mu sync.Mutex
 	sent := map[string]int64{}
@@ -383,7 +383,7 @@ func pooledConn(t *testing.T, pools map[string][3]string, reserve int, parent bu
 		return h.Get("X-Pool"), limit
 	}
 	opts.PoolParent = parent
-	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, forgeapi.WithMutationReserve(reserve))
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, append([]forgeapi.Option{forgeapi.WithMutationReserve(reserve)}, extra...)...)
 	return c, func(path string) int64 {
 		mu.Lock()
 		defer mu.Unlock()

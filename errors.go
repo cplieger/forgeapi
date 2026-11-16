@@ -340,8 +340,8 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// [CodeCapabilityUnsupported], whose operation began.
 	Op string
 	// Code is the machine-readable cause, one of the Code* constants, which a
-	// consumer branches on. It is empty on one failure only: the read the
-	// governor deferred to hold the mutation reserve, which answers
+	// consumer branches on. It is empty on one failure only: a read the
+	// governor deferred ([WithMutationReserve]), which answers
 	// [KindRateLimited] with no status.
 	Code string
 	// Family is the family that answered, or [FamilyUnknown] where nothing

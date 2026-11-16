@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/callmark"
 	"github.com/cplieger/go/httpcache"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/jsonx"
@@ -1203,10 +1204,28 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 		return c.refusal(ctx, req, c.fail(req.Op, forgeapi.CodeMutationsDisabled, forgeapi.KindForbidden, 0,
 			"mutations are disabled on this client"))
 	}
-	if _, ok := c.gov.admit(req.Op); !ok {
+	if !c.admitRead(ctx, req) {
 		return c.refusal(ctx, req, c.deferred(req.Op))
 	}
 	return nil
+}
+
+// admitRead is the governor's verdict on one read. A read under
+// [forgeapi.ActionReads] with its bound not spent is held only against a pool at
+// zero and spends one of the bound when admitted, so a read deferred at zero
+// leaves it to the action's next read. A credential source's read is never the
+// action's, and a read-only client has no reserve to spend.
+func (c *Conn) admitRead(ctx context.Context, req *Request) bool {
+	if c.mutations && !req.Credential && callmark.ActionReadsLeft(ctx) {
+		if _, ok := c.gov.admitWithin(req.Op, 0); !ok {
+			return false
+		}
+		if callmark.TakeActionRead(ctx) {
+			return true
+		}
+	}
+	_, ok := c.gov.admit(req.Op)
+	return ok
 }
 
 // discarder is the optional method of a credential source that is told when the
@@ -1299,7 +1318,13 @@ func (c *Conn) send(ctx context.Context, req *Request, target string, prepare fu
 		}
 		payload = encoded
 	}
-	r, err := http.NewRequestWithContext(ctx, req.Method, target, bodyReader(payload))
+	// Only the request's own context carries the write mark: the credential source
+	// is asked on ctx, so a token it mints for this write is not read as one.
+	marked := ctx
+	if req.mutates() {
+		marked = callmark.WithWrite(ctx)
+	}
+	r, err := http.NewRequestWithContext(marked, req.Method, target, bodyReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -1616,11 +1641,10 @@ func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capabi
 // turns this into one rather than into a failure; one that cannot reports it.
 // It carries the throttle kind with no code and no status, which is the same pair
 // this family's mapper answers an upstream throttle with minus the status: a
-// consumer tells the two apart by that status and by the remaining figure the
-// governor reports, which a deferral leaves above zero.
+// consumer tells the two apart by that status.
 func (c *Conn) deferred(op string) *forgeapi.Error {
 	return c.fail(op, "", forgeapi.KindRateLimited, 0,
-		"this read was deferred to hold the mutation reserve")
+		"this read was deferred: a rate-limit pool it draws on is at or under the mutation reserve")
 }
 
 // IsDeferred reports whether an error is the governor's deferral rather than an

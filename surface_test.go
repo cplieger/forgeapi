@@ -96,6 +96,8 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"func New(store creds.Store, opts ...forgeapi.Option) *Helper",
 		"const CountUnknown = -1",
 		"func WithReviews(read bool) ListOption",
+		"func ActionReads(ctx context.Context, n int) context.Context",
+		"func Mutates(r *http.Request) bool",
 		"type LabelTarget struct {",
 		"func (t LabelTarget) Validate() error",
 		"\tIndexed bool\n",
