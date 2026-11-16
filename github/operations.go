@@ -916,8 +916,13 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if moved.to != nil {
 		return c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
 	}
-	run, ok := pickRun(runs.Runs, headSHA)
-	if !ok {
+	run, carried, found := c.pickRun(runs.Runs, headSHA)
+	switch {
+	case found:
+	case carried || headSHA == "":
+		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunNotFailed, forgeapi.KindConflict, http.StatusOK,
+			"no workflow run on this head failed or was cancelled")
+	default:
 		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeStaleHead, forgeapi.KindConflict, http.StatusOK,
 			"no workflow run carries the head this caller pinned")
 	}
@@ -942,25 +947,23 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
-// pickRun is the head pin read off the resolving read's own rows: the run whose head
-// matches what the caller pinned, or the FIRST row the instance returned where the
-// caller brought no pin.
-//
-// That second arm claims no more than it knows. This product's runs route declares a
-// head-SHA filter and returns its rows newest first, and this read sends no other
-// ordering, so the first row is the instance's own choice. The PINNED arm is sound for a
-// different reason: the SHA is a declared filter, so upstream applies it and the
-// comparison here is a second check rather than the only one.
-func pickRun(runs []restWorkflowRun, headSHA string) (restWorkflowRun, bool) {
+// pickRun is the run a re-run of the head's failed checks addresses: the first of
+// the resolving read's rows on the pinned head, or on any head where the caller
+// brought no pin, that failed or was cancelled, the outcomes the failed-jobs re-run
+// starts again. carried reports whether any row was on the pinned head, and found
+// whether one qualified. The SHA is a declared filter, so upstream applies it and
+// the comparison here is a second check.
+func (c *Client) pickRun(runs []restWorkflowRun, headSHA string) (run restWorkflowRun, carried, found bool) {
 	for i := range runs {
-		if runs[i].ID == 0 {
+		if runs[i].ID == 0 || headSHA != "" && runs[i].HeadSHA != headSHA {
 			continue
 		}
-		if headSHA == "" || runs[i].HeadSHA == headSHA {
-			return runs[i], true
+		carried = true
+		if c.runVerdict(&runs[i]) == forgeapi.CheckFailing || member(runs[i].Conclusion) == "cancelled" {
+			return runs[i], true, true
 		}
 	}
-	return restWorkflowRun{}, false
+	return restWorkflowRun{}, carried, false
 }
 
 // readRuns is the one read of a repository's workflow runs, which the re-run and the

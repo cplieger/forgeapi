@@ -735,9 +735,9 @@ func firstTime(a, b time.Time) time.Time {
 // conclusion and every other status is its own outcome, which is the only spelling
 // a Forgejo run carries.
 func (c *Client) runState(r *wireRun) forgeapi.CheckState {
-	field, raw := "actions run status", r.Status
+	field, raw := "actions run status", r.outcome()
 	if r.Status == runCompleted {
-		field, raw = "actions run conclusion", r.Conclusion
+		field = "actions run conclusion"
 	}
 	state, ok := runStates[raw]
 	if ok {
@@ -745,6 +745,15 @@ func (c *Client) runState(r *wireRun) forgeapi.CheckState {
 	}
 	c.unmapped(field, raw)
 	return forgeapi.CheckUnknown
+}
+
+// outcome is the run's outcome as sent: a completed Gitea run's conclusion, and
+// otherwise its status.
+func (r *wireRun) outcome() string {
+	if r.Status == runCompleted {
+		return r.Conclusion
+	}
+	return r.Status
 }
 
 // checkState maps one status row totally, counting and naming a value the table

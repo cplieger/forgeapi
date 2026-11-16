@@ -155,13 +155,14 @@ func rerunCapability(doc *swaggerDoc) (forgeapi.Support, forgeapi.Evidence, stri
 }
 
 // rerunRoute is the re-run route of one run, under the repository, as detection
-// found it; [Client.capability] for [forgeapi.CapRerunChecks] has answered yes
-// before any caller asks, so the verb is held.
-func (c *Client) rerunRoute(run int64) string {
+// found it, and whether that route starts the whole run again rather than its failed
+// jobs; [Client.capability] for [forgeapi.CapRerunChecks] has answered yes before
+// any caller asks, so the verb is held.
+func (c *Client) rerunRoute(run int64) (route string, whole bool) {
 	c.mu.Lock()
 	verb := c.rerunVerb
 	c.mu.Unlock()
-	return "/actions/runs/" + strconv.FormatInt(run, 10) + "/" + verb
+	return "/actions/runs/" + strconv.FormatInt(run, 10) + "/" + verb, verb == wholeRun
 }
 
 func (c *Client) cachedCaps() *forgeapi.ConnectionCaps {

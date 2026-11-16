@@ -522,6 +522,10 @@ type PullRequests interface {
 	// request's current one, which is the one case where the pin is unavailable
 	// rather than waived.
 	//
+	// A head carries a run per workflow, and the one re-run is the first on it that
+	// failed or was cancelled; a head whose runs all passed or are still running is
+	// refused with [CodeRunNotFailed] before any write.
+	//
 	// Whether an instance can do this at all is [CapRerunChecks], read from
 	// [ConnectionCaps]: an instance with no re-run verb reports the capability
 	// rather than failing to satisfy this role, because the products and versions
@@ -809,14 +813,16 @@ type Checks interface {
 	// shares [CapRerunChecks] and its [CodeCapabilityUnsupported] refusal, sent with
 	// no request, with [PullRequests.RerunFailedChecks]. A run ID that is not
 	// positive is refused with [CodeRepoRefInvalid] before any request. A run that
-	// is not finished, or not failed, is the forge's own refusal, passed through.
+	// is not finished, or neither failed nor was cancelled, is the forge's own
+	// refusal, passed through, except where the forge would start it again: there
+	// it is refused with [CodeRunNotFailed] before any write.
 	//
 	// Per forge:
 	//
 	//	GitHub   POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 2 requests; needs rerun_checks
 	//	GitLab   POST /api/v4/projects/{id}/pipelines/{run}/retry, 1 request; needs rerun_checks
 	//	Gitea    POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, which this product's swagger document names, 1 request; needs rerun_checks
-	//	Forgejo  POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 1 request; needs rerun_checks
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/actions/runs/{run}, since this product's whole-run re-run starts any finished run again, so a run that neither failed nor was cancelled is refused before any write, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 2 requests; needs rerun_checks
 	//
 	// GitHub departs from the normalized contract:
 	//

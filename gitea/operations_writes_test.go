@@ -179,7 +179,7 @@ func rerunRoutes(rows string) map[string]string {
 
 func TestARerunReRunsTheRunItsHeadPinNames(t *testing.T) {
 	const other = "0000000000000000000000000000000000000000"
-	rows := `{"id":3,"head_sha":"` + other + `"},{"id":9,"head_sha":"` + testHeadSHA + `"}`
+	rows := `{"id":3,"head_sha":"` + other + `","status":"failure"},{"id":9,"head_sha":"` + testHeadSHA + `","status":"failure"}`
 	for _, test := range []struct {
 		name    string
 		head    string
@@ -269,5 +269,52 @@ func TestAnOperationOfSeveralRequestsSharesOneDeadline(t *testing.T) {
 	}
 	if got := in.arrived(); !slices.Equal(got, []string{labelsRoute, createPull}) {
 		t.Errorf("CreatePR sent %v, want the label read then the creation", got)
+	}
+}
+
+// A head carries a run per workflow, so the re-run addresses the first run on it that
+// failed or was cancelled, and a head whose runs all passed or are still running is
+// refused before any write: a re-run can carry deployment side effects.
+func TestARerunAddressesARunOnTheHeadThatFailed(t *testing.T) {
+	row := func(id, status, conclusion string) string {
+		return `{"id":` + id + `,"head_sha":"` + testHeadSHA + `","status":"` + status + `","conclusion":"` + conclusion + `"}`
+	}
+	for _, test := range []struct {
+		name  string
+		rows  string
+		rerun string
+	}{
+		{name: "a_passed_run_beside_a_failed_one", rows: row("3", "completed", "success") + "," + row("9", "completed", "failure"), rerun: "9"},
+		{name: "a_forgejo_spelled_failure", rows: row("3", "success", "") + "," + row("9", "failure", ""), rerun: "9"},
+		{name: "a_cancelled_run", rows: row("3", "completed", "cancelled"), rerun: "3"},
+		{name: "only_passed_and_running_runs", rows: row("3", "completed", "success") + "," + row("9", "running", "")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t, rerunRoutes(test.rows))
+			err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), testHeadSHA)
+			posts := []string{}
+			for _, sent := range h.instance.arrived() {
+				if strings.HasPrefix(sent, "POST") {
+					posts = append(posts, sent)
+				}
+			}
+			if test.rerun == "" {
+				var fe *forgeapi.Error
+				if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeRunNotFailed || fe.Kind != forgeapi.KindConflict {
+					t.Errorf("RerunFailedChecks = %v, want code %q on KindConflict", err, forgeapi.CodeRunNotFailed)
+				}
+				if len(posts) != 0 {
+					t.Errorf("RerunFailedChecks sent %v, want no re-run", posts)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("RerunFailedChecks = %v, want nil", err)
+			}
+			want := "POST /api/v1/repos/example/example/actions/runs/" + test.rerun + "/rerun-failed-jobs"
+			if !slices.Equal(posts, []string{want}) {
+				t.Errorf("RerunFailedChecks sent %v, want %s alone", posts, want)
+			}
+		})
 	}
 }

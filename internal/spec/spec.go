@@ -2222,8 +2222,8 @@ var Table = []Entry{
 	{
 		Method:    "Checks.RerunFailedRun",
 		Product:   Forgejo,
-		Exercises: "POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17",
-		Requests:  Requests{Min: 1, Max: 1},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/actions/runs/{run}, since this product's whole-run re-run starts any finished run again, so a run that neither failed nor was cancelled is refused before any write, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17",
+		Requests:  Requests{Min: 2, Max: 2},
 		Needs:     "rerun_checks",
 		Support:   Supported,
 		Departures: []Departure{

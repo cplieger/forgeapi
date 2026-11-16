@@ -3,6 +3,8 @@ package github
 import (
 	"encoding/json"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/forgeapi/v3"
@@ -156,8 +158,8 @@ func TestACreationAnsweringNoNumberSpendsNoLabelsRequest(t *testing.T) {
 	}
 }
 
-func TestAReRunWithNoHeadReRunsTheFirstRun(t *testing.T) {
-	h := newHarness(t, map[string]string{runsRoute: readCaptures(t).raw(t, "rest_workflow_runs"), rerunRoute: `{}`})
+func TestAReRunWithNoHeadReRunsTheFirstFailedRun(t *testing.T) {
+	h := newHarness(t, map[string]string{runsRoute: failedRuns, rerunRoute: `{}`})
 	if err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), ""); err != nil {
 		t.Fatalf("RerunFailedChecks(no head) = %v, want the re-run sent", err)
 	}
@@ -166,5 +168,49 @@ func TestAReRunWithNoHeadReRunsTheFirstRun(t *testing.T) {
 	}
 	if got := h.instance.query(runsRoute, "head_sha"); got != "" {
 		t.Errorf("RerunFailedChecks(no head) sent head_sha=%q, want no head filter", got)
+	}
+}
+
+// A head carries a run per workflow, so the re-run addresses the first run on it that
+// failed or was cancelled, and a head whose runs all passed or are still running is
+// refused before any write: a re-run can carry deployment side effects.
+func TestAReRunAddressesARunOnTheHeadThatFailed(t *testing.T) {
+	row := func(id, status, conclusion string) string {
+		return `{"id":` + id + `,"head_sha":"` + testHeadSHA + `","status":"` + status + `","conclusion":"` + conclusion + `","path":".github/workflows/w` + id + `.yml"}`
+	}
+	runs := func(rows ...string) string {
+		return `{"total_count":` + strconv.Itoa(len(rows)) + `,"workflow_runs":[` + strings.Join(rows, ",") + `]}`
+	}
+	for _, test := range []struct {
+		name  string
+		runs  string
+		rerun string
+		code  string
+	}{
+		{name: "a_passed_run_beside_a_failed_one", runs: runs(row("4", "completed", "success"), row("1", "completed", "failure")), rerun: "1"},
+		{name: "a_cancelled_run", runs: runs(row("1", "completed", "cancelled")), rerun: "1"},
+		{name: "only_passed_and_running_runs", runs: runs(row("4", "completed", "success"), row("5", "in_progress", "")), code: forgeapi.CodeRunNotFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			post := "POST /api/v3/repos/example/example/actions/runs/" + test.rerun + "/rerun-failed-jobs"
+			h := newHarness(t, map[string]string{runsRoute: test.runs, post: `{}`})
+			err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), testHeadSHA)
+			if test.code != "" {
+				var fe *forgeapi.Error
+				if !asForgeError(err, &fe) || fe.Code != test.code || fe.Kind != forgeapi.KindConflict {
+					t.Errorf("RerunFailedChecks = %v, want code %q on KindConflict", err, test.code)
+				}
+				if got := h.instance.arrived(); !slices.Equal(got, []string{runsRoute}) {
+					t.Errorf("RerunFailedChecks sent %v, want the run read alone", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("RerunFailedChecks = %v, want nil", err)
+			}
+			if got := h.instance.arrived(); !slices.Equal(got, []string{runsRoute, post}) {
+				t.Errorf("RerunFailedChecks sent %v, want the run read and %s", got, post)
+			}
+		})
 	}
 }

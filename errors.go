@@ -94,6 +94,10 @@ const (
 	// status of its own. A route that says so only in text answers
 	// [CodeNotMergeable]. The remedy for both is reading the pull request again.
 	CodeStaleHead = "stale_head"
+	// CodeRunNotFailed is a re-run refused before any write because nothing it
+	// addresses failed or was cancelled: the run, or every run on the head. It
+	// rides [KindConflict], and the remedy is reading the checks again.
+	CodeRunNotFailed = "run_not_failed"
 	// CodeValidation is a request upstream rejected as invalid, a response
 	// body this library could not decode, or a label name a creation or
 	// [Labels.AddLabels] could not resolve on a read that answered the whole
@@ -279,6 +283,7 @@ func Codes() []string {
 		CodeNoMergePermission,
 		CodeStrategyNotAllowed,
 		CodeStaleHead,
+		CodeRunNotFailed,
 		CodeValidation,
 		CodeLabelPageTruncated,
 		CodeBranchCannotMerge,

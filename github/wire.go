@@ -1289,10 +1289,6 @@ func (c *docCount) total() int {
 // a completed run's verdict is its conclusion's, except where [runConclusions] says
 // a run's conclusion means something else.
 func (c *Client) normalizeRun(r *restWorkflowRun, repo forgeapi.RepoRef) forgeapi.Run {
-	state, ok := runConclusions[member(r.Conclusion)]
-	if !ok {
-		state = c.runState("workflow run (rest)", r.Status, r.Conclusion)
-	}
 	return forgeapi.Run{
 		Ref:          forgeapi.RunRef{ID: r.ID, Number: r.RunNumber},
 		Repo:         repo,
@@ -1304,9 +1300,17 @@ func (c *Client) normalizeRun(r *restWorkflowRun, repo forgeapi.RepoRef) forgeap
 		CreatedAt:    r.CreatedAt,
 		StartedAt:    r.StartedAt,
 		UpdatedAt:    r.UpdatedAt,
-		State:        state,
+		State:        c.runVerdict(r),
 		Trigger:      c.runTrigger(r.Event),
 	}
+}
+
+// runVerdict is one workflow run's folded state.
+func (c *Client) runVerdict(r *restWorkflowRun) forgeapi.CheckState {
+	if state, ok := runConclusions[member(r.Conclusion)]; ok {
+		return state
+	}
+	return c.runState("workflow run (rest)", r.Status, r.Conclusion)
 }
 
 // definition is the run's path without the ref the route's documented example

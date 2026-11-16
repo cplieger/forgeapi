@@ -39,6 +39,7 @@ func TestRerunDetectionTakesTheRouteTheDocumentDeclares(t *testing.T) {
 			}
 			if test.route != "" {
 				routes["POST /api/v1/repos/example/example/actions/runs/5"+test.route] = ""
+				routes["GET /api/v1/repos/example/example/actions/runs/5"] = `{"id":5,"status":"failure"}`
 			}
 			h := newHarness(t, routes)
 			caps, err := h.client.ConnectionCaps(t.Context())
@@ -57,6 +58,45 @@ func TestRerunDetectionTakesTheRouteTheDocumentDeclares(t *testing.T) {
 			want := "POST /api/v1/repos/example/example/actions/runs/5" + test.route
 			if sent := h.instance.arrived(); !slices.Contains(sent, want) {
 				t.Errorf("RerunFailedRun sent %v, want %s", sent, want)
+			}
+		})
+	}
+}
+
+// Forgejo's whole-run re-run starts any finished run again, so the run is read first
+// and one that neither failed nor was cancelled is refused before any write.
+func TestAForgejoWholeRunRerunReadsTheRunFirst(t *testing.T) {
+	const read, post = "GET /api/v1/repos/example/example/actions/runs/5", "POST /api/v1/repos/example/example/actions/runs/5/rerun"
+	for _, test := range []struct {
+		name, run string
+		rerun     bool
+	}{
+		{name: "a_failed_run", run: `{"id":5,"status":"failure"}`, rerun: true},
+		{name: "a_cancelled_run", run: `{"id":5,"status":"cancelled"}`, rerun: true},
+		{name: "a_succeeded_run", run: `{"id":5,"status":"success"}`},
+		{name: "a_running_run", run: `{"id":5,"status":"running"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{
+				"GET /api/v1/version":  `{"version":"17.0.0-100-2254cb0+gitea-1.22.0"}`,
+				"GET /swagger.v1.json": `{"info":{"title":"Forgejo API"},"paths":{` + forgejoWholeRunPath + `}}`,
+				read:                   test.run,
+				post:                   "",
+			})
+			err := h.client.RerunFailedRun(t.Context(), testRef(), forgeapi.RunRef{ID: 5})
+			sent := h.instance.arrived()
+			if test.rerun {
+				if err != nil || !slices.Contains(sent, read) || !slices.Contains(sent, post) {
+					t.Errorf("RerunFailedRun = %v after %v, want nil after the run read and %s", err, sent, post)
+				}
+				return
+			}
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeRunNotFailed || fe.Kind != forgeapi.KindConflict {
+				t.Errorf("RerunFailedRun = %v, want code %q on KindConflict", err, forgeapi.CodeRunNotFailed)
+			}
+			if slices.Contains(sent, post) {
+				t.Errorf("RerunFailedRun sent %v, want no re-run", sent)
 			}
 		})
 	}

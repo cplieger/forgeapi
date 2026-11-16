@@ -538,8 +538,8 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 // capability rather than an unimplemented role, because one package serves every
 // version of both products. The runs read is filtered by the pinned head, and a
 // head no run carries is refused as stale rather than re-run, since a re-run can
-// carry deployment side effects; with no pin it re-runs the FIRST run the instance
-// returns, in an order the route's document does not state.
+// carry deployment side effects. A head carries a run per workflow, so the run
+// re-run is the one [Client.pickRun] picks.
 //
 //nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own run, which the head SHA pins
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
@@ -568,17 +568,25 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if stale := c.moved(ctx, op, addr); stale != nil {
 		return stale
 	}
-	run, ok := pickRun(runs.WorkflowRuns, headSHA)
-	if !ok {
+	run, carried, found := c.pickRun(runs.WorkflowRuns, headSHA)
+	switch {
+	case found:
+	case carried || headSHA == "":
+		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunNotFailed, forgeapi.KindConflict, http.StatusOK,
+			"no workflow run on this head failed or was cancelled")
+	default:
 		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeStaleHead, forgeapi.KindConflict, http.StatusOK,
 			"no workflow run carries the head this caller pinned")
 	}
-	return c.sendAt(ctx, op, http.MethodPost, addr, c.rerunRoute(run.ID), nil, nil)
+	route, _ := c.rerunRoute(run.ID)
+	return c.sendAt(ctx, op, http.MethodPost, addr, route, nil, nil)
 }
 
 // RerunFailedRun implements [forgeapi.Checks]. It is gated on
 // [forgeapi.CapRerunChecks] as [Client.RerunFailedChecks] is, and posts to the
-// route detection held: the failed-jobs re-run, or Forgejo's whole-run re-run.
+// route detection held: the failed-jobs re-run, or Forgejo's whole-run re-run,
+// which starts any finished run again, so there the run is read first and one
+// [Client.rerunnable] does not hold is refused.
 func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error {
 	const op = "RerunFailedRun"
 	ctx = transport.CallWrite(ctx, op)
@@ -591,27 +599,51 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 	if err := c.capability(ctx, op, forgeapi.CapRerunChecks); err != nil {
 		return err
 	}
-	return c.sendAt(ctx, op, http.MethodPost, &address{named: repo}, c.rerunRoute(run.ID), nil, nil)
-}
-
-// pickRun is the head pin read off the resolving read's own rows: the run whose
-// head matches what the caller pinned, or the FIRST row the instance returned where
-// the caller brought no pin.
-//
-// That arm claims no more than it knows. The runs route declares a head filter, a
-// branch, an event, an actor and a status, and no sort parameter and no ordering at
-// all, so the first row is the instance's own choice rather than the newest run,
-// and this comment says so rather than resting a re-run on an order no document
-// states. The PINNED arm is sound for a different reason: the head SHA is a
-// declared query parameter, so upstream applies the filter and the comparison here
-// is a second check rather than the only one.
-func pickRun(runs []wireRun, headSHA string) (wireRun, bool) {
-	for i := range runs {
-		if headSHA == "" || runs[i].head() == headSHA {
-			return runs[i], true
+	addr := &address{named: repo}
+	route, whole := c.rerunRoute(run.ID)
+	if whole {
+		var record wireRun
+		if err := c.readAt(ctx, op, addr, "/actions/runs/"+strconv.FormatInt(run.ID, 10), nil, &record); err != nil {
+			return err
+		}
+		if stale := c.moved(ctx, op, addr); stale != nil {
+			return stale
+		}
+		if !c.rerunnable(&record) {
+			return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunNotFailed, forgeapi.KindConflict, http.StatusOK,
+				"workflow run "+strconv.FormatInt(run.ID, 10)+" neither failed nor was cancelled")
 		}
 	}
-	return wireRun{}, false
+	return c.sendAt(ctx, op, http.MethodPost, addr, route, nil, nil)
+}
+
+// pickRun is the run a re-run of the head's failed checks addresses: the first of
+// the resolving read's rows on the pinned head, or on any head where the caller
+// brought no pin, that [Client.rerunnable] holds. carried reports whether any row
+// was on the pinned head, and found whether one qualified.
+//
+// The runs route declares no sort parameter and no ordering, so among several such
+// runs the first is the instance's own choice. The head SHA is a declared query
+// parameter, so upstream applies the filter and the comparison here is a second
+// check rather than the only one.
+func (c *Client) pickRun(runs []wireRun, headSHA string) (run wireRun, carried, found bool) {
+	for i := range runs {
+		if headSHA != "" && runs[i].head() != headSHA {
+			continue
+		}
+		carried = true
+		if c.rerunnable(&runs[i]) {
+			return runs[i], true, true
+		}
+	}
+	return wireRun{}, carried, false
+}
+
+// rerunnable reports whether a run failed or was cancelled, the outcomes Gitea's
+// failed-jobs re-run starts again (services/actions/rerun.go,
+// GetFailedJobsForRerun); Forgejo's whole-run re-run would start any finished run.
+func (c *Client) rerunnable(r *wireRun) bool {
+	return c.runState(r) == forgeapi.CheckFailing || r.outcome() == "cancelled"
 }
 
 // readRuns is the one read of a repository's Actions runs, which the re-run and the

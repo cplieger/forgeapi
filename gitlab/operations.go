@@ -694,8 +694,13 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if err != nil {
 		return err
 	}
-	pipeline, ok := pickPipeline(pipelines, headSHA)
-	if !ok {
+	pipeline, carried, found := pickPipeline(pipelines, headSHA)
+	switch {
+	case found:
+	case carried || headSHA == "":
+		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunNotFailed, forgeapi.KindConflict, http.StatusOK,
+			"no pipeline on this head failed or was canceled")
+	default:
 		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeStaleHead, forgeapi.KindConflict, http.StatusOK,
 			"no pipeline carries the head this caller pinned")
 	}
@@ -721,26 +726,28 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
-// pickPipeline is the head pin read off the resolving read's own rows: the pipeline
-// whose head matches what the caller pinned, or the FIRST row the instance returned
-// where the caller brought no pin.
+// pickPipeline is the pipeline a re-run of the head's failed checks addresses: the
+// first of the resolving read's rows on the pinned head, or on any head where the
+// caller brought no pin, that failed or was canceled, the jobs this product's retry
+// starts again. carried reports whether any row was on the pinned head, and found
+// whether one qualified.
 //
-// That second arm claims no more than it knows. This product's pipelines route declares
-// a sha filter and an order parameter, and this read sends no order, so the first row is
-// the instance's own choice rather than the newest pipeline. The PINNED arm is sound for
-// a different reason: the SHA is a declared filter, so upstream applies it and the
-// comparison here is a second check rather than the only one.
-func pickPipeline(pipelines []restPipeline, headSHA string) (restPipeline, bool) {
+// This product's pipelines route declares a sha filter and an order parameter, and
+// this read sends no order, so among several such pipelines the first is the
+// instance's own choice. The SHA is a declared filter, so upstream applies it and
+// the comparison here is a second check rather than the only one.
+func pickPipeline(pipelines []restPipeline, headSHA string) (pipeline restPipeline, carried, found bool) {
 	for i := range pipelines {
 		p := &pipelines[i]
-		if p.ID == 0 {
+		if p.ID == 0 || headSHA != "" && p.SHA != headSHA {
 			continue
 		}
-		if headSHA == "" || p.SHA == headSHA {
-			return *p, true
+		carried = true
+		if status := strings.ToLower(p.Status); status == "failed" || status == "canceled" {
+			return *p, true, true
 		}
 	}
-	return restPipeline{}, false
+	return restPipeline{}, carried, false
 }
 
 // readPipelines is the one read of a project's pipelines, which the re-run and the run
