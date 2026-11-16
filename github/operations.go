@@ -817,9 +817,9 @@ func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgea
 	return item, nil
 }
 
-// applyLabels puts the labels a creation named on the object it created, through the
-// route this product declares for them, which takes their NAMES and is addressed by
-// the object's own number under the issues path on a pull request as on an issue.
+// applyLabels puts labels on an item through the route this product declares for
+// them, which takes their NAMES and is addressed by the item's own number under the
+// issues path on a pull request as on an issue.
 func (c *Client) applyLabels(ctx context.Context, op string, repo forgeapi.RepoRef, number int, labels []string) error {
 	if number <= 0 {
 		return errorf(forgeapi.CodeValidation, "the creation answered no number, so the labels have nothing to address")
@@ -1691,4 +1691,100 @@ func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...
 		Partial:   c.pagePartial(len(rows), next, walk.page),
 		Successor: moved.to,
 	}, nil
+}
+
+// AddLabels implements [forgeapi.Labels].
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "AddLabels"
+	ctx = transport.CallWrite(ctx, op)
+	number, err := labelItem(repo, target)
+	if err != nil || len(names) == 0 {
+		return err
+	}
+	if err := c.checkDefined(ctx, op, repo, names); err != nil {
+		return err
+	}
+	return c.applyLabels(ctx, op, repo, number, names)
+}
+
+// labelItem is the number a label change addresses, refused before any request
+// where the repository or the target cannot be addressed.
+func labelItem(repo forgeapi.RepoRef, target forgeapi.LabelTarget) (int, error) {
+	if err := checkRepo(repo); err != nil {
+		return 0, err
+	}
+	if err := target.Validate(); err != nil {
+		return 0, err
+	}
+	if target.PR.Number != 0 {
+		return target.PR.Number, nil
+	}
+	return target.Issue.Number, nil
+}
+
+// checkDefined refuses the first name the first page of repo's labels does not
+// define, so an addition writes only labels the repository already has.
+func (c *Client) checkDefined(ctx context.Context, op string, repo forgeapi.RepoRef, names []string) error {
+	query := url.Values{keyPage: {"1"}, keyPerPage: {strconv.Itoa(restPerPageMax)}}
+	var rows []restLabel
+	if err := c.readRepoJSON(ctx, op, repoRoute(repo, "/labels"), query, &rows); err != nil {
+		return err
+	}
+	defined := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		defined[row.Name] = true
+	}
+	for _, name := range names {
+		if !defined[name] {
+			return c.unresolvedLabel(ctx, op, name, len(rows))
+		}
+	}
+	return nil
+}
+
+// unresolvedLabel is the refusal of a name the label page lacks, under the code the
+// page earns: a full page may continue past it, a short one is the whole list.
+func (c *Client) unresolvedLabel(ctx context.Context, op, name string, rows int) *forgeapi.Error {
+	code, read := forgeapi.CodeValidation, "which was the whole list"
+	if rows >= restPerPageMax {
+		code, read = forgeapi.CodeLabelPageTruncated, "which came back full, so the list continues past it"
+	}
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), code, forgeapi.KindUpstream, http.StatusOK,
+		"no label named "+name+" on the first page of this repository's labels, bounded at "+
+			strconv.Itoa(restPerPageMax)+", "+read)
+}
+
+// RemoveLabels implements [forgeapi.Labels]. This product's removal answers 404 for
+// a label the item lacks and for a missing item alike, so the first 404 reads the
+// item once: found, that 404 and every later one is a name not carried.
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "RemoveLabels"
+	ctx = transport.CallWrite(ctx, op)
+	number, err := labelItem(repo, target)
+	if err != nil {
+		return err
+	}
+	item := repoRoute(repo, "/issues/"+strconv.Itoa(number))
+	labels := (&url.URL{Path: item + "/labels/"}).EscapedPath()
+	var removed []string
+	found := false
+	for _, name := range transport.DistinctNames(names) {
+		resp, err := c.exchange(ctx, &transport.Request{
+			Op: op, Method: http.MethodDelete, EscapedPath: labels + url.PathEscape(name),
+			Answers: []int{http.StatusNotFound},
+		})
+		switch {
+		case err != nil:
+			return transport.AfterRemovals(err, removed)
+		case resp.Status != http.StatusNotFound:
+			removed = append(removed, name)
+		case !found:
+			var record struct{}
+			if err := c.readRepoJSON(ctx, op, item, nil, &record); err != nil {
+				return transport.AfterRemovals(err, removed)
+			}
+			found = true
+		}
+	}
+	return nil
 }

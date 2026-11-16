@@ -1095,9 +1095,8 @@ type Releases interface {
 	CreateRelease(ctx context.Context, repo RepoRef, req NewRelease) (Release, error)
 }
 
-// Labels reads the labels a repository defines. It is OPTIONAL for the same
-// reason [Releases] is: a family whose product has no pull-request labels does
-// not implement it.
+// Labels reads the labels a repository defines and changes the labels a pull
+// request or an issue carries.
 type Labels interface {
 	// ListLabels returns labels defined on repo.
 	//
@@ -1113,16 +1112,54 @@ type Labels interface {
 	//	Items[].Color  differs in spelling  color string, leading #, on 23 of 23, upper-case hex on 3
 	//	Successor      cannot supply        nil: no successor key
 	ListLabels(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Label], error)
+
+	// AddLabels puts labels the repository already defines on target, matched by
+	// name exactly as the repository spells them, and never creates a label: a name
+	// the first page of the repository's labels lacks is refused before any write,
+	// with [CodeValidation], or [CodeLabelPageTruncated] where that page came back
+	// full. No names send nothing. It answers no item: read it back with
+	// [PullRequests.ReadPR] or [Issues.ReadIssue].
+	//
+	// Per forge:
+	//
+	//	GitHub   GET /repos/{owner}/{repo}/labels, its first page at the most a page serves, to refuse a name the repository does not define before anything is written, then POST /repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the read's hop and one read against the id-addressed location resolve the successor the stale refusal carries, and nothing is written, 2 to 3 requests
+	//	GitLab   GET /api/v4/projects/{id}/labels, its first page at the most a page serves, to refuse a name the project does not define, since this product's add_labels creates one, then PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}, 2 requests
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written, 2 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written, 2 requests
+	//
+	// GitHub sends this, where a wrong default would change the request silently:
+	//
+	//	labels  body  the labels the caller named, as the NAMES this product's addition takes, each one the label read found defined
+	//
+	// GitLab sends this, where a wrong default would change the request silently:
+	//
+	//	add_labels  body  the labels the caller named, as the NAMES this product's update takes, each one the label read found defined
+	//
+	// Gitea and Forgejo send this, where a wrong default would change the request silently:
+	//
+	//	labels  body  the labels the caller named, as the numeric ids this product's option takes, which is what the label read this row prices resolves
+	AddLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
+
+	// RemoveLabels takes names off target. A name the item does not carry is no
+	// error, and no names send nothing. A refusal met after a name was removed
+	// leaves that removal in place, and its Message names every label removed
+	// before it. It answers no item: read it back with [PullRequests.ReadPR] or
+	// [Issues.ReadIssue].
+	//
+	// Per forge:
+	//
+	//	GitHub   DELETE /repos/{owner}/{repo}/issues/{number}/labels/{name} for each name, the issue route a pull request shares; its 404 answers a label the item lacks and a missing item alike, so the first one is followed by one GET /repos/{owner}/{repo}/issues/{number}, which finding the item makes that removal and every later 404 a name not carried; where a removal answered from another address, one read against the id-addressed location resolves the successor the stale refusal carries, 0 to 1 request plus one per label name
+	//	GitLab   PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}, whose remove_labels ignores a name the item does not carry; a name with a comma or with surrounding space names no label of this product and is not sent, 1 request
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries with its id, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{label_id} for each name it carries, by the id this product's route takes, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed, 1 to 2 requests plus up to one per label name
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{name} for each name it carries, by name, since this product reads digits as an id only where no label has that name, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed, 1 to 2 requests plus up to one per label name
+	RemoveLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
 }
 
 // Core is the union of the roles EVERY family satisfies, and the union is
-// therefore the INTERSECTION of what they can do.
-//
-// A union of everything would re-import the god-interface failure and could not
-// be satisfied by a family whose product lacks releases or pull-request labels,
-// so those two roles stay out of Core and are asserted separately. A consumer
-// declares the narrowest role it actually uses; Core exists for the one place
-// that has to hand out a single value a route might ask anything of.
+// therefore the INTERSECTION of what they can do. [Releases] stays out of it, so a
+// family whose product has no release object can still be a Core. A consumer
+// declares the narrowest role it uses; Core is for the one place that hands out a
+// single value a route might ask anything of.
 //
 // Adding a method to any of these interfaces is a breaking change for every
 // implementor, so what is additive is a NEW role, a new family, a new struct
@@ -1136,6 +1173,7 @@ type Core interface {
 	Issues
 	Capabilities
 	Governor
+	Labels
 
 	// Close releases the client's pool, the idle connections of the transport the
 	// library built for its connection: a caller that disconnects or re-addresses a

@@ -121,7 +121,7 @@ func TestTheGiteaFamilySetupReadsTheStatedMaximumBesideTheVersion(t *testing.T) 
 			if n := settingsReads(window); n != 1 {
 				t.Errorf("ConnectionCaps on %s read %s %d time(s) [%s], want once, beside the version", p, settingsRoute, n, describeRequests(window))
 			}
-			if low, high := price(&e, 1); len(window) < low || len(window) > high {
+			if low, high := price(&e, 1, 0); len(window) < low || len(window) > high {
 				t.Errorf("ConnectionCaps on %s sent %d request(s) [%s], want %d to %d: the connection's row prices the setup read", p, len(window), describeRequests(window), low, high)
 			}
 

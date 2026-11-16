@@ -131,3 +131,33 @@ func TestAnAppTokenMintedForAWriteIsNotMarked(t *testing.T) {
 		t.Errorf("the attempts of ClosePR under an App installation = %v, want %v", got, want)
 	}
 }
+
+// An addition of two names reads the repository's labels and then writes once, so
+// one attempt is marked.
+func TestALabelAdditionMarksItsOneWrite(t *testing.T) {
+	const read, write = "GET /api/v3/repos/example/example/labels", "POST /api/v3/repos/example/example/issues/1/labels"
+	seen := &attempts{}
+	h := newHarness(t, map[string]string{
+		read:  `[{"name":"a"},{"name":"b"}]`,
+		write: `[{"name":"a"},{"name":"b"}]`,
+	}, forgeapi.WithAttemptObserver(seen.observe))
+	if err := h.client.AddLabels(t.Context(), testRef(), forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{"a", "b"}); err != nil {
+		t.Fatalf("AddLabels = %v, want nil", err)
+	}
+	if got, want := seen.all(), []attempt{{route: read}, {route: write, mutates: true}}; !slices.Equal(got, want) {
+		t.Errorf("the attempts of AddLabels of two names = %v, want %v", got, want)
+	}
+}
+
+// A removal of two names sends one removal per name, each marked.
+func TestALabelRemovalMarksOneWritePerName(t *testing.T) {
+	const a, b = "DELETE /api/v3/repos/example/example/issues/1/labels/a", "DELETE /api/v3/repos/example/example/issues/1/labels/b"
+	seen := &attempts{}
+	h := newHarness(t, map[string]string{a: `[]`, b: `[]`}, forgeapi.WithAttemptObserver(seen.observe))
+	if err := h.client.RemoveLabels(t.Context(), testRef(), forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{"a", "b"}); err != nil {
+		t.Fatalf("RemoveLabels = %v, want nil", err)
+	}
+	if got, want := seen.all(), []attempt{{route: a, mutates: true}, {route: b, mutates: true}}; !slices.Equal(got, want) {
+		t.Errorf("the attempts of RemoveLabels of two names = %v, want %v", got, want)
+	}
+}

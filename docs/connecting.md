@@ -37,7 +37,7 @@ GitLab and GitHub recognize themselves by a response header, and Gitea and Forge
 
 An instance that no family recognizes is refused with `CodeFamilyUndetected`, which carries the last read's status. A caller that knows its family calls that family's own constructor, `github.New`, `gitlab.New` or `gitea.New`, and spends nothing on detection. Gitea and Forgejo share the `gitea` package because they share an API.
 
-The two optional roles, `Releases` and `Labels`, are reached by type assertion on a `Core`. A family that cannot serve one fails the assertion rather than offering a method that always fails.
+The one optional role, `Releases`, is reached by type assertion on a `Core`. A family that cannot serve it fails the assertion rather than offering a method that always fails.
 
 ## Repository identifiers
 

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cplieger/forgeapi/v3/internal/spec"
@@ -247,6 +248,13 @@ func exercises(entry *spec.Entry) string {
 // degradation path or a fold's pages rather than an estimate, and a paged figure
 // says so, because what a whole list costs is that figure times the pages taken.
 func price(requests spec.Requests) string {
+	named := perName(requests)
+	if requests.Max == 0 && named != "" {
+		if strings.HasSuffix(named, "one") {
+			return named + " request per label name"
+		}
+		return named + " requests per label name"
+	}
 	var out string
 	switch {
 	case requests.Max == 0:
@@ -275,7 +283,33 @@ func price(requests spec.Requests) string {
 	case requests.PerItemCeiling > 1:
 		out += fmt.Sprintf(" plus up to %d per row", requests.PerItemCeiling)
 	}
+	if named != "" {
+		out += " plus " + named + " per label name"
+	}
 	return out
+}
+
+// perName is how many requests each label name the call names adds, empty where
+// a name adds none: a fixed count, a range, or a ceiling alone.
+func perName(requests spec.Requests) string {
+	most := requests.PerName + requests.PerNameCeiling
+	switch {
+	case most == 0:
+		return ""
+	case requests.PerNameCeiling == 0:
+		return count(requests.PerName)
+	case requests.PerName == 0:
+		return "up to " + count(most)
+	}
+	return count(requests.PerName) + " to " + count(most)
+}
+
+// count spells a per-name figure as the other per-row figures are spelled.
+func count(n int) string {
+	if n == 1 {
+		return "one"
+	}
+	return strconv.Itoa(n)
 }
 
 func needs(entry *spec.Entry) string {

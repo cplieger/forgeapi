@@ -87,7 +87,7 @@ func movedInstance(t *testing.T, f fixture, from, to string, resolved []byte) (*
 			w.Header().Set(k, v)
 		}
 		w.WriteHeader(route.Status)
-		if _, err := w.Write(route.Body); err != nil {
+		if _, err := w.Write(route.payload()); err != nil {
 			t.Errorf("Setup: writing %s %s: %v", r.Method, path, err)
 		}
 	}))
@@ -181,11 +181,14 @@ func checkPricedArm(t *testing.T, e spec.Entry, call renamedCall, want int) {
 	if len(call.sent) != want {
 		t.Errorf("%s on %s on a moved repository sent %d request(s) [%s], want %d", e.Method, e.Product, len(call.sent), describeRequests(call.sent), want)
 	}
-	items := 1
-	if op, ok := operationFor(e.Method); ok && op.items != nil && call.err == nil {
-		items = op.items(call.got)
+	items, names := 1, 0
+	if op, ok := operationFor(e.Method); ok {
+		names = op.names
+		if op.items != nil && call.err == nil {
+			items = op.items(call.got)
+		}
 	}
-	if low, high := price(&e, items); len(call.sent) < low || len(call.sent) > high {
+	if low, high := price(&e, items, names); len(call.sent) < low || len(call.sent) > high {
 		t.Errorf("%s on %s on a moved repository sent %d request(s), want %d to %d for %d item(s): the table prices the rename arm",
 			e.Method, e.Product, len(call.sent), low, high, items)
 	}
@@ -340,31 +343,57 @@ func TestAWriteToARenamedGiteaFamilyRepositoryRefusesWithItsSuccessor(t *testing
 	}
 }
 
-// A creation that reads the repository's labels first meets the move on that read,
-// and the successor the read's hop names is not the repository the caller asked to
-// write to, so the creation refuses with the stale code carrying it and writes to
-// neither address.
-func TestACreationOnARenamedGiteaFamilyRepositoryWritesNothingAfterItsReadMeetsTheMove(t *testing.T) {
+// A write that reads first, the labels a creation or an addition resolves or the
+// labels a removal finds on its item, meets the move on that read, and the successor
+// the read's hop names is not the repository the caller asked to write to, so it
+// refuses with the stale code carrying it and writes to neither address.
+func TestAWriteThatReadsFirstOnARenamedGiteaFamilyRepositoryWritesNothing(t *testing.T) {
 	for _, p := range giteaFamilyProducts {
-		e := requireEntry(t, p, "Issues.CreateIssue")
-		t.Run(caseName(e), func(t *testing.T) {
-			f, err := loadFixture(p, e.Method)
-			if err != nil {
-				t.Fatalf("Setup: %v", err)
-			}
-			srv, rec := movedInstance(t, f, giteaRepos+selector, giteaRepos+movedSelector, nil)
-
-			call := callOn(t, e, srv, rec)
-			if fe := staleCode(t, "CreateIssue on "+string(p)+" on a moved repository", call.err); fe != nil {
-				checkSuccessor(t, "CreateIssue on "+string(p)+"'s refusal", p, fe.Successor)
-			}
-			for _, req := range call.sent {
-				if req.method != http.MethodGet {
-					t.Errorf("CreateIssue on %s on a moved repository sent %s, want no write: re-issuing it against the successor is the caller's decision", p, req)
+		for _, method := range []string{"Issues.CreateIssue", "Labels.AddLabels", "Labels.RemoveLabels"} {
+			e := requireEntry(t, p, method)
+			t.Run(caseName(e), func(t *testing.T) {
+				f, err := loadFixture(p, e.Method)
+				if err != nil {
+					t.Fatalf("Setup: %v", err)
 				}
-			}
-		})
+				srv, rec := movedInstance(t, f, giteaRepos+selector, giteaRepos+movedSelector, nil)
+
+				call := callOn(t, e, srv, rec)
+				if fe := staleCode(t, method+" on "+string(p)+" on a moved repository", call.err); fe != nil {
+					checkSuccessor(t, method+" on "+string(p)+"'s refusal", p, fe.Successor)
+				}
+				for _, req := range call.sent {
+					if req.method != http.MethodGet {
+						t.Errorf("%s on %s on a moved repository sent %s, want no write: re-issuing it against the successor is the caller's decision", method, p, req)
+					}
+				}
+				checkPricedArm(t, e, call, 2)
+			})
+		}
 	}
+}
+
+// GitHub's label addition reads the repository's labels first, and on a moved
+// repository that read costs its hop and the resolving read, after which the
+// addition refuses with the successor and writes nothing.
+func TestAGitHubLabelAdditionOnARenamedRepositoryWritesNothing(t *testing.T) {
+	e := requireEntry(t, spec.GitHub, "Labels.AddLabels")
+	f, err := loadFixture(spec.GitHub, e.Method)
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	srv, rec := movedInstance(t, f, "/repos/"+selector, githubRepositoryID, movedRecord(t, f))
+
+	call := callOn(t, e, srv, rec)
+	if fe := staleCode(t, "AddLabels on GitHub on a moved repository", call.err); fe != nil {
+		checkSuccessor(t, "AddLabels on GitHub's refusal", spec.GitHub, fe.Successor)
+	}
+	for _, req := range call.sent {
+		if req.method != http.MethodGet {
+			t.Errorf("AddLabels on GitHub on a moved repository sent %s, want no write", req)
+		}
+	}
+	checkPricedArm(t, e, call, 3)
 }
 
 // githubRESTCarriers are GitHub's repository-addressed reads the conformance

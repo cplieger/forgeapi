@@ -387,6 +387,15 @@ func (f fixture) checkProvenance() error {
 }
 
 // matches reports whether one recorded response answers this request.
+// payload is the body a server writes for this route: none on a 204, whose status
+// allows none, which the fixture spells as null to stay valid JSON.
+func (w *wire) payload() []byte {
+	if w.Status == http.StatusNoContent {
+		return nil
+	}
+	return w.Body
+}
+
 func (w *wire) matches(r *http.Request, body []byte) bool {
 	if w.GraphQL {
 		return r.Method == http.MethodPost && isGraphQL(body)
@@ -497,10 +506,12 @@ func indexOf(list []string, want string) int {
 // price is what one entry's published request count comes to on the canonical
 // fixture, whose every list carries one item: the call's own figure plus the
 // per-item figure for the products whose list rows carry no check state and cost one
-// read each, failed attempts included, and the per-item ceiling above the high end.
-func price(e *spec.Entry, items int) (low, high int) {
+// read each, failed attempts included, the per-name figure for the label names the
+// call named, and each ceiling above the high end.
+func price(e *spec.Entry, items, names int) (low, high int) {
 	r := e.Requests
-	return r.Min + r.PerItem*items, r.Max + (r.PerItem+r.PerItemCeiling)*items
+	return r.Min + r.PerItem*items + r.PerName*names,
+		r.Max + (r.PerItem+r.PerItemCeiling)*items + (r.PerName+r.PerNameCeiling)*names
 }
 
 // wanted is what one of the table's request facts expects on the wire, resolved
@@ -586,16 +597,11 @@ func numberList(raw json.RawMessage) bool {
 	return len(rows) > 0
 }
 
-// preludeFor is the capability accessor a case calls before the operation itself,
-// derived from the capability the entry needs: a call gated on a capability cannot
-// be priced at its published figure unless detection has already run, and the
-// accessor's own requests are the accessor's price rather than this operation's.
-//
-// The connection read is also the prelude of every Gitea-family operation whose
-// requests ask for at most the instance's stated maximum page size, for the same
-// reason: the connection reads that maximum at setup and prices the read on its own
-// row, so the operation's published figure is its figure on a connection already
-// set up.
+// preludeFor is the read a case runs first, so the operation is priced on a
+// connection already set up: the capability accessor of a call gated on a
+// capability, and on the Gitea family the connection read of an operation that pages
+// at the instance's stated maximum or whose route turns on the product, both of
+// which that read establishes and prices on its own row.
 func preludeFor(e *spec.Entry) string {
 	switch forgeapi.Capability(e.Needs) {
 	case forgeapi.CapRerunChecks:
@@ -603,7 +609,7 @@ func preludeFor(e *spec.Entry) string {
 	case forgeapi.CapReadMergeState:
 		return "Capabilities.GrantCaps"
 	}
-	if family(e.Product) == forgeapi.FamilyGitea && pagesAtTheStatedMaximum[e.Method] {
+	if family(e.Product) == forgeapi.FamilyGitea && (pagesAtTheStatedMaximum[e.Method] || readsTheProduct[e.Method]) {
 		return "Capabilities.ConnectionCaps"
 	}
 	return ""
@@ -626,7 +632,12 @@ var pagesAtTheStatedMaximum = map[string]bool{
 	"Issues.CreateIssue":     true,
 	"Releases.ListReleases":  true,
 	"Labels.ListLabels":      true,
+	"Labels.AddLabels":       true,
 }
+
+// readsTheProduct are the operations whose route on the Gitea family turns on which
+// of the two products answers, which the connection read establishes first.
+var readsTheProduct = map[string]bool{"Labels.RemoveLabels": true}
 
 // guard runs one operation and turns a panic into an error naming it, so an
 // implementation whose methods panic fails each case in turn rather than aborting

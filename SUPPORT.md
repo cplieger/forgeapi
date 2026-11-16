@@ -38,6 +38,8 @@ Where a product departs from the normalized contract, the operation's own godoc 
 | `Releases.ListReleases` | supported | supported | supported | supported |
 | `Releases.CreateRelease` | supported | supported | supported | supported |
 | `Labels.ListLabels` | supported | supported | supported | supported |
+| `Labels.AddLabels` | supported | supported | supported | supported |
+| `Labels.RemoveLabels` | supported | supported | supported | supported |
 
 ## Rate-limit answers
 

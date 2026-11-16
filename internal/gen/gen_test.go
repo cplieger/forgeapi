@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // update is passed by the go:generate directive in doc.go.
@@ -121,4 +123,31 @@ func itoa(value int) string {
 		value /= 10
 	}
 	return string(digits)
+}
+
+// TestPriceSpellsThePerNameFigures holds the price line to the figures a label
+// change publishes, beside one figure of each other kind for contrast.
+func TestPriceSpellsThePerNameFigures(t *testing.T) {
+	cases := []struct {
+		name     string
+		want     string
+		requests spec.Requests
+	}{
+		{name: "a_fixed_call", requests: spec.Requests{Min: 2, Max: 2}, want: "2 requests"},
+		{name: "a_range_plus_one_per_name", requests: spec.Requests{Min: 0, Max: 1, PerName: 1}, want: "0 to 1 request plus one per label name"},
+		{name: "a_range_plus_up_to_one_per_name", requests: spec.Requests{Min: 1, Max: 2, PerNameCeiling: 1}, want: "1 to 2 requests plus up to one per label name"},
+		{name: "a_fixed_and_a_ceiling_per_name", requests: spec.Requests{Min: 1, Max: 1, PerName: 1, PerNameCeiling: 2}, want: "1 request plus one to 3 per label name"},
+		{name: "per_name_alone", requests: spec.Requests{PerName: 1}, want: "one request per label name"},
+		{name: "a_ceiling_per_name_alone", requests: spec.Requests{PerNameCeiling: 1}, want: "up to one request per label name"},
+		{name: "two_per_name_alone", requests: spec.Requests{PerName: 2}, want: "2 requests per label name"},
+		{name: "per_row_and_per_name", requests: spec.Requests{Min: 1, Max: 1, PerItem: 1, PerName: 1}, want: "1 request plus one per row plus one per label name"},
+		{name: "nothing", requests: spec.Requests{}, want: "no request"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := price(tc.requests); got != tc.want {
+				t.Errorf("price(%+v) = %q, want %q", tc.requests, got, tc.want)
+			}
+		})
+	}
 }

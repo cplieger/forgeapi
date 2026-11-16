@@ -21,6 +21,11 @@ const maxStatusPageItems = 100
 // pinned, and upstream applies the pin as a declared filter.
 const maxPipelinePageItems = 20
 
+// maxLabelPageItems is the page size an addition's label read asks for, the most a
+// REST page serves: "per_page ... (default: 20, max: 100)", per the REST API's
+// pagination (https://docs.gitlab.com/api/rest/#offset-based-pagination).
+const maxLabelPageItems = 100
+
 // The request-body fields several mutations share.
 const (
 	keyDescription = "description"
@@ -1308,4 +1313,86 @@ func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...
 		Next:    next,
 		Partial: c.pagePartial(len(rows), next, walk.page),
 	}, nil
+}
+
+// AddLabels implements [forgeapi.Labels]. This product's add_labels creates a
+// project label for a name the project lacks, so the names are read against the
+// project's labels first.
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "AddLabels"
+	ctx = transport.CallWrite(ctx, op)
+	route, err := labelRoute(repo, target)
+	if err != nil || len(names) == 0 {
+		return err
+	}
+	if err := c.checkDefined(ctx, op, repo, names); err != nil {
+		return err
+	}
+	return c.sendJSON(ctx, op, http.MethodPut, route, map[string]any{"add_labels": names}, nil)
+}
+
+// labelRoute is the update route of the item a label change addresses, refused
+// before any request where the repository or the target cannot be addressed.
+func labelRoute(repo forgeapi.RepoRef, target forgeapi.LabelTarget) (string, error) {
+	if err := checkRepo(repo); err != nil {
+		return "", err
+	}
+	if err := target.Validate(); err != nil {
+		return "", err
+	}
+	if target.PR.Number != 0 {
+		return projectRoute(repo, "/merge_requests/"+strconv.Itoa(target.PR.Number)), nil
+	}
+	return projectRoute(repo, "/issues/"+strconv.Itoa(target.Issue.Number)), nil
+}
+
+// checkDefined refuses the first name the first page of repo's labels does not
+// define, which on this product carries the labels of the groups above it too.
+func (c *Client) checkDefined(ctx context.Context, op string, repo forgeapi.RepoRef, names []string) error {
+	query := url.Values{keyPage: {"1"}, keyPerPage: {strconv.Itoa(maxLabelPageItems)}}
+	var rows []restLabel
+	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/labels"), query, &rows); err != nil {
+		return err
+	}
+	defined := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		defined[row.Name] = true
+	}
+	for _, name := range names {
+		if defined[name] {
+			continue
+		}
+		code, read := forgeapi.CodeValidation, "which was the whole list"
+		if len(rows) >= maxLabelPageItems {
+			code, read = forgeapi.CodeLabelPageTruncated, "which came back full, so the list continues past it"
+		}
+		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), code, forgeapi.KindUpstream, http.StatusOK,
+			"no label named "+name+" on the first page of this project's labels, bounded at "+
+				strconv.Itoa(maxLabelPageItems)+", "+read)
+	}
+	return nil
+}
+
+// RemoveLabels implements [forgeapi.Labels]. This product's label titles carry no
+// comma and no surrounding space (app/models/concerns/base_label.rb), and its update
+// splits each name it is sent at commas and strips it
+// (lib/api/validations/types/comma_separated_to_array.rb), so a name that is no
+// title is dropped here rather than sent as the different names it would split into.
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "RemoveLabels"
+	ctx = transport.CallWrite(ctx, op)
+	route, err := labelRoute(repo, target)
+	if err != nil {
+		return err
+	}
+	titles := make([]string, 0, len(names))
+	for _, name := range transport.DistinctNames(names) {
+		if name != "" && name == strings.TrimSpace(name) && !strings.Contains(name, ",") {
+			titles = append(titles, name)
+		}
+	}
+	if len(titles) == 0 {
+		return nil
+	}
+	return c.sendJSON(ctx, op, http.MethodPut, route, map[string]any{"remove_labels": titles}, nil)
 }

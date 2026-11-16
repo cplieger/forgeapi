@@ -162,6 +162,7 @@ type Core interface {
 	Issues
 	Capabilities
 	Governor
+	Labels
 	Close()
 }
 const CountUnknown = -1
@@ -323,6 +324,8 @@ type LabelTarget struct {
 func (t LabelTarget) Validate() error
 type Labels interface {
 	ListLabels(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Label], error)
+	AddLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
+	RemoveLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
 }
 type ListOption interface {
 	// contains unexported members
@@ -763,6 +766,7 @@ func NewFor(store creds.Store, keys func() ([]string, error), opts ...forgeapi.O
 type Client struct {
 	// contains unexported members
 }
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) BudgetState() forgeapi.BudgetState
 func (c *Client) Close()
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
@@ -785,6 +789,7 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
 func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
@@ -799,6 +804,7 @@ const APIVersionHeader = "X-GitHub-Api-Version"
 type Client struct {
 	// contains unexported members
 }
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) BudgetState() forgeapi.BudgetState
 func (c *Client) Close()
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
@@ -821,6 +827,7 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
 func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
@@ -833,6 +840,7 @@ func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
 type Client struct {
 	// contains unexported members
 }
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) BudgetState() forgeapi.BudgetState
 func (c *Client) Close()
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
@@ -855,6 +863,7 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
 func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)

@@ -63,6 +63,9 @@ type operation struct {
 	// its default answer. A dedicated test asserts each one, and the
 	// departure-coverage gate reads them beside the fields expect declares.
 	errorArms []string
+	// names is how many label names the case's call names, which a per-name
+	// price counts.
+	names int
 	// rowArms are row fields the recorded fixture was trimmed of, asserted by a
 	// dedicated test over the fixture's own row carrying the key the product's
 	// published shape names.
@@ -773,6 +776,34 @@ var operations = []operation{
 				eq("Successor", g.Successor, (*forgeapi.RepoRef)(nil)),
 			}
 		},
+	},
+	{
+		method:   "Labels.AddLabels",
+		zero:     nil,
+		mutation: true,
+		names:    1,
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Labels)
+			if !ok {
+				return nil, roleAbsent("Labels")
+			}
+			return nil, r.AddLabels(ctx, s.repo, forgeapi.LabelTarget{Issue: s.issue}, []string{s.label})
+		},
+		expect: func(spec.Product, any) []check { return nil },
+	},
+	{
+		method:   "Labels.RemoveLabels",
+		zero:     nil,
+		mutation: true,
+		names:    1,
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Labels)
+			if !ok {
+				return nil, roleAbsent("Labels")
+			}
+			return nil, r.RemoveLabels(ctx, s.repo, forgeapi.LabelTarget{Issue: s.issue}, []string{s.label})
+		},
+		expect: func(spec.Product, any) []check { return nil },
 	},
 }
 

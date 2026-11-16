@@ -95,13 +95,13 @@ const (
 	// [CodeNotMergeable]. The remedy for both is reading the pull request again.
 	CodeStaleHead = "stale_head"
 	// CodeValidation is a request upstream rejected as invalid, a response
-	// body this library could not decode, or a label name a creation could not
-	// resolve on a read that answered the whole label list. Kind and Status say
-	// which end the shape came from.
+	// body this library could not decode, or a label name a creation or
+	// [Labels.AddLabels] could not resolve on a read that answered the whole
+	// label list. Kind and Status say which end the shape came from.
 	CodeValidation = "validation"
 	// CodeLabelPageTruncated is that same unresolved label name where the page
-	// read came back full, so the name may exist past the bound: retry with a
-	// larger page bound. The message names the page bound.
+	// read, at the most rows the instance serves on one page, came back full, so
+	// the name may exist past it. The message names the page size.
 	CodeLabelPageTruncated = "label_page_truncated"
 	// CodeBranchCannotMerge is one product's refusal naming the branch rather
 	// than the request.

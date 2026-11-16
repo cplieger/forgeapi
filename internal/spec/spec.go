@@ -74,6 +74,12 @@ type Requests struct {
 	// PerItemCeiling counts the further requests a row may cost beyond PerItem:
 	// GitLab's fork lookup on its cross-repository list, one per distinct fork.
 	PerItemCeiling int
+	// PerName counts the further requests each label name the call names costs:
+	// one removal per name where the product removes one label per request.
+	PerName int
+	// PerNameCeiling counts the further requests a name may cost beyond PerName:
+	// a removal sent only for a name the item carries.
+	PerNameCeiling int
 	// Paged says the figure is per page of a continued list, capped by
 	// Budget.ListPages.
 	Paged bool
@@ -198,6 +204,8 @@ var Fields = map[string]int{
 	"Releases.ListReleases":          10,
 	"Releases.CreateRelease":         7,
 	"Labels.ListLabels":              6,
+	"Labels.AddLabels":               1,
+	"Labels.RemoveLabels":            1,
 }
 
 // Table is the expectation table: one entry per operation per product, in the
@@ -2891,6 +2899,94 @@ var Table = []Entry{
 		Product:   Forgejo,
 		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
 		Requests:  Requests{Min: 1, Max: 2, Paged: true},
+		Support:   Supported,
+	},
+	{
+		Method:    "Labels.AddLabels",
+		Product:   GitHub,
+		Exercises: "GET /repos/{owner}/{repo}/labels, its first page at the most a page serves, to refuse a name the repository does not define before anything is written, then POST /repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the read's hop and one read against the id-addressed location resolve the successor the stale refusal carries, and nothing is written",
+		Requests:  Requests{Min: 2, Max: 3},
+		Support:   Supported,
+		Sends: []Sent{
+			{
+				Field: "labels",
+				Where: InBody,
+				Holds: HoldsLabelNames,
+				Says:  "the labels the caller named, as the NAMES this product's addition takes, each one the label read found defined",
+			},
+		},
+	},
+	{
+		Method:    "Labels.AddLabels",
+		Product:   GitLab,
+		Exercises: "GET /api/v4/projects/{id}/labels, its first page at the most a page serves, to refuse a name the project does not define, since this product's add_labels creates one, then PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}",
+		Requests:  Requests{Min: 2, Max: 2},
+		Support:   Supported,
+		Sends: []Sent{
+			{
+				Field: "add_labels",
+				Where: InBody,
+				Holds: HoldsLabelNames,
+				Says:  "the labels the caller named, as the NAMES this product's update takes, each one the label read found defined",
+			},
+		},
+	},
+	{
+		Method:    "Labels.AddLabels",
+		Product:   Gitea,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written",
+		Requests:  Requests{Min: 2, Max: 2},
+		Support:   Supported,
+		Sends: []Sent{
+			{
+				Field: "labels",
+				Where: InBody,
+				Holds: HoldsLabelIDs,
+				Says:  "the labels the caller named, as the numeric ids this product's option takes, which is what the label read this row prices resolves",
+			},
+		},
+	},
+	{
+		Method:    "Labels.AddLabels",
+		Product:   Forgejo,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written",
+		Requests:  Requests{Min: 2, Max: 2},
+		Support:   Supported,
+		Sends: []Sent{
+			{
+				Field: "labels",
+				Where: InBody,
+				Holds: HoldsLabelIDs,
+				Says:  "the labels the caller named, as the numeric ids this product's option takes, which is what the label read this row prices resolves",
+			},
+		},
+	},
+	{
+		Method:    "Labels.RemoveLabels",
+		Product:   GitHub,
+		Exercises: "DELETE /repos/{owner}/{repo}/issues/{number}/labels/{name} for each name, the issue route a pull request shares; its 404 answers a label the item lacks and a missing item alike, so the first one is followed by one GET /repos/{owner}/{repo}/issues/{number}, which finding the item makes that removal and every later 404 a name not carried; where a removal answered from another address, one read against the id-addressed location resolves the successor the stale refusal carries",
+		Requests:  Requests{Min: 0, Max: 1, PerName: 1},
+		Support:   Supported,
+	},
+	{
+		Method:    "Labels.RemoveLabels",
+		Product:   GitLab,
+		Exercises: "PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}, whose remove_labels ignores a name the item does not carry; a name with a comma or with surrounding space names no label of this product and is not sent",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+	},
+	{
+		Method:    "Labels.RemoveLabels",
+		Product:   Gitea,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries with its id, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{label_id} for each name it carries, by the id this product's route takes, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed",
+		Requests:  Requests{Min: 1, Max: 2, PerNameCeiling: 1},
+		Support:   Supported,
+	},
+	{
+		Method:    "Labels.RemoveLabels",
+		Product:   Forgejo,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{name} for each name it carries, by name, since this product reads digits as an id only where no label has that name, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed",
+		Requests:  Requests{Min: 1, Max: 2, PerNameCeiling: 1},
 		Support:   Supported,
 	},
 }

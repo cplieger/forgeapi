@@ -224,5 +224,7 @@ func resolvePlaceholders(path string, p spec.Product) string {
 		"{sha}", headSHA,
 		"{ref}", headSHA,
 		"{run}", "{}",
+		"{name}", labelName,
+		"{label_id}", "{}",
 	).Replace(path)
 }

@@ -3,6 +3,7 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -85,6 +86,27 @@ var liveMutations = map[string]liveMutation{
 		},
 		fixes: func(s subject) map[string]any {
 			return map[string]any{"State": forgeapi.IssueStateOpen, "Title": s.prefix + issueTitle, "Body": issueBody}
+		},
+	},
+	"Labels.AddLabels": {
+		prepare: func(t *testing.T, l *lane, s *subject) {
+			titled(s)
+			openLaneIssue(t, l, s, "the case labels")
+		},
+		made: func(t *testing.T, l *lane, s subject, _ any) {
+			checkCarries(t, l, s, true)
+		},
+	},
+	"Labels.RemoveLabels": {
+		prepare: func(t *testing.T, l *lane, s *subject) {
+			titled(s)
+			openLaneIssue(t, l, s, "the case unlabels")
+			if err := l.labelIssue(t.Context(), s.issue.Number, s.label); err != nil {
+				t.Fatalf("Setup: labelling the issue the case unlabels: %v", err)
+			}
+		},
+		made: func(t *testing.T, l *lane, s subject, _ any) {
+			checkCarries(t, l, s, false)
 		},
 	},
 	"PullRequests.CreatePR": {
@@ -239,6 +261,40 @@ func openedPullRequest(s subject, state forgeapi.PRState) map[string]any {
 
 // titled points a creation's text at this run: every title starts with the run's
 // prefix, and the label applied is the lane's.
+// openLaneIssue opens an issue under the lane's title, registers its closing and
+// points the subject at it.
+func openLaneIssue(t *testing.T, l *lane, s *subject, what string) {
+	t.Helper()
+	n, err := l.openIssue(t.Context(), s.prefix+issueTitle)
+	if err != nil {
+		t.Fatalf("Setup: opening the issue %s: %v", what, err)
+	}
+	l.later(t, "closing the issue the setup opened", func(ctx context.Context) error { return l.closeIssue(ctx, n) })
+	s.issue = forgeapi.IssueRef{Number: n}
+}
+
+// checkCarries reads the subject's issue back and holds it to carrying the lane's
+// label or not, which is the whole effect of a label change answering no item.
+func checkCarries(t *testing.T, l *lane, s subject, want bool) {
+	t.Helper()
+	if err := carriesLabel(t.Context(), l, s, want); err != nil {
+		t.Error(err)
+	}
+}
+
+// carriesLabel is checkCarries' verdict: nil where the issue read back carries the
+// lane's label exactly when want says it should.
+func carriesLabel(ctx context.Context, l *lane, s subject, want bool) error {
+	names, err := l.issueLabels(ctx, s.issue.Number)
+	if err != nil {
+		return fmt.Errorf("reading back the issue the case changed: %w", err)
+	}
+	if got := slices.Contains(names, s.label); got != want {
+		return fmt.Errorf("issue %d carries %q = %v after the case, want %v: its labels are %v", s.issue.Number, s.label, got, want, names)
+	}
+	return nil
+}
+
 func titled(s *subject) {
 	s.prefix = laneTitlePrefix()
 	s.label = laneLabel(s.product)

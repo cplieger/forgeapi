@@ -305,7 +305,7 @@ func runLiveScoped(t *testing.T, e spec.Entry, op operation, ownerScoped bool) {
 	if op.items != nil {
 		items = op.items(got)
 	}
-	low, high := price(&e, items)
+	low, high := price(&e, items, op.names)
 	// The low arm is a floor only where the governor issued every read the price
 	// covers. A read it DEFERRED to hold the mutation reserve, or one the
 	// per-interval caps stopped, takes the count BELOW the table rather than above

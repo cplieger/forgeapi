@@ -141,6 +141,21 @@ func (c *Client) send(ctx context.Context, op, method string, a *address, rest s
 	return resp, err
 }
 
+// removeAt sends one DELETE under the call's repository whose last segment, already
+// escaped, names what it removes, and reports whether it removed anything: a 404 or
+// 422 is read as an answer, the thing to remove being gone already.
+func (c *Client) removeAt(ctx context.Context, op string, a *address, rest, segment string) (bool, error) {
+	resp, err := c.core.Do(ctx, &transport.Request{
+		Op: op, Method: http.MethodDelete, EscapedPath: (&url.URL{Path: a.route(rest)}).EscapedPath() + segment,
+		Answers: []int{http.StatusNotFound, http.StatusUnprocessableEntity},
+	})
+	if err != nil {
+		c.nameRefusedSuccessor(a, resp, err)
+		return false, err
+	}
+	return resp.Status < http.StatusMultipleChoices, nil
+}
+
 // listKind is what a list's own route lets a caller select beside the page, which
 // decides which list options it reads and which it refuses.
 type listKind int

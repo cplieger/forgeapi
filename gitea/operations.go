@@ -1064,32 +1064,13 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 	return c.normalizeIssue(&record, repo), nil
 }
 
-// labelIDs resolves the caller's label NAMES onto the identifiers both products'
-// creation options take.
-//
-// The published signature carries names and the wire field is an array of numeric
-// ids on both products, measured against each one's own swagger document, so
-// sending the names is a request every instance of this family refuses. Translating
-// them costs the repository's own label list, which is why a creation's published
-// price carries a second request where the caller named labels and one where it did
-// not. A name that read does not answer is refused rather than dropped, because a
-// creation that silently lost a label the caller asked for is the worse of the two
-// answers.
-//
-// The read is ONE page at the instance's stated maximum, which bounds what the
-// refusal can claim: a repository whose label list is longer than that page, and an
-// organization's own labels, which this route does not return at all, are outside
-// what was read, so the refusal states the page it read rather than the repository.
-//
-// Which of the two refusals a missing name gets is decided by the page itself. A
-// page that came back FULL is the only evidence this product offers that a list
-// continues, the same witness its continuations are minted from, so a name absent
-// from a full page may exist past the bound and is refused under the truncated code;
-// a page that came back SHORT is the repository's whole label list, and a name
-// absent from it exists nowhere this route can reach.
-//
-// A read that meets a move refuses with the successor and no write is sent: writing
-// to a repository the caller did not name is the caller's decision.
+// labelIDs resolves the caller's label NAMES onto the numeric ids both products'
+// creation and label addition options take, from ONE page of the repository's labels
+// at the instance's stated maximum, which holds no organization label. A name that
+// page lacks is refused, never dropped: under the truncated code where the page came
+// back full, the only witness this product gives that the list continues, and as a
+// validation where it was the whole list. A read that meets a move refuses with the
+// successor and sends no write: writing to another repository is the caller's call.
 func (c *Client) labelIDs(ctx context.Context, op string, addr *address, names []string) ([]int64, error) {
 	if len(names) == 0 {
 		return nil, nil
@@ -1282,4 +1263,87 @@ func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...
 		Partial:   c.pagePartial(len(rows), next, walk.page),
 		Successor: addr.successor,
 	}, nil
+}
+
+// AddLabels implements [forgeapi.Labels]. A read that meets a move refuses with the
+// successor and nothing is written, as [Client.labelIDs] states.
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "AddLabels"
+	ctx = transport.CallWrite(ctx, op)
+	number, err := labelItem(repo, target)
+	if err != nil || len(names) == 0 {
+		return err
+	}
+	addr := &address{named: repo}
+	ids, err := c.labelIDs(ctx, op, addr, names)
+	if err != nil {
+		return err
+	}
+	return c.sendAt(ctx, op, http.MethodPost, addr, "/issues/"+strconv.Itoa(number)+"/labels", map[string]any{"labels": ids}, nil)
+}
+
+// labelItem is the number a label change addresses, refused before any request
+// where the repository or the target cannot be addressed.
+func labelItem(repo forgeapi.RepoRef, target forgeapi.LabelTarget) (int, error) {
+	if err := checkRepo(repo); err != nil {
+		return 0, err
+	}
+	if err := target.Validate(); err != nil {
+		return 0, err
+	}
+	if target.PR.Number != 0 {
+		return target.PR.Number, nil
+	}
+	return target.Issue.Number, nil
+}
+
+// RemoveLabels implements [forgeapi.Labels]. The item's own label read names every
+// label it carries, an organization's included, so only those are removed. Gitea's
+// route takes the label's id; Forgejo's takes a name or an id and reads digits as an
+// id only where no label has that name, so it is sent the name, which an id could be
+// mistaken for (routers/api/v1/repo/issue_label.go DeleteIssueLabel on each). A label
+// or item gone since the read answers 404 or 422 there, and the item carries no label.
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "RemoveLabels"
+	ctx = transport.CallWrite(ctx, op)
+	number, err := labelItem(repo, target)
+	if err != nil || len(names) == 0 {
+		return err
+	}
+	caps, err := c.ConnectionCaps(ctx)
+	if err != nil {
+		return err
+	}
+	addr := &address{named: repo}
+	rest := "/issues/" + strconv.Itoa(number) + "/labels"
+	var carried []wireLabel
+	if err := c.readAt(ctx, op, addr, rest, nil, &carried); err != nil {
+		return err
+	}
+	if stale := c.moved(ctx, op, addr); stale != nil {
+		return stale
+	}
+	ids := make(map[string]int64, len(carried))
+	for _, label := range carried {
+		ids[label.Name] = label.ID
+	}
+	var removed []string
+	for _, name := range transport.DistinctNames(names) {
+		id, ok := ids[name]
+		if !ok {
+			continue
+		}
+		segment := strconv.FormatInt(id, 10)
+		if caps.Product == forgeapi.ProductForgejo {
+			segment = url.PathEscape(name)
+		}
+		took, err := c.removeAt(ctx, op, addr, rest+"/", segment)
+		if err != nil {
+			return transport.AfterRemovals(err, removed)
+		}
+		if took {
+			removed = append(removed, name)
+		}
+	}
+	return nil
 }

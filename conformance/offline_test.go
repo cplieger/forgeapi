@@ -131,7 +131,7 @@ func newFixtureServer(t *testing.T, f fixture) (*httptest.Server, *recorder) {
 			w.Header().Set(k, v)
 		}
 		w.WriteHeader(route.Status)
-		if _, err := w.Write(route.Body); err != nil {
+		if _, err := w.Write(route.payload()); err != nil {
 			t.Errorf("Setup: writing the fixture response for %s %s: %v", r.Method, r.URL.EscapedPath(), err)
 		}
 	}))
@@ -338,9 +338,9 @@ func carried(req sent, row *spec.Sent) string {
 	return string(raw)
 }
 
-// decides are the operations whose REQUEST carries a decision at 1.0: the merge, the
-// two creations, the re-run, and the run listing, which reads the re-run's own route
-// and must leave off the head filter the re-run sends there. It is the gate over the
+// decides are the operations whose REQUEST carries a decision: the merge, the two
+// creations and the label addition, the re-run, and the run listing, which reads the
+// re-run's own route and must leave off the head filter the re-run sends there. It is the gate over the
 // table's own completeness, because a Sends row deleted from the table would
 // leave every case green while the property it held went unchecked, which is the
 // shape of defect this column was added for.
@@ -350,6 +350,7 @@ var decides = map[string]bool{
 	"Issues.CreateIssue":             true,
 	"PullRequests.RerunFailedChecks": true,
 	"Checks.ListRuns":                true,
+	"Labels.AddLabels":               true,
 }
 
 // TestEveryRequestDecisionTheDesignNamesIsStated holds the table to the operations
@@ -528,7 +529,7 @@ func checkPrice(t *testing.T, e spec.Entry, op operation, got any, spent int, ar
 	if op.items != nil {
 		items = op.items(got)
 	}
-	low, high := price(&e, items)
+	low, high := price(&e, items, op.names)
 	if spent < low || spent > high {
 		t.Errorf("%s on %s sent %d request(s), want %d to %d for %d item(s): %v",
 			e.Method, e.Product, spent, low, high, items, arrived)
