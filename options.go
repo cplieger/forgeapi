@@ -754,12 +754,10 @@ func WithMergeState(read bool) ListOption {
 	})
 }
 
-// WithReviews sets whether [PullRequests.ListPRs] and [PullRequests.ListMyPRs] answer
-// each row's [ActionState.Approvals] and [ActionState.ChangesRequested]. With read
-// false every row answers both as [CountUnknown], and no list sends the review
-// selection or per-row review read it would otherwise send. With read true each list
-// answers what its per-forge block states, on some lists already unknown. Every other
-// list refuses it, at either value, with [CodeListReviewsInvalid].
+// WithReviews sets whether [PullRequests.ListPRs] and [PullRequests.ListMyPRs] read
+// each row's [ActionState.Approvals] and [ActionState.ChangesRequested]. False sends no
+// review selection or per-row review read and answers both as [CountUnknown]. Every
+// other list refuses it, at either value, with [CodeListReviewsInvalid].
 //
 // Default: true.
 func WithReviews(read bool) ListOption {

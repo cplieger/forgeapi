@@ -523,11 +523,9 @@ type PullRequests interface {
 	// rather than waived.
 	//
 	// Whether an instance can do this at all is [CapRerunChecks], read from
-	// [ConnectionCaps]: an instance with no re-run verb, a Forgejo before 17,
-	// reports the capability rather than failing to satisfy this role, because
-	// the versions of one product differ here and a family serves them all. On
-	// Forgejo 17 and later it re-runs the whole finished run, passed jobs
-	// included, as its departure row states.
+	// [ConnectionCaps]: an instance with no re-run verb reports the capability
+	// rather than failing to satisfy this role, because the products and versions
+	// of one family differ here and a family serves them all.
 	//
 	// Called against an instance detection says lacks the verb, it refuses with
 	// [CodeCapabilityUnsupported] and issues NO request, carrying the capability
@@ -807,11 +805,9 @@ type Checks interface {
 	ListRuns(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Run], error)
 
 	// RerunFailedRun re-runs what failed on one finished run, addressed by the
-	// [RunRef.ID] [Checks.ListRuns] answers, for a run no pull request resolves.
-	//
-	// It shares [CapRerunChecks] and its refusal with
-	// [PullRequests.RerunFailedChecks]: where the instance has no re-run verb it
-	// answers [CodeCapabilityUnsupported] with no request. A run ID that is not
+	// [RunRef.ID] [Checks.ListRuns] answers, for a run no pull request resolves. It
+	// shares [CapRerunChecks] and its [CodeCapabilityUnsupported] refusal, sent with
+	// no request, with [PullRequests.RerunFailedChecks]. A run ID that is not
 	// positive is refused with [CodeRepoRefInvalid] before any request. A run that
 	// is not finished, or not failed, is the forge's own refusal, passed through.
 	//
@@ -1221,15 +1217,13 @@ type Labels interface {
 	RemoveLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
 }
 
-// Core is the union of the roles EVERY family satisfies, and the union is
-// therefore the INTERSECTION of what they can do. [Releases] stays out of it, so a
-// family whose product has no release object can still be a Core. A consumer
-// declares the narrowest role it uses; Core is for the one place that hands out a
-// single value a route might ask anything of.
+// Core is the union of the roles EVERY family satisfies, so it is the
+// INTERSECTION of what they can do; [Releases] stays out so a family whose
+// product has no release object is still a Core. A consumer declares the
+// narrowest role it uses.
 //
-// Adding a method to any of these interfaces is a breaking change for every
-// implementor, so what is additive is a NEW role, a new family, a new struct
-// field and a new enum member, never a method here.
+// Adding a method to any of these interfaces breaks every implementor, so an
+// additive change is a NEW role, family, struct field or enum member.
 type Core interface {
 	Identity
 	Repos
