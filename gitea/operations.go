@@ -537,19 +537,23 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 
 // RerunFailedChecks implements [forgeapi.PullRequests]. A missing verb is a
 // capability rather than an unimplemented role, because one package serves every
-// version of both products. The runs read is filtered by the pinned head, and a
-// head no run carries is refused as stale rather than re-run, since a re-run can
-// carry deployment side effects. A head carries a run per workflow, so the run
-// re-run is the one [Client.pickRun] picks.
-//
-//nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own run, which the head SHA pins
+// version of both products. The runs read is filtered by the head, the caller's pin
+// or else the pull request's own, read first, and a pinned head no run carries is
+// refused as stale rather than re-run, since a re-run can carry deployment side
+// effects. The runs route declares no sort parameter and no ordering, so among
+// several runs on the head that [Client.rerunnable] holds, the one re-run is the
+// first the instance returns.
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
 	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return err
 	}
-	if headSHA != "" {
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
+	}
+	pinned := headSHA != ""
+	if pinned {
 		if err := forgeapi.ValidateRef(headSHA); err != nil {
 			return err
 		}
@@ -557,30 +561,53 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if err := c.capability(ctx, op, forgeapi.CapRerunChecks); err != nil {
 		return err
 	}
-	query := url.Values{}
-	if headSHA != "" {
-		query.Set("head_sha", headSHA)
-	}
-	addr := &address{named: repo}
-	runs, err := c.readRuns(ctx, op, addr, query)
+	limit, err := c.statedMaximum(ctx)
 	if err != nil {
 		return err
 	}
-	if stale := c.moved(ctx, op, addr); stale != nil {
-		return stale
+	addr := &address{named: repo}
+	if !pinned {
+		if headSHA, err = c.pullHead(ctx, op, addr, pr); err != nil {
+			return err
+		}
 	}
-	run, carried, found := c.pickRun(runs.WorkflowRuns, headSHA)
-	switch {
-	case found:
-	case carried || headSHA == "":
-		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunNotFailed, forgeapi.KindConflict, http.StatusOK,
-			"no workflow run on this head failed or was cancelled")
-	default:
-		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeStaleHead, forgeapi.KindConflict, http.StatusOK,
-			"no workflow run carries the head this caller pinned")
+	read := func(page int) ([]wireRun, error) {
+		query := url.Values{keyPage: {strconv.Itoa(page)}, keyLimit: {strconv.Itoa(limit)}, "head_sha": {headSHA}}
+		runs, readErr := c.readRuns(ctx, op, addr, query)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if stale := c.moved(ctx, op, addr); stale != nil {
+			return nil, stale
+		}
+		return runs.WorkflowRuns, nil
+	}
+	pick := func(r *wireRun) (onHead, rerunnable bool) {
+		return r.head() == headSHA, c.rerunnable(r)
+	}
+	run, err := transport.PickRun(ctx, c.core, op, "workflow run", limit, pinned, read, pick)
+	if err != nil {
+		return err
 	}
 	route, _ := c.rerunRoute(run.ID)
 	return c.sendAt(ctx, op, http.MethodPost, addr, route, nil, nil)
+}
+
+// pullHead is the head commit a pull request carries now, for a re-run whose caller
+// brought no pin. A pull request answering none is refused before any write.
+func (c *Client) pullHead(ctx context.Context, op string, addr *address, pr forgeapi.PRRef) (string, error) {
+	var record wirePull
+	if err := c.readAt(ctx, op, addr, "/pulls/"+strconv.Itoa(pr.Number), nil, &record); err != nil {
+		return "", err
+	}
+	if stale := c.moved(ctx, op, addr); stale != nil {
+		return "", stale
+	}
+	if record.Head.SHA == "" {
+		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeMissingSHA, forgeapi.KindUpstream, http.StatusOK,
+			"the pull request answered no head commit")
+	}
+	return record.Head.SHA, nil
 }
 
 // RerunFailedRun implements [forgeapi.Checks]. It is gated on
@@ -616,28 +643,6 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 		}
 	}
 	return c.sendAt(ctx, op, http.MethodPost, addr, route, nil, nil)
-}
-
-// pickRun is the run a re-run of the head's failed checks addresses: the first of
-// the resolving read's rows on the pinned head, or on any head where the caller
-// brought no pin, that [Client.rerunnable] holds. carried reports whether any row
-// was on the pinned head, and found whether one qualified.
-//
-// The runs route declares no sort parameter and no ordering, so among several such
-// runs the first is the instance's own choice. The head SHA is a declared query
-// parameter, so upstream applies the filter and the comparison here is a second
-// check rather than the only one.
-func (c *Client) pickRun(runs []wireRun, headSHA string) (run wireRun, carried, found bool) {
-	for i := range runs {
-		if headSHA != "" && runs[i].head() != headSHA {
-			continue
-		}
-		carried = true
-		if c.rerunnable(&runs[i]) {
-			return runs[i], true, true
-		}
-	}
-	return wireRun{}, carried, false
 }
 
 // rerunnable reports whether a run failed or was cancelled, the outcomes Gitea's
@@ -1133,18 +1138,14 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 	return c.normalizeIssue(&record, repo), nil
 }
 
-// labelIDs resolves the caller's label NAMES onto the numeric ids both products'
-// creation and label addition options take, from ONE page of the repository's labels
-// at the instance's stated maximum, and where a name is missing from that page and
-// it was the whole list, ONE page of its owner's organization labels at the same
-// bound, which both products' option also takes. A name missing from a full
-// repository page is refused as truncated before the organization is read, since the
-// repository's own label of that name may sit past the page and outranks the
-// organization's. A name both pages lack is refused, never dropped: under the truncated
-// code where either page came back full, the only witness this product gives that a
-// list continues, and as a validation where each was the whole list. A read that
-// meets a move refuses with the successor and sends no write: writing to another
-// repository is the caller's call.
+// labelIDs resolves the caller's label NAMES onto the ids both products' options
+// take, from ONE page of the repository's labels at the stated maximum and, where a
+// name is missing from that page and it was the whole list, ONE page of its owner's
+// organization labels. A name missing from a full repository page is refused as
+// truncated before the organization is read, since the repository's label of that
+// name may sit past it and outranks the organization's; a name both pages lack is
+// refused as truncated where either came back full, else as a validation. A read
+// meeting a move refuses with the successor and writes nothing.
 func (c *Client) labelIDs(ctx context.Context, op string, addr *address, names []string) ([]int64, error) {
 	if len(names) == 0 {
 		return nil, nil

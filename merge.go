@@ -57,9 +57,7 @@ type MergeRequest struct { //nolint:govet // fieldalignment: field order here is
 	// The requirement is stated as a refusal because the alternative is the
 	// field's own reason failing open: on the two families that do not demand
 	// it, a merge sent without it merges whatever the head is now, which is the
-	// outcome the pin exists to prevent. It is not
-	// [PullRequests.RerunFailedChecks]'s empty case, where an absent head is a
-	// pin the forge could not supply rather than one the caller omitted.
+	// outcome the pin exists to prevent.
 	HeadSHA string
 	// DeleteBranch asks the forge to delete the source branch after merging.
 	DeleteBranch bool

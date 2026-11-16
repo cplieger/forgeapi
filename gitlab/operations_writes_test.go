@@ -3,6 +3,7 @@ package gitlab
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -150,21 +151,44 @@ func TestAMergeSendsTheSquashFlagItsIntentNames(t *testing.T) {
 	}
 }
 
-func TestAReRunWithNoHeadReRunsTheFirstPipeline(t *testing.T) {
-	h := newHarness(t, map[string]string{
-		metadataRoute:  metadataBody,
-		documentRoute:  docAcceptanceAnswer,
-		pipelinesRoute: pipelinesBody,
-		retryRoute:     `{}`,
+// With no pin the re-run reads the merge request's current head and filters by it,
+// so a failed pipeline of another head the listing answers is never the one retried.
+func TestAReRunWithNoHeadRetriesAPipelineOfTheMergeRequestsHead(t *testing.T) {
+	mergeRequest := "GET /api/v4/projects/" + testEncoded + "/merge_requests/1"
+	pipelines := `[{"id": 5, "sha": "0000000000000000000000000000000000000000", "status": "failed", "ref": "other"},` +
+		`{"id": 77, "sha": "` + testHeadSHA + `", "status": "failed", "ref": "main"}]`
+	harness := func(t *testing.T, sha string) *harness {
+		h := newHarness(t, map[string]string{
+			metadataRoute:  metadataBody,
+			documentRoute:  docAcceptanceAnswer,
+			mergeRequest:   `{"iid":1,"sha":"` + sha + `"}`,
+			pipelinesRoute: pipelines,
+			retryRoute:     `{}`,
+		})
+		h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
+		return h
+	}
+	t.Run("a_head", func(t *testing.T) {
+		h := harness(t, testHeadSHA)
+		if err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), ""); err != nil {
+			t.Fatalf("RerunFailedChecks with no head = %v, want the retry", err)
+		}
+		if got := h.instance.query(pipelinesRoute, "sha"); got != testHeadSHA {
+			t.Errorf("the resolving read sent sha %q, want the merge request's head %q", got, testHeadSHA)
+		}
+		if arrived := h.instance.arrived(); !reflect.DeepEqual(arrived[len(arrived)-3:], []string{mergeRequest, pipelinesRoute, retryRoute}) {
+			t.Errorf("RerunFailedChecks with no head sent %v, want it to end on the merge request read, the pipeline read and %s", arrived, retryRoute)
+		}
 	})
-	h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
-	if err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), ""); err != nil {
-		t.Fatalf("RerunFailedChecks with no head = %v, want the retry", err)
-	}
-	if got := h.instance.query(pipelinesRoute, "sha"); got != "" {
-		t.Errorf("the resolving read sent sha %q, want no filter where the forge reported no head", got)
-	}
-	if arrived := h.instance.arrived(); !reflect.DeepEqual(arrived[len(arrived)-1:], []string{retryRoute}) {
-		t.Errorf("RerunFailedChecks with no head ended on %v, want the retry of the first pipeline, %s", arrived, retryRoute)
-	}
+	t.Run("no_head", func(t *testing.T) {
+		h := harness(t, "")
+		err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), "")
+		var fe *forgeapi.Error
+		if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeMissingSHA {
+			t.Errorf("RerunFailedChecks on a merge request with no head = %v, want code %q", err, forgeapi.CodeMissingSHA)
+		}
+		if arrived := h.instance.arrived(); slices.Contains(arrived, pipelinesRoute) || slices.Contains(arrived, retryRoute) {
+			t.Errorf("RerunFailedChecks on a merge request with no head sent %v, want no pipeline read or retry", arrived)
+		}
+	})
 }

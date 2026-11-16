@@ -518,13 +518,16 @@ type PullRequests interface {
 	// [CodeStaleHead] rather than re-running when the pull request has moved
 	// since, because a re-run can carry deployment side effects and a row
 	// displaying one commit's red status must not act on another's. Empty means
-	// the forge reported no head, and the re-run then proceeds against the pull
-	// request's current one, which is the one case where the pin is unavailable
-	// rather than waived.
+	// the caller holds no head, and the call then reads the pull request's
+	// current one and pins that; a pull request the forge answers with no head
+	// is refused with [CodeMissingSHA] before any write.
 	//
 	// A head carries a run per workflow, and the one re-run is the first on it that
-	// failed or was cancelled; a head whose runs all passed or are still running is
-	// refused with [CodeRunNotFailed] before any write.
+	// failed or was cancelled, looked for on up to three pages at the most rows
+	// the instance serves on one. Before any write, a head whose runs all passed
+	// or are still running is refused with [CodeRunNotFailed], and one whose
+	// third page came back full with none of them qualifying with
+	// [CodeRunPageTruncated].
 	//
 	// Whether an instance can do this at all is [CapRerunChecks], read from
 	// [ConnectionCaps]: an instance with no re-run verb reports the capability
@@ -539,10 +542,10 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   GET /repos/{owner}/{repo}/actions/runs to resolve the head commit's run, then POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where either of them answered from another address, 2 to 3 requests; needs rerun_checks
-	//	GitLab   GET /api/v4/projects/{id}/pipelines, filtered by the head SHA, to resolve the head commit's pipeline, then POST /api/v4/projects/{id}/pipelines/{run}/retry, 2 requests; needs rerun_checks
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/actions/runs, filtered by the head SHA, to resolve the head commit's run, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, both of which this product's swagger document names, 2 requests; needs rerun_checks
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/actions/runs, filtered by the head SHA, to resolve the head commit's run, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 2 requests; needs rerun_checks
+	//	GitHub   GET /repos/{owner}/{repo}/pulls/{pull_number} for the pull request's current head where the caller brought none, then GET /repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages of 100, to resolve a run on it that failed or was cancelled, then POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where any of them answered from another address, 2 to 6 requests; needs rerun_checks
+	//	GitLab   GET /api/v4/projects/{id}/merge_requests/{merge_request_iid} for the merge request's current head where the caller brought none, then GET /api/v4/projects/{id}/pipelines filtered by that head, up to three pages of 100, to resolve a pipeline on it that failed or was canceled, then POST /api/v4/projects/{id}/pipelines/{run}/retry, 2 to 5 requests; needs rerun_checks
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, both of which this product's swagger document names, 2 to 5 requests; needs rerun_checks
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 2 to 5 requests; needs rerun_checks
 	//
 	// GitHub departs from the normalized contract:
 	//
@@ -559,19 +562,23 @@ type PullRequests interface {
 	//
 	// GitHub sends this, where a wrong default would change the request silently:
 	//
-	//	head_sha  query  the head the caller pinned, as the filter this product's runs route declares, so the retry addresses the workflow run of the commit the caller's row was rendered from rather than whichever the instance returns first
+	//	head_sha  query  the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the retry addresses a workflow run of that commit rather than one of another branch
+	//	per_page  query  this product's most rows on one page, so the walk for a failed run reads as few pages as it can
 	//
 	// GitLab sends this, where a wrong default would change the request silently:
 	//
-	//	sha  query  the head the caller pinned, as the filter this product's pipelines route declares, so the retry addresses the pipeline of the commit the caller's row was rendered from rather than whichever the instance returns first
+	//	sha       query  the head the caller pinned, or the merge request's current one where the caller brought none, as the filter this product's pipelines route declares, so the retry addresses a pipeline of that commit rather than one of another branch
+	//	per_page  query  this product's most rows on one page, so the walk for a failed pipeline reads as few pages as it can
 	//
 	// Gitea sends this, where a wrong default would change the request silently:
 	//
-	//	head_sha  query  the head the caller pinned, as the filter this product's runs route declares, so the retry addresses the run of the commit the caller's row was rendered from rather than whichever the instance returns first
+	//	head_sha  query  the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the retry addresses a run of that commit rather than one of another branch
+	//	limit     query  the instance's stated maximum, here the maximum both public instances state, so the walk for a failed run reads as few pages as it can, and a page shorter than it ends the walk
 	//
 	// Forgejo sends this, where a wrong default would change the request silently:
 	//
-	//	head_sha  query  the head the caller pinned, as the filter this product's runs route declares, so the re-run addresses the run of the commit the caller's row was rendered from rather than whichever the instance returns first
+	//	head_sha  query  the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the re-run addresses a run of that commit rather than one of another branch
+	//	limit     query  the instance's stated maximum, here the maximum both public instances state, so the walk for a failed run reads as few pages as it can, and a page shorter than it ends the walk
 	RerunFailedChecks(ctx context.Context, repo RepoRef, pr PRRef, headSHA string) error
 }
 

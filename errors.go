@@ -83,7 +83,8 @@ const (
 	// CodeMissingSHA is a merge whose head SHA is empty: refused by this
 	// library before the request on every family, since [MergeRequest.HeadSHA]
 	// is what makes a merge safe, and refused upstream by the one product an
-	// operator can configure to require it.
+	// operator can configure to require it. It is also a re-run called with no
+	// head whose pull request the forge answers with none, refused before any write.
 	CodeMissingSHA = "missing_sha"
 	// CodeNoMergePermission is a merge the credential may not perform.
 	CodeNoMergePermission = "no_merge_permission"
@@ -98,6 +99,12 @@ const (
 	// addresses failed or was cancelled: the run, or every run on the head. It
 	// rides [KindConflict], and the remedy is reading the checks again.
 	CodeRunNotFailed = "run_not_failed"
+	// CodeRunPageTruncated is a re-run of a pull request's failed checks refused
+	// before any write because no run on the pages it read, at the most rows the
+	// instance serves on one, failed or was cancelled, and the last of them came
+	// back full, so such a run may sit past it. The message names the page count
+	// and size. [Checks.ListRuns] and [Checks.RerunFailedRun] reach a run past it.
+	CodeRunPageTruncated = "run_page_truncated"
 	// CodeValidation is a request upstream rejected as invalid, a response
 	// body this library could not decode, or a label name a creation or
 	// [Labels.AddLabels] could not resolve on a read that answered the whole
@@ -284,6 +291,7 @@ func Codes() []string {
 		CodeStrategyNotAllowed,
 		CodeStaleHead,
 		CodeRunNotFailed,
+		CodeRunPageTruncated,
 		CodeValidation,
 		CodeLabelPageTruncated,
 		CodeBranchCannotMerge,

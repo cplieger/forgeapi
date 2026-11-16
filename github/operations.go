@@ -18,10 +18,10 @@ import (
 // fold is computed over, so a smaller page spends more requests for the same verdict.
 const maxStatusPageItems = 100
 
-// maxRunPageItems is the page size the re-run's resolving read asks for. It is small
-// because that read wants ONE run, the one carrying the head the caller pinned, and
-// upstream applies the pin as a declared filter.
-const maxRunPageItems = 20
+// maxRunPageItems is the page size the re-run's resolving read asks for, this
+// product's own maximum, so the walk for a failed run on a head with many spends as
+// few reads as it can.
+const maxRunPageItems = 100
 
 // The request-body fields several mutations share, and the two document variables every
 // repository-addressed document of this product takes.
@@ -860,74 +860,74 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 	return c.normalizeMutatedPull(&record, repo), nil
 }
 
-// RerunFailedChecks implements [forgeapi.PullRequests].
-//
-// It is TWO requests: the workflow run carrying the head the caller pinned has to be
-// resolved before it can be retried, because this product's retry verb is addressed by
-// a server-allocated run id rather than by a commit. A request of either that answers
-// from another address spends the one further read that resolves the successor, and the
-// resolving read spends it in place of the retry where the refusal is what the caller
-// gets.
-//
-// Whether this instance serves the verb is [forgeapi.CapRerunChecks] from
-// [Client.ConnectionCaps], and the measurement found that question scoped wrong for
-// this product: the runner is enabled per REPOSITORY rather than per instance or per
-// version, no connection-scope read names it, the read that answers it for one
-// repository needs admin, and a workflow-runs read answers 200 whether the runner is
-// enabled or merely unused. So the connection-scope verdict is unknown, that capability
-// is what a consumer reads to render the control with its reason, and what refuses a
-// re-run here is the instance's own answer rather than a verdict this library holds. No
-// request is spent obtaining one, which is what keeps this figure the same on a fresh
-// connection as on a used one.
-//
-// The head pin binds and costs no request of its own: the resolving read is filtered BY
-// the caller's SHA, which this product declares as a parameter of that route, and a SHA
-// no run carries means the pull request has moved since the caller's row was rendered.
-// That is refused rather than retried, because a re-run can carry deployment side
-// effects and a row displaying one commit's red status must not act on another's. An
-// empty SHA means the forge reported no head, and the re-run then proceeds against the
-// FIRST run the instance returns, which is the one case where the pin is unavailable
-// rather than waived.
-//
-// The verb retries the failed jobs of that run rather than the whole run, which is what
-// this operation publishes.
-//
-//nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own workflow run, which the head SHA pins
+// RerunFailedChecks implements [forgeapi.PullRequests]: the run on the head is
+// resolved first, because this product's retry is addressed by a run id, by a read
+// filtered by the head (the caller's pin, or the pull request's own, read first).
+// It is not gated on [forgeapi.CapRerunChecks], whose verdict is unknown at connection
+// scope: the runner is enabled per repository, the read naming it needs admin, and a
+// runs read answers 200 either way, so a refusal here is the instance's own. A request
+// answering from another address spends the one further read resolving the successor.
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
 	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return err
 	}
-	if headSHA != "" {
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
+	}
+	pinned := headSHA != ""
+	if pinned {
 		if err := forgeapi.ValidateRef(headSHA); err != nil {
 			return err
 		}
 	}
-	query := url.Values{keyPerPage: {strconv.Itoa(maxRunPageItems)}}
-	if headSHA != "" {
-		query.Set("head_sha", headSHA)
-	}
 	var moved rename
-	runs, resp, err := c.readRuns(ctx, op, repo, query, &moved)
+	if !pinned {
+		head, err := c.pullHead(ctx, op, repo, pr, &moved)
+		if err != nil {
+			return err
+		}
+		headSHA = head
+	}
+	read := func(page int) ([]restWorkflowRun, error) {
+		query := url.Values{keyPerPage: {strconv.Itoa(maxRunPageItems)}, keyPage: {strconv.Itoa(page)}, "head_sha": {headSHA}}
+		runs, resp, err := c.readRuns(ctx, op, repo, query, &moved)
+		if err != nil {
+			return nil, err
+		}
+		if moved.to != nil {
+			return nil, c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+		}
+		return runs.Runs, nil
+	}
+	pick := func(r *restWorkflowRun) (onHead, rerunnable bool) {
+		return r.ID != 0 && r.HeadSHA == headSHA, c.runVerdict(r) == forgeapi.CheckFailing || member(r.Conclusion) == "cancelled"
+	}
+	run, err := transport.PickRun(ctx, c.core, op, "workflow run", maxRunPageItems, pinned, read, pick)
 	if err != nil {
 		return err
 	}
-	if moved.to != nil {
-		return c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
-	}
-	run, carried, found := c.pickRun(runs.Runs, headSHA)
-	switch {
-	case found:
-	case carried || headSHA == "":
-		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunNotFailed, forgeapi.KindConflict, http.StatusOK,
-			"no workflow run on this head failed or was cancelled")
-	default:
-		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeStaleHead, forgeapi.KindConflict, http.StatusOK,
-			"no workflow run carries the head this caller pinned")
-	}
 	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
+}
+
+// pullHead is the head commit a pull request carries now, for a re-run whose caller
+// brought no pin. A pull request answering none is refused before any write.
+func (c *Client) pullHead(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, moved *rename) (string, error) {
+	var record restPull
+	resp, err := c.readMovedJSON(ctx, op, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record, moved)
+	if err != nil {
+		return "", err
+	}
+	if moved.to != nil {
+		return "", c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+	}
+	if record.Head == nil || record.Head.SHA == "" {
+		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeMissingSHA, forgeapi.KindUpstream, http.StatusOK,
+			"the pull request answered no head commit")
+	}
+	return record.Head.SHA, nil
 }
 
 // RerunFailedRun implements [forgeapi.Checks]: one POST to the failed-jobs re-run of
@@ -945,25 +945,6 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 	}
 	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
-}
-
-// pickRun is the run a re-run of the head's failed checks addresses: the first of
-// the resolving read's rows on the pinned head, or on any head where the caller
-// brought no pin, that failed or was cancelled, the outcomes the failed-jobs re-run
-// starts again. carried reports whether any row was on the pinned head, and found
-// whether one qualified. The SHA is a declared filter, so upstream applies it and
-// the comparison here is a second check.
-func (c *Client) pickRun(runs []restWorkflowRun, headSHA string) (run restWorkflowRun, carried, found bool) {
-	for i := range runs {
-		if runs[i].ID == 0 || headSHA != "" && runs[i].HeadSHA != headSHA {
-			continue
-		}
-		carried = true
-		if c.runVerdict(&runs[i]) == forgeapi.CheckFailing || member(runs[i].Conclusion) == "cancelled" {
-			return runs[i], true, true
-		}
-	}
-	return restWorkflowRun{}, carried, false
 }
 
 // readRuns is the one read of a repository's workflow runs, which the re-run and the

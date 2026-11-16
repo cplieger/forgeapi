@@ -158,17 +158,36 @@ func TestACreationAnsweringNoNumberSpendsNoLabelsRequest(t *testing.T) {
 	}
 }
 
-func TestAReRunWithNoHeadReRunsTheFirstFailedRun(t *testing.T) {
-	h := newHarness(t, map[string]string{runsRoute: failedRuns, rerunRoute: `{}`})
-	if err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), ""); err != nil {
-		t.Fatalf("RerunFailedChecks(no head) = %v, want the re-run sent", err)
-	}
-	if got := h.instance.arrived(); !slices.Equal(got, []string{runsRoute, rerunRoute}) {
-		t.Errorf("RerunFailedChecks(no head) sent %v, want the run read and the re-run of run 1", got)
-	}
-	if got := h.instance.query(runsRoute, "head_sha"); got != "" {
-		t.Errorf("RerunFailedChecks(no head) sent head_sha=%q, want no head filter", got)
-	}
+// With no pin the re-run reads the pull request's current head and filters by it, so
+// a failed run of another head the listing answers is never the one re-run.
+func TestAReRunWithNoHeadReRunsAFailedRunOfThePullRequestsHead(t *testing.T) {
+	const pull = "GET /api/v3/repos/example/example/pulls/1"
+	runs := `{"total_count":2,"workflow_runs":[` +
+		`{"id":9,"head_sha":"0000000000000000000000000000000000000000","status":"completed","conclusion":"failure"},` +
+		`{"id":1,"head_sha":"` + testHeadSHA + `","status":"completed","conclusion":"failure"}]}`
+	t.Run("a_head", func(t *testing.T) {
+		h := newHarness(t, map[string]string{pull: `{"number":1,"head":{"ref":"feature","sha":"` + testHeadSHA + `"}}`, runsRoute: runs, rerunRoute: `{}`})
+		if err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), ""); err != nil {
+			t.Fatalf("RerunFailedChecks(no head) = %v, want the re-run sent", err)
+		}
+		if got := h.instance.arrived(); !slices.Equal(got, []string{pull, runsRoute, rerunRoute}) {
+			t.Errorf("RerunFailedChecks(no head) sent %v, want the pull request read, the run read and the re-run of run 1", got)
+		}
+		if got := h.instance.query(runsRoute, "head_sha"); got != testHeadSHA {
+			t.Errorf("RerunFailedChecks(no head) sent head_sha=%q, want the pull request's head %q", got, testHeadSHA)
+		}
+	})
+	t.Run("no_head", func(t *testing.T) {
+		h := newHarness(t, map[string]string{pull: `{"number":1,"head":{"ref":"feature","sha":""}}`, runsRoute: runs, rerunRoute: `{}`})
+		err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), "")
+		var fe *forgeapi.Error
+		if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeMissingSHA {
+			t.Errorf("RerunFailedChecks on a pull request with no head = %v, want code %q", err, forgeapi.CodeMissingSHA)
+		}
+		if got := h.instance.arrived(); !slices.Equal(got, []string{pull}) {
+			t.Errorf("RerunFailedChecks on a pull request with no head sent %v, want the pull request read alone", got)
+		}
+	})
 }
 
 // A head carries a run per workflow, so the re-run addresses the first run on it that

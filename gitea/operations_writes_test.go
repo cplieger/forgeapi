@@ -177,32 +177,49 @@ func rerunRoutes(rows string) map[string]string {
 	}
 }
 
-func TestARerunReRunsTheRunItsHeadPinNames(t *testing.T) {
+// With no pin the re-run reads the pull request's current head and filters by it,
+// so a failed run of another head the listing answers is never the one re-run.
+func TestARerunReRunsARunOfTheHeadItPins(t *testing.T) {
 	const other = "0000000000000000000000000000000000000000"
+	const pull = "GET /api/v1/repos/example/example/pulls/1"
 	rows := `{"id":3,"head_sha":"` + other + `","status":"failure"},{"id":9,"head_sha":"` + testHeadSHA + `","status":"failure"}`
 	for _, test := range []struct {
-		name    string
-		head    string
-		rerun   string
-		queried string
+		name string
+		head string
+		sent []string
 	}{
-		{name: "a_pinned_head", head: testHeadSHA, rerun: "9", queried: testHeadSHA},
-		{name: "no_pin", rerun: "3"},
+		{name: "a_pinned_head", head: testHeadSHA, sent: []string{runsRoute}},
+		{name: "no_pin", sent: []string{pull, runsRoute}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			h := newHarness(t, rerunRoutes(rows))
+			routes := rerunRoutes(rows)
+			routes[pull] = `{"number":1,"head":{"ref":"feature","sha":"` + testHeadSHA + `"}}`
+			h := newHarness(t, routes)
 			if err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), test.head); err != nil {
 				t.Fatalf("RerunFailedChecks(%q) = %v, want nil", test.head, err)
 			}
-			want := "POST /api/v1/repos/example/example/actions/runs/" + test.rerun + "/rerun-failed-jobs"
-			if sent := h.instance.arrived(); !slices.Contains(sent, want) {
-				t.Errorf("RerunFailedChecks(%q) sent %v, want %s", test.head, sent, want)
+			want := append(test.sent, "POST /api/v1/repos/example/example/actions/runs/9/rerun-failed-jobs")
+			if sent := h.instance.arrived(); !slices.Equal(sent[len(sent)-len(want):], want) {
+				t.Errorf("RerunFailedChecks(%q) sent %v, want it to end %v", test.head, sent, want)
 			}
-			if got := h.instance.query(runsRoute, "head_sha"); got != test.queried {
-				t.Errorf("RerunFailedChecks(%q) asked the run listing for head_sha=%q, want %q", test.head, got, test.queried)
+			if got := h.instance.query(runsRoute, "head_sha"); got != testHeadSHA {
+				t.Errorf("RerunFailedChecks(%q) asked the run listing for head_sha=%q, want %q", test.head, got, testHeadSHA)
 			}
 		})
 	}
+	t.Run("a_pull_request_with_no_head", func(t *testing.T) {
+		routes := rerunRoutes(rows)
+		routes[pull] = `{"number":1,"head":{"ref":"feature","sha":""}}`
+		h := newHarness(t, routes)
+		err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), "")
+		var fe *forgeapi.Error
+		if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeMissingSHA {
+			t.Errorf("RerunFailedChecks on a pull request with no head = %v, want code %q", err, forgeapi.CodeMissingSHA)
+		}
+		if sent := strings.Join(h.instance.arrived(), " "); strings.Contains(sent, "actions/runs") {
+			t.Errorf("RerunFailedChecks on a pull request with no head sent %s, want no run read or re-run", sent)
+		}
+	})
 }
 
 func TestARerunRefusesAHeadItCannotActOn(t *testing.T) {

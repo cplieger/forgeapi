@@ -16,10 +16,10 @@ import (
 // computed over, so a smaller page spends more requests for the same verdict.
 const maxStatusPageItems = 100
 
-// maxPipelinePageItems is the page size the re-run's resolving read asks for. It is
-// small because that read wants ONE pipeline, the one carrying the head the caller
-// pinned, and upstream applies the pin as a declared filter.
-const maxPipelinePageItems = 20
+// maxPipelinePageItems is the page size the re-run's resolving read asks for, this
+// product's own maximum, so the walk for a failed pipeline on a head with many spends
+// as few reads as it can.
+const maxPipelinePageItems = 100
 
 // maxLabelPageItems is the page size an addition's label read asks for, the most a
 // REST page serves: "per_page ... (default: 20, max: 100)", per the REST API's
@@ -648,37 +648,24 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 	return c.normalizeRESTPull(&record, repo, restMutated), nil
 }
 
-// RerunFailedChecks implements [forgeapi.PullRequests].
-//
-// It is TWO requests: the pipeline carrying the head the caller pinned has to be
-// resolved before it can be retried, because this product's retry verb is addressed by
-// a server-allocated pipeline id rather than by a commit.
-//
-// Those two are all of them, on a fresh connection as on a used one. The capability
-// this operation is gated on is the CONNECTION's, resolved and priced at setup by
-// [Client.ConnectionCaps], so this call reads the verdict it holds and sends nothing to
-// obtain one.
-//
-// The head pin binds and costs no request of its own: the resolving read is filtered BY
-// the caller's SHA, which this product declares as a parameter of that route, and a SHA
-// no pipeline carries means the merge request has moved since the caller's row was
-// rendered. That is refused rather than retried, because a re-run can carry deployment
-// side effects and a row displaying one commit's red status must not act on another's.
-// An empty SHA means the forge reported no head, and the re-run then proceeds against
-// the FIRST pipeline the instance returns, which is the one case where the pin is
-// unavailable rather than waived.
-//
-// The verb retries the failed and canceled jobs of that pipeline rather than the whole
-// pipeline, which is what this operation publishes.
-//
-//nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own pipeline, which the head SHA pins
+// RerunFailedChecks implements [forgeapi.PullRequests]: the pipeline on the head is
+// resolved first, because this product's retry is addressed by a pipeline id, by a
+// read filtered by the head (the caller's pin, or the merge request's own, read
+// first). The capability is the connection's, priced at setup by
+// [Client.ConnectionCaps]. The route takes an order parameter and this read sends
+// none, so among several failed or canceled pipelines on the head the one retried is
+// the first the instance returns.
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
 	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return err
 	}
-	if headSHA != "" {
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
+	}
+	pinned := headSHA != ""
+	if pinned {
 		if err := forgeapi.ValidateRef(headSHA); err != nil {
 			return err
 		}
@@ -686,26 +673,43 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if err := c.capability(ctx, op, forgeapi.CapRerunChecks); err != nil {
 		return err
 	}
-	query := url.Values{keyPerPage: {strconv.Itoa(maxPipelinePageItems)}}
-	if headSHA != "" {
-		query.Set("sha", headSHA)
+	if !pinned {
+		head, err := c.mergeRequestHead(ctx, op, repo, pr)
+		if err != nil {
+			return err
+		}
+		headSHA = head
 	}
-	pipelines, _, err := c.readPipelines(ctx, op, repo, query)
+	read := func(page int) ([]restPipeline, error) {
+		query := url.Values{keyPerPage: {strconv.Itoa(maxPipelinePageItems)}, keyPage: {strconv.Itoa(page)}, "sha": {headSHA}}
+		pipelines, _, err := c.readPipelines(ctx, op, repo, query)
+		return pipelines, err
+	}
+	pick := func(p *restPipeline) (onHead, rerunnable bool) {
+		status := strings.ToLower(p.Status)
+		return p.ID != 0 && p.SHA == headSHA, status == "failed" || status == "canceled"
+	}
+	pipeline, err := transport.PickRun(ctx, c.core, op, "pipeline", maxPipelinePageItems, pinned, read, pick)
 	if err != nil {
 		return err
 	}
-	pipeline, carried, found := pickPipeline(pipelines, headSHA)
-	switch {
-	case found:
-	case carried || headSHA == "":
-		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunNotFailed, forgeapi.KindConflict, http.StatusOK,
-			"no pipeline on this head failed or was canceled")
-	default:
-		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeStaleHead, forgeapi.KindConflict, http.StatusOK,
-			"no pipeline carries the head this caller pinned")
-	}
 	path := projectRoute(repo, "/pipelines/"+strconv.FormatInt(pipeline.ID, 10)+"/retry")
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
+}
+
+// mergeRequestHead is the head commit a merge request carries now, for a re-run
+// whose caller brought no pin. A merge request answering none is refused before any
+// write.
+func (c *Client) mergeRequestHead(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef) (string, error) {
+	var record restMergeRequest
+	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/merge_requests/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
+		return "", err
+	}
+	if record.SHA == "" {
+		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeMissingSHA, forgeapi.KindUpstream, http.StatusOK,
+			"the merge request answered no head commit")
+	}
+	return record.SHA, nil
 }
 
 // RerunFailedRun implements [forgeapi.Checks]: one POST to the pipeline's retry,
@@ -724,30 +728,6 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 	}
 	path := projectRoute(repo, "/pipelines/"+strconv.FormatInt(run.ID, 10)+"/retry")
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
-}
-
-// pickPipeline is the pipeline a re-run of the head's failed checks addresses: the
-// first of the resolving read's rows on the pinned head, or on any head where the
-// caller brought no pin, that failed or was canceled, the jobs this product's retry
-// starts again. carried reports whether any row was on the pinned head, and found
-// whether one qualified.
-//
-// This product's pipelines route declares a sha filter and an order parameter, and
-// this read sends no order, so among several such pipelines the first is the
-// instance's own choice. The SHA is a declared filter, so upstream applies it and
-// the comparison here is a second check rather than the only one.
-func pickPipeline(pipelines []restPipeline, headSHA string) (pipeline restPipeline, carried, found bool) {
-	for i := range pipelines {
-		p := &pipelines[i]
-		if p.ID == 0 || headSHA != "" && p.SHA != headSHA {
-			continue
-		}
-		carried = true
-		if status := strings.ToLower(p.Status); status == "failed" || status == "canceled" {
-			return *p, true, true
-		}
-	}
-	return restPipeline{}, carried, false
 }
 
 // readPipelines is the one read of a project's pipelines, which the re-run and the run
