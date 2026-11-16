@@ -652,6 +652,13 @@ type AppSourceConfig struct {
 	Installation Installation
 	Grant AppGrant
 }
+type Backend interface {
+	Load(key string) (Record, bool, error)
+	Keys() ([]string, error)
+	Put(key string, rec Record) error
+	Delete(key string) error
+	Swap(key string, prev, next Record) (bool, error)
+}
 type DeviceGrant struct {
 	UserCode string
 	VerificationURI string
@@ -686,6 +693,7 @@ type InstallationToken struct {
 }
 func NewAppKey(issuer string, signer crypto.Signer) (*AppKey, error)
 func NewAppSource(conn forgeapi.Connection, key *AppKey, cfg AppSourceConfig, opts ...forgeapi.Option) (*AppSource, error)
+func NewStore(b Backend) Store
 func NewStoredSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*StoredSource, error)
 func OnlyInstallation() Installation
 func OpenFileStore(dir string, opts ...forgeapi.Option) (*FileStore, error)
@@ -704,6 +712,7 @@ type Record struct {
 	Account string
 	Usability Usability
 }
+func (r *Record) Equal(o *Record) bool
 type Secret struct {
 	// contains unexported members
 }

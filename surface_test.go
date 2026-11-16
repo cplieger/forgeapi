@@ -102,6 +102,9 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"func (t LabelTarget) Validate() error",
 		"\tIndexed bool\n",
 		"\tNeeds string\n",
+		"type Backend interface {",
+		"func NewStore(b Backend) Store",
+		"func (r *Record) Equal(o *Record) bool",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("surface.Generate(%q) does not render %q", ".", want)

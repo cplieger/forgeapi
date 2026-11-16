@@ -173,7 +173,7 @@ func (s *StoredSource) StoredToken() (token string, state forgeapi.CredState, er
 	if state == forgeapi.CredReconnectRequired {
 		return "", state, ended(&rec, st)
 	}
-	if base, pair, held := rot.held(); held && same(&base, &rec) {
+	if base, pair, held := rot.held(); held && base.Equal(&rec) {
 		if pst := s.standing(rot, &pair, true, now); (pst == standValid || pst == standDue) && !expired(&pair, now) {
 			return pair.Token, state, nil
 		}
@@ -376,7 +376,7 @@ func (s *StoredSource) storeHeldOwned(rot *rotation) (bool, error) {
 // rotate then says nothing about the connection, and the caller reads it afresh.
 func (s *StoredSource) replaced(cur *Record) bool {
 	stored, ok, err := s.store.Load(s.key)
-	return err == nil && ok && !same(&stored, cur)
+	return err == nil && ok && !stored.Equal(cur)
 }
 
 // verdict is how one refresh exchange ended, which decides what the stored token is

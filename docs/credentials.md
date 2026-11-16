@@ -34,7 +34,14 @@ A rotation whose write to the store fails keeps the new pair in memory. That cal
 
 `creds.OpenFileStore` keeps every record in one file at mode 0600, in a directory at mode 0700 that the process owns.
 
-Run exactly one refreshing process per store directory, the one that calls `Token`. The git credential helper only reads the store. Nothing detects a second refreshing process, and two of them can lose a rotated pair and leave the connection needing a reconnect.
+To keep the records in storage of your own, such as an encrypted database, implement `creds.Backend` and pass it to `creds.NewStore`. The library keeps the refresh custody around your backend: one rotation per key, a rotated pair your backend could not take, and a mark it still owes. Your backend supplies five methods:
+
+- `Load`, `Keys`, `Put` and `Delete` read and write records by key.
+- `Swap` stores the new record only where the stored one still equals the old, compared with `Record.Equal`, and reports whether it did. A rotation commits through it, so a record you saved during a refresh is kept.
+
+Every method must be durable before it returns, because a rotated pair has no other copy. A `Swap` that fails is tried again by the next `Token` call with the same records, so a write that landed before its error is found and kept. Build one store per backend and share it between every `StoredSource` over it: the custody lives in the store.
+
+Run exactly one refreshing process per store directory or backend, the one that calls `Token`. The git credential helper only reads the store. Nothing detects a second refreshing process, and two of them can lose a rotated pair and leave the connection needing a reconnect.
 
 ## The git credential helper
 
