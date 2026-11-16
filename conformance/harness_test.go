@@ -160,6 +160,8 @@ type subject struct {
 	repo  forgeapi.RepoRef
 	pr    forgeapi.PRRef
 	issue forgeapi.IssueRef
+	// run is the failed run a run's re-run addresses.
+	run forgeapi.RunRef
 }
 
 // canonicalSubject is the subject every offline case addresses.
@@ -174,6 +176,7 @@ func canonicalSubject(p spec.Product) subject {
 		repo:    repoRef(p),
 		pr:      prRef(p),
 		issue:   forgeapi.IssueRef{Number: issueNumber},
+		run:     forgeapi.RunRef{ID: 1},
 		since:   createdAt.Add(-time.Hour),
 	}
 }

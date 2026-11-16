@@ -53,11 +53,6 @@ var forgejoRateLimit = map[string]string{
 	"RateLimit-Policy": `"baseline";q=5000;w=600`,
 }
 
-// giteaRerunVerb is the route Gitea's API document declares for re-running a run's
-// failed jobs, which Forgejo's declares none of: the table states Forgejo's re-run
-// capability as cannot supply, read from that document.
-const giteaRerunVerb = "/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs"
-
 // subjectIndependentCells are the cells the live lane's departure assertion is held
 // to here. The cannot-supply cells are each moved by an answer carrying what the
 // product's family reads where its sibling product sends it: a cannot-supply cell is
@@ -82,34 +77,6 @@ var subjectIndependentCells = map[string]subjectIndependentCell{
 					return
 				}
 				t.Fatalf("Setup: %s serves no repository list to carry the rate-limit signal", f.path)
-			}, alter)
-		},
-	},
-	"forgejo_connection_under_a_rerun_verb": {
-		product: spec.Forgejo, method: "Capabilities.ConnectionCaps", field: "Caps[rerun_checks]",
-		stand: func(t *testing.T, p spec.Product, alter bool) {
-			standRead(t, p, "Capabilities.ConnectionCaps", func(t *testing.T, f *fixture) {
-				for i := range f.Routes {
-					if f.Routes[i].Path != "/swagger.v1.json" {
-						continue
-					}
-					var doc map[string]any
-					if err := json.Unmarshal(f.Routes[i].Body, &doc); err != nil {
-						t.Fatalf("Setup: %s's API document is not a JSON object: %v", f.path, err)
-					}
-					paths, ok := doc["paths"].(map[string]any)
-					if !ok {
-						t.Fatalf("Setup: %s's API document declares no paths", f.path)
-					}
-					paths[giteaRerunVerb] = map[string]any{"post": map[string]any{"operationId": "rerunFailedWorkflowRun"}}
-					body, err := json.Marshal(doc)
-					if err != nil {
-						t.Fatalf("Setup: re-encoding the API document: %v", err)
-					}
-					f.Routes[i].Body = body
-					return
-				}
-				t.Fatalf("Setup: %s serves no API document", f.path)
 			}, alter)
 		},
 	},

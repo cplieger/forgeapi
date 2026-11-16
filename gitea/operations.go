@@ -534,26 +534,12 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 	return c.normalizeMutatedPull(&record, repo), nil
 }
 
-// RerunFailedChecks implements [forgeapi.PullRequests].
-//
-// This is the operation the two products of this family differ on, and it is why
-// a missing verb is a CAPABILITY here rather than an unimplemented role: one
-// package serves both, so failing to satisfy the role would withdraw the
-// operation from the product that does serve it. An instance without it reports
-// [forgeapi.CapRerunChecks] as no or unknown with its evidence, and the refusal
-// arrives from the capability rather than from a call that cannot work:
-// [forgeapi.CodeCapabilityUnsupported], with that evidence on it and no request
-// sent.
-//
-// The head pin binds here and costs no request of its own: the route is addressed
-// by a server-allocated run id, so the read that resolves it is filtered BY the
-// caller's SHA, and a SHA no run carries means the pull request has moved since
-// the caller's row was rendered. That is refused rather than re-run, because a
-// re-run can carry deployment side effects and a row displaying one commit's red
-// status must not act on another's. An empty SHA means the forge reported no head,
-// and the re-run then proceeds against the FIRST run the instance returns, which is
-// the one case where the pin is unavailable rather than waived, and which is the
-// instance's own ordering rather than a newest this route's document states.
+// RerunFailedChecks implements [forgeapi.PullRequests]. A missing verb is a
+// capability rather than an unimplemented role, because one package serves every
+// version of both products. The runs read is filtered by the pinned head, and a
+// head no run carries is refused as stale rather than re-run, since a re-run can
+// carry deployment side effects; with no pin it re-runs the FIRST run the instance
+// returns, in an order the route's document does not state.
 //
 //nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own run, which the head SHA pins
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
@@ -587,8 +573,25 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeStaleHead, forgeapi.KindConflict, http.StatusOK,
 			"no workflow run carries the head this caller pinned")
 	}
-	rest := "/actions/runs/" + strconv.FormatInt(run.ID, 10) + "/rerun-failed-jobs"
-	return c.sendAt(ctx, op, http.MethodPost, addr, rest, nil, nil)
+	return c.sendAt(ctx, op, http.MethodPost, addr, c.rerunRoute(run.ID), nil, nil)
+}
+
+// RerunFailedRun implements [forgeapi.Checks]. It is gated on
+// [forgeapi.CapRerunChecks] as [Client.RerunFailedChecks] is, and posts to the
+// route detection held: the failed-jobs re-run, or Forgejo's whole-run re-run.
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error {
+	const op = "RerunFailedRun"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if run.ID <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "run id is not positive")
+	}
+	if err := c.capability(ctx, op, forgeapi.CapRerunChecks); err != nil {
+		return err
+	}
+	return c.sendAt(ctx, op, http.MethodPost, &address{named: repo}, c.rerunRoute(run.ID), nil, nil)
 }
 
 // pickRun is the head pin read off the resolving read's own rows: the run whose

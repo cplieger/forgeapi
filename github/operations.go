@@ -925,6 +925,23 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
+// RerunFailedRun implements [forgeapi.Checks]: one POST to the failed-jobs re-run of
+// the run, plus the successor read where it answered from another address. Like
+// [Client.RerunFailedChecks] it is not gated on [forgeapi.CapRerunChecks], whose
+// verdict this product cannot read per connection.
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error {
+	const op = "RerunFailedRun"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if run.ID <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "run id is not positive")
+	}
+	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
+	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
+}
+
 // pickRun is the head pin read off the resolving read's own rows: the run whose head
 // matches what the caller pinned, or the FIRST row the instance returned where the
 // caller brought no pin.

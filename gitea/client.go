@@ -30,9 +30,12 @@ type Client struct {
 	// each per connection rather than one per caller: two first callers that each
 	// pass a mutex-protected check before either writes fetch a near-megabyte
 	// document twice, which race freedom alone does not prevent.
-	resolve       chan struct{}
-	version       string
-	namedBy       string
+	resolve chan struct{}
+	version string
+	namedBy string
+	// rerunVerb is the last path segment of the re-run route the swagger
+	// declares, held with caps; empty where it declares none.
+	rerunVerb     string
 	versionStatus int
 	// maxItems is the instance's stated max_response_items, zero while the
 	// connection holds none.

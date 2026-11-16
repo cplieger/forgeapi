@@ -20,12 +20,13 @@ Where a product departs from the normalized contract, the operation's own godoc 
 | `PullRequests.CreatePR` | supported | supported | supported | supported |
 | `PullRequests.ClosePR` | supported | supported | supported | supported |
 | `PullRequests.ReopenPR` | supported | supported | supported | supported |
-| `PullRequests.RerunFailedChecks` | supported | supported | supported | unsupported |
+| `PullRequests.RerunFailedChecks` | supported | supported | supported | supported |
 | `Merges.MergePR` | supported | supported | supported | supported |
 | `Merges.MergeStatus` | supported | supported | supported | supported |
 | `Merges.CancelAutoMerge` | supported | supported | supported | supported |
 | `Checks.CommitStatus` | supported | supported | supported | supported |
 | `Checks.ListRuns` | supported | supported | supported | supported |
+| `Checks.RerunFailedRun` | supported | supported | supported | supported |
 | `Issues.ListIssues` | supported | supported | supported | supported |
 | `Issues.ListMyIssues` | supported | supported | supported | supported |
 | `Issues.ReadIssue` | supported | supported | supported | supported |

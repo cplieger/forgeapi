@@ -523,9 +523,11 @@ type PullRequests interface {
 	// rather than waived.
 	//
 	// Whether an instance can do this at all is [CapRerunChecks], read from
-	// [ConnectionCaps]: a product with no re-run verb reports the capability
-	// rather than failing to satisfy this role, because the two products of one
-	// family differ here and a family serves both.
+	// [ConnectionCaps]: an instance with no re-run verb, a Forgejo before 17,
+	// reports the capability rather than failing to satisfy this role, because
+	// the versions of one product differ here and a family serves them all. On
+	// Forgejo 17 and later it re-runs the whole finished run, passed jobs
+	// included, as its departure row states.
 	//
 	// Called against an instance detection says lacks the verb, it refuses with
 	// [CodeCapabilityUnsupported] and issues NO request, carrying the capability
@@ -538,11 +540,20 @@ type PullRequests interface {
 	//	GitHub   GET /repos/{owner}/{repo}/actions/runs to resolve the head commit's run, then POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where either of them answered from another address, 2 to 3 requests; needs rerun_checks
 	//	GitLab   GET /api/v4/projects/{id}/pipelines, filtered by the head SHA, to resolve the head commit's pipeline, then POST /api/v4/projects/{id}/pipelines/{run}/retry, 2 requests; needs rerun_checks
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/actions/runs, filtered by the head SHA, to resolve the head commit's run, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, both of which this product's swagger document names, 2 requests; needs rerun_checks
-	//	Forgejo  no route: this product carries no such verb, so the call is refused; needs rerun_checks
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/actions/runs, filtered by the head SHA, to resolve the head commit's run, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 2 requests; needs rerun_checks
+	//
+	// GitHub departs from the normalized contract:
+	//
+	//	jobs re-run  differs in shape  the failed jobs and their dependent jobs, as the route documents
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	jobs re-run  differs in shape  failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	error, verb absent  cannot supply  no re-run verb in this product's API, which its swagger document settles
+	//	jobs re-run                    differs in shape  the whole finished run starts again, its passed jobs included: this product has no failed-jobs route, and its per-job route cannot be aimed at the failed roots alone, because a job's needs name workflow job keys the job list does not carry beside the integer id
+	//	error, verb absent, before 17  cannot supply     no re-run verb before Forgejo 17, which its swagger document settles
 	//
 	// GitHub sends this, where a wrong default would change the request silently:
 	//
@@ -555,6 +566,10 @@ type PullRequests interface {
 	// Gitea sends this, where a wrong default would change the request silently:
 	//
 	//	head_sha  query  the head the caller pinned, as the filter this product's runs route declares, so the retry addresses the run of the commit the caller's row was rendered from rather than whichever the instance returns first
+	//
+	// Forgejo sends this, where a wrong default would change the request silently:
+	//
+	//	head_sha  query  the head the caller pinned, as the filter this product's runs route declares, so the re-run addresses the run of the commit the caller's row was rendered from rather than whichever the instance returns first
 	RerunFailedChecks(ctx context.Context, repo RepoRef, pr PRRef, headSHA string) error
 }
 
@@ -790,6 +805,36 @@ type Checks interface {
 	//	page      query  the first page of a walk, sent with every limit: a Forgejo instance answers a request with no page with every run of the repository
 	//	limit     query  the smaller of the page bound and the instance's stated maximum, here the maximum both public instances state, the same on every page of one walk, which is what lets the stated total decide the continuation where an instance serves fewer rows than asked
 	ListRuns(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Run], error)
+
+	// RerunFailedRun re-runs what failed on one finished run, addressed by the
+	// [RunRef.ID] [Checks.ListRuns] answers, for a run no pull request resolves.
+	//
+	// It shares [CapRerunChecks] and its refusal with
+	// [PullRequests.RerunFailedChecks]: where the instance has no re-run verb it
+	// answers [CodeCapabilityUnsupported] with no request. A run ID that is not
+	// positive is refused with [CodeRepoRefInvalid] before any request. A run that
+	// is not finished, or not failed, is the forge's own refusal, passed through.
+	//
+	// Per forge:
+	//
+	//	GitHub   POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 2 requests; needs rerun_checks
+	//	GitLab   POST /api/v4/projects/{id}/pipelines/{run}/retry, 1 request; needs rerun_checks
+	//	Gitea    POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, which this product's swagger document names, 1 request; needs rerun_checks
+	//	Forgejo  POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 1 request; needs rerun_checks
+	//
+	// GitHub departs from the normalized contract:
+	//
+	//	jobs re-run  differs in shape  the failed jobs and their dependent jobs, as the route documents
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	jobs re-run  differs in shape  failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	jobs re-run                    differs in shape  the whole finished run starts again, its passed jobs included: this product has no failed-jobs route, and its per-job route cannot be aimed at the failed roots alone, because a job's needs name workflow job keys the job list does not carry beside the integer id
+	//	error, verb absent, before 17  cannot supply     no re-run verb before Forgejo 17, which its swagger document settles
+	RerunFailedRun(ctx context.Context, repo RepoRef, run RunRef) error
 }
 
 // Issues is the issue surface.
@@ -979,7 +1024,7 @@ type Capabilities interface {
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	Caps[rerun_checks]  cannot supply  swagger has no rerun verb: no
+	//	Caps[rerun_checks], before 17  cannot supply  no: the swagger document declares no re-run verb before Forgejo 17
 	ConnectionCaps(ctx context.Context) (ConnectionCaps, error)
 
 	// GrantCaps reports what this credential can do on it.

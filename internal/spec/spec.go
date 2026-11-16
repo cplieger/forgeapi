@@ -192,6 +192,7 @@ var Fields = map[string]int{
 	"Merges.CancelAutoMerge":         1,
 	"Checks.CommitStatus":            10,
 	"Checks.ListRuns":                15,
+	"Checks.RerunFailedRun":          2,
 	"Issues.ListIssues":              18,
 	"Issues.ListMyIssues":            18,
 	"Issues.ReadIssue":               15,
@@ -1610,6 +1611,13 @@ var Table = []Entry{
 		Requests:  Requests{Min: 2, Max: 3},
 		Needs:     "rerun_checks",
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "the failed jobs and their dependent jobs, as the route documents",
+			},
+		},
 		Sends: []Sent{
 			{
 				Field: "head_sha",
@@ -1626,6 +1634,13 @@ var Table = []Entry{
 		Requests:  Requests{Min: 2, Max: 2},
 		Needs:     "rerun_checks",
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict",
+			},
+		},
 		Sends: []Sent{
 			{
 				Field: "sha",
@@ -1654,15 +1669,28 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.RerunFailedChecks",
 		Product:   Forgejo,
-		Exercises: "",
-		Requests:  Requests{},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/actions/runs, filtered by the head SHA, to resolve the head commit's run, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17",
+		Requests:  Requests{Min: 2, Max: 2},
 		Needs:     "rerun_checks",
-		Support:   Unsupported,
+		Support:   Supported,
 		Departures: []Departure{
 			{
-				Field: "error, verb absent",
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "the whole finished run starts again, its passed jobs included: this product has no failed-jobs route, and its per-job route cannot be aimed at the failed roots alone, because a job's needs name workflow job keys the job list does not carry beside the integer id",
+			},
+			{
+				Field: "error, verb absent, before 17",
 				Kind:  CannotSupply,
-				Says:  "no re-run verb in this product's API, which its swagger document settles",
+				Says:  "no re-run verb before Forgejo 17, which its swagger document settles",
+			},
+		},
+		Sends: []Sent{
+			{
+				Field: "head_sha",
+				Where: InQuery,
+				Holds: HoldsHeadSHA,
+				Says:  "the head the caller pinned, as the filter this product's runs route declares, so the re-run addresses the run of the commit the caller's row was rendered from rather than whichever the instance returns first",
 			},
 		},
 	},
@@ -2154,6 +2182,64 @@ var Table = []Entry{
 		},
 	},
 	{
+		Method:    "Checks.RerunFailedRun",
+		Product:   GitHub,
+		Exercises: "POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where it answered from another address",
+		Requests:  Requests{Min: 1, Max: 2},
+		Needs:     "rerun_checks",
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "the failed jobs and their dependent jobs, as the route documents",
+			},
+		},
+	},
+	{
+		Method:    "Checks.RerunFailedRun",
+		Product:   GitLab,
+		Exercises: "POST /api/v4/projects/{id}/pipelines/{run}/retry",
+		Requests:  Requests{Min: 1, Max: 1},
+		Needs:     "rerun_checks",
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict",
+			},
+		},
+	},
+	{
+		Method:    "Checks.RerunFailedRun",
+		Product:   Gitea,
+		Exercises: "POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, which this product's swagger document names",
+		Requests:  Requests{Min: 1, Max: 1},
+		Needs:     "rerun_checks",
+		Support:   Supported,
+	},
+	{
+		Method:    "Checks.RerunFailedRun",
+		Product:   Forgejo,
+		Exercises: "POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17",
+		Requests:  Requests{Min: 1, Max: 1},
+		Needs:     "rerun_checks",
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "the whole finished run starts again, its passed jobs included: this product has no failed-jobs route, and its per-job route cannot be aimed at the failed roots alone, because a job's needs name workflow job keys the job list does not carry beside the integer id",
+			},
+			{
+				Field: "error, verb absent, before 17",
+				Kind:  CannotSupply,
+				Says:  "no re-run verb before Forgejo 17, which its swagger document settles",
+			},
+		},
+	},
+	{
 		Method:    "Issues.ListIssues",
 		Product:   GitHub,
 		Exercises: "GET /repos/{owner}/{repo}/issues, whose population is issues and pull requests both, so a row carrying a pull-request key is dropped, then one read against the id-addressed location to resolve the successor where it answered from another address",
@@ -2605,9 +2691,9 @@ var Table = []Entry{
 		Support:   Supported,
 		Departures: []Departure{
 			{
-				Field: "Caps[rerun_checks]",
+				Field: "Caps[rerun_checks], before 17",
 				Kind:  CannotSupply,
-				Says:  "swagger has no rerun verb: no",
+				Says:  "no: the swagger document declares no re-run verb before Forgejo 17",
 			},
 		},
 	},

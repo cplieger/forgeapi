@@ -59,9 +59,10 @@ type operation struct {
 	// whose operations panic.
 	zero any
 	// errorArms are the table fields naming what the operation answers under an
-	// option, or after an earlier answer on the connection, rather than a field of
-	// its default answer. A dedicated test asserts each one, and the
-	// departure-coverage gate reads them beside the fields expect declares.
+	// option, after an earlier answer on the connection or on an older release,
+	// or what a write does beyond its answer, rather than a field of its default
+	// answer. A dedicated test asserts each one, and the departure-coverage gate
+	// reads them beside the fields expect declares.
 	errorArms []string
 	// names is how many label names the case's call names, which a per-name
 	// price counts.
@@ -381,9 +382,10 @@ var operations = []operation{
 		},
 	},
 	{
-		method:   "PullRequests.RerunFailedChecks",
-		zero:     nil,
-		mutation: true,
+		method:    "PullRequests.RerunFailedChecks",
+		zero:      nil,
+		mutation:  true,
+		errorArms: []string{jobsRerun, verbAbsentBefore17},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -534,6 +536,20 @@ var operations = []operation{
 		},
 	},
 	{
+		method:    "Checks.RerunFailedRun",
+		zero:      nil,
+		mutation:  true,
+		errorArms: []string{jobsRerun, verbAbsentBefore17},
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Checks)
+			if !ok {
+				return nil, roleAbsent("Checks")
+			}
+			return nil, r.RerunFailedRun(ctx, s.repo, s.run)
+		},
+		expect: func(spec.Product, any) []check { return nil },
+	},
+	{
 		method:  "Issues.ListIssues",
 		zero:    forgeapi.Page[forgeapi.Issue]{},
 		rowArms: []string{rowAuthorKind},
@@ -648,8 +664,9 @@ var operations = []operation{
 		},
 	},
 	{
-		method: "Capabilities.ConnectionCaps",
-		zero:   forgeapi.ConnectionCaps{},
+		method:    "Capabilities.ConnectionCaps",
+		zero:      forgeapi.ConnectionCaps{},
+		errorArms: []string{capsBefore17},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.Capabilities)
 			if !ok {
@@ -661,9 +678,8 @@ var operations = []operation{
 			g := got.(forgeapi.ConnectionCaps)
 			return []check{
 				eq("Product", g.Product, productOf[p]),
-				absentBy("Caps[rerun_checks]", g.Caps[forgeapi.CapRerunChecks],
-					forgeapi.SupportYes, forgeapi.SupportUnknown,
-					map[spec.Product]any{spec.Forgejo: forgeapi.SupportNo}),
+				absent("Caps[rerun_checks]", g.Caps[forgeapi.CapRerunChecks],
+					forgeapi.SupportYes, forgeapi.SupportUnknown),
 				present("Ev[rerun_checks].Source", g.Ev[forgeapi.CapRerunChecks].Source, forgeapi.EvidenceUnknown),
 			}
 		},

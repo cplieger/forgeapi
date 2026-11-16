@@ -2,7 +2,10 @@ package gitea
 
 import (
 	"context"
+	"maps"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cplieger/forgeapi/v3"
@@ -20,9 +23,15 @@ const (
 	// version it is compatible with alongside its own.
 	forgejoMarker = "+gitea-"
 
-	// rerunVerb is the swagger path fragment that settles whether this instance
-	// carries the re-run of failed checks at all.
-	rerunVerb = "rerun-failed-jobs"
+	// rerunFailedJobs is the swagger path fragment of the re-run of a run's failed
+	// jobs, which Gitea declares and Forgejo does not.
+	rerunFailedJobs = "rerun-failed-jobs"
+
+	// forgejoWholeRun is Forgejo's re-run of a whole finished run, RerunActionRun,
+	// declared from 17. It is matched exactly: Gitea declares a whole-run route
+	// too, under {run}, beside its failed-jobs one, and that one is never taken.
+	forgejoWholeRun = "/repos/{owner}/{repo}/actions/runs/{run_id}/" + wholeRun
+	wholeRun        = "rerun"
 
 	// The two product names the API document titles itself with, measured as
 	// "Gitea API" on gitea.com and "Forgejo API" on codeberg.org. The document is
@@ -99,7 +108,7 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 	if err := ctx.Err(); err != nil {
 		return forgeapi.ConnectionCaps{}, err
 	}
-	rerun, ev := rerunCapability(swagger)
+	rerun, ev, verb := rerunCapability(swagger)
 	c.mu.Lock()
 	caps := forgeapi.ConnectionCaps{
 		Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
@@ -107,33 +116,52 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 		Product: c.product,
 	}
 	c.caps = &caps
+	c.rerunVerb = verb
 	c.mu.Unlock()
 	return caps, nil
 }
 
-// rerunCapability is the verdict and the evidence behind it. An absent document is
-// unknown rather than an error: an administrator can switch the document off on a
-// working instance, and on one of the two products can switch the whole API off,
-// which is unknown with evidence rather than a capability read as no.
-func rerunCapability(doc *swaggerDoc) (forgeapi.Support, forgeapi.Evidence) {
+// rerunCapability is the verdict, the evidence behind it and the last path segment
+// of the re-run route the document declares, empty where it declares none. The
+// failed-jobs route wins wherever it is declared, because it re-runs only what
+// failed. An absent document is unknown rather than an error: an administrator can
+// switch the document off on a working instance, and on one of the two products
+// can switch the whole API off.
+func rerunCapability(doc *swaggerDoc) (forgeapi.Support, forgeapi.Evidence, string) {
 	if doc == nil {
 		return forgeapi.SupportUnknown, forgeapi.Evidence{
 			Source: forgeapi.EvidenceSwagger,
 			Detail: "no swagger document on this instance",
-		}
+		}, ""
 	}
-	for path := range doc.Paths {
-		if strings.Contains(path, rerunVerb) {
+	for _, path := range slices.Sorted(maps.Keys(doc.Paths)) {
+		if strings.HasSuffix(path, "/"+rerunFailedJobs) {
 			return forgeapi.SupportYes, forgeapi.Evidence{
 				Source: forgeapi.EvidenceSwagger,
-				Detail: "swagger declares " + rerunVerb,
-			}
+				Detail: "swagger declares " + path,
+			}, rerunFailedJobs
 		}
+	}
+	if _, ok := doc.Paths[forgejoWholeRun]; ok {
+		return forgeapi.SupportYes, forgeapi.Evidence{
+			Source: forgeapi.EvidenceSwagger,
+			Detail: "swagger declares " + forgejoWholeRun,
+		}, wholeRun
 	}
 	return forgeapi.SupportNo, forgeapi.Evidence{
 		Source: forgeapi.EvidenceSwagger,
-		Detail: "swagger declares no " + rerunVerb + " verb",
-	}
+		Detail: "swagger declares neither a " + rerunFailedJobs + " route nor " + forgejoWholeRun,
+	}, ""
+}
+
+// rerunRoute is the re-run route of one run, under the repository, as detection
+// found it; [Client.capability] for [forgeapi.CapRerunChecks] has answered yes
+// before any caller asks, so the verb is held.
+func (c *Client) rerunRoute(run int64) string {
+	c.mu.Lock()
+	verb := c.rerunVerb
+	c.mu.Unlock()
+	return "/actions/runs/" + strconv.FormatInt(run, 10) + "/" + verb
 }
 
 func (c *Client) cachedCaps() *forgeapi.ConnectionCaps {

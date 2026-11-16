@@ -110,6 +110,7 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"\tAddLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error\n",
 		"\tRemoveLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error\n",
 		"\tCancelAutoMerge(ctx context.Context, repo RepoRef, pr PRRef) error\n",
+		"\tRerunFailedRun(ctx context.Context, repo RepoRef, run RunRef) error\n",
 		"\tGovernor\n\tLabels\n\tClose()\n",
 	} {
 		if !strings.Contains(rendered, want) {

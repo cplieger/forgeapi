@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded connection_caps response beside a recorded gitea-swagger response, read 2026-09-18 and 2026-09-16, recorded 2026-09-19; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; no sandbox capture exists for this mutation on this product, so the response shape is the same product's read capture, which this product's swagger document gives the mutation as its response schema; the third route is connection setup's read of the instance's stated maximum page size, cut from a recorded settings_api response, the answer gitea.com gave anonymously, read 2026-10-02",
+  "//": "cut from a recorded connection_caps response beside a recorded gitea-swagger response, read 2026-09-18 and 2026-09-16, recorded 2026-09-19; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; no sandbox capture exists for this mutation on this product, so the re-run's answer is the 201 with an empty body this product's swagger document gives rerunFailedWorkflowRun, read 2026-11-16; the third route is connection setup's read of the instance's stated maximum page size, cut from a recorded settings_api response, the answer gitea.com gave anonymously, read 2026-10-02",
   "routes": [
     {
       "method": "GET",
@@ -79,7 +79,7 @@
     {
       "method": "POST",
       "path": "/api/v1/repos/example/example/actions/runs/{}/rerun-failed-jobs",
-      "status": 200,
+      "status": 201,
       "headers": {
         "Content-Type": "application/json"
       },

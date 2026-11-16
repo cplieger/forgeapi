@@ -78,6 +78,7 @@ const CheckUnknown CheckState = iota
 type Checks interface {
 	CommitStatus(ctx context.Context, repo RepoRef, ref string) (CommitChecks, error)
 	ListRuns(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Run], error)
+	RerunFailedRun(ctx context.Context, repo RepoRef, run RunRef) error
 }
 const CodeAPIVersionRetired = "api_version_retired"
 const CodeAlreadyEnqueued = "already_enqueued"
@@ -796,6 +797,7 @@ func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue f
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
 
@@ -835,6 +837,7 @@ func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue f
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
 
@@ -872,5 +875,6 @@ func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue f
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)

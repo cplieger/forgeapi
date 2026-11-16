@@ -799,10 +799,12 @@ func laneWait(ctx context.Context) error {
 // gitlab.com answers every pipeline of an account whose identity it has not
 // verified: there is a failed run and no failed job to re-run.
 type runVerdict struct {
-	summary  string
-	finished bool
-	failed   bool
-	refused  bool
+	summary string
+	// failedRun is the id of the first failed run, zero where none failed.
+	failedRun int64
+	finished  bool
+	failed    bool
+	refused   bool
 }
 
 // waitForRuns waits up to bound for every CI run on one commit to finish, and
@@ -852,6 +854,9 @@ func (l *lane) runs(ctx context.Context, sha string) (runVerdict, error) {
 		failed := r.Conclusion == "failure" || r.Conclusion == "failed"
 		v.finished = v.finished && r.Status == "completed"
 		v.failed = v.failed || failed
+		if failed && v.failedRun == 0 {
+			v.failedRun = r.ID
+		}
 		v.refused = v.refused && failed && r.StartedAt == nil && l.product == spec.GitLab
 		parts = append(parts, r.Status+"/"+r.Conclusion)
 	}

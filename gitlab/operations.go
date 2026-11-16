@@ -703,6 +703,24 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
+// RerunFailedRun implements [forgeapi.Checks]: one POST to the pipeline's retry,
+// gated on [forgeapi.CapRerunChecks] as [Client.RerunFailedChecks] is.
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error {
+	const op = "RerunFailedRun"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if run.ID <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "run id is not positive")
+	}
+	if err := c.capability(ctx, op, forgeapi.CapRerunChecks); err != nil {
+		return err
+	}
+	path := projectRoute(repo, "/pipelines/"+strconv.FormatInt(run.ID, 10)+"/retry")
+	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
+}
+
 // pickPipeline is the head pin read off the resolving read's own rows: the pipeline
 // whose head matches what the caller pinned, or the FIRST row the instance returned
 // where the caller brought no pin.

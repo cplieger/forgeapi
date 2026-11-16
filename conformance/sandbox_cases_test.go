@@ -146,6 +146,9 @@ var liveMutations = map[string]liveMutation{
 	"PullRequests.RerunFailedChecks": {
 		prepare: prepareRerun,
 	},
+	"Checks.RerunFailedRun": {
+		prepare: prepareRerun,
+	},
 	"Merges.MergePR": {
 		prepare: func(t *testing.T, l *lane, s *subject) {
 			openPullRequest(t, l, s, "merge")
@@ -355,7 +358,7 @@ func openOn(t *testing.T, l *lane, s *subject, head, base, sha string) {
 
 // prepareRerun opens a pull request whose head the sandbox's own CI ran on, and
 // waits a bounded time for that CI to finish with its failing job, which is what a
-// re-run of the failed checks acts on. The product's RUN_WAIT variable sets the
+// re-run of the failed checks acts on; the failed run is the subject's run. The product's RUN_WAIT variable sets the
 // bound; zero says the instance runs no CI at all, which is the lane's own
 // throwaway instances, so the case skips with that reason rather than waiting.
 func prepareRerun(t *testing.T, l *lane, s *subject) {
@@ -388,6 +391,7 @@ func prepareRerun(t *testing.T, l *lane, s *subject) {
 		t.Fatalf("Setup: the sandbox's own CI on %s finished with %s and no failing run, want its failing job: the sandbox's CI configuration yields one passing and one failing job on a push to a forgeapi-ci-* branch", sha, v.summary)
 	}
 	t.Logf("the sandbox's own CI on %s finished with %s", sha, v.summary)
+	s.run = forgeapi.RunRef{ID: v.failedRun}
 }
 
 // TestEveryMutationHasItsLiveSetup holds the live setups to the contract in both
