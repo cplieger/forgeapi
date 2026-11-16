@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/internal/spec"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // TestMapperAnswersOneCellPerStatus holds this family's error mapping to one case
@@ -85,12 +86,40 @@ func TestMapperAnswersOneCellPerStatus(t *testing.T) {
 			if header == nil {
 				header = http.Header{}
 			}
-			kind, code := mapper("MergePR", test.status, header, "")
+			kind, code := mapped("MergePR", test.status, header)
 			if kind != test.kind {
 				t.Errorf("mapper(MergePR, %d, %v) = kind %v, want %v", test.status, header, kind, test.kind)
 			}
 			if code != test.code {
 				t.Errorf("mapper(MergePR, %d, %v) = code %q, want %q", test.status, header, code, test.code)
+			}
+		})
+	}
+}
+
+// mapped is the mapping of a refusal whose body carries no machine-readable member.
+func mapped(op string, status int, header http.Header) (forgeapi.ErrorKind, string) {
+	got := mapper(op, status, header, transport.Member{})
+	return got.Kind, got.Code
+}
+
+// TestARefusalsMembersMoveNoCell holds this family to its products' error shape:
+// neither swagger's APIError carries a machine-readable member (message and url
+// only), so a body that happened to carry RFC 6750's members still maps by status,
+// with no scope code and nothing named as needed.
+func TestARefusalsMembersMoveNoCell(t *testing.T) {
+	member := transport.Member{Error: "insufficient_scope", Scope: "write:repository"}
+	for _, test := range []struct {
+		want   transport.Verdict
+		status int
+	}{
+		{status: http.StatusUnauthorized, want: transport.Verdict{Kind: forgeapi.KindUnauthorized}},
+		{status: http.StatusForbidden, want: transport.Verdict{Kind: forgeapi.KindForbidden}},
+		{status: http.StatusNotFound, want: transport.Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeRepoOrPRNotVisible}},
+	} {
+		t.Run(strconv.Itoa(test.status), func(t *testing.T) {
+			if got := mapper("CreatePR", test.status, http.Header{}, member); got != test.want {
+				t.Errorf("mapper(CreatePR, %d, %+v) = %+v, want %+v", test.status, member, got, test.want)
 			}
 		})
 	}
@@ -108,7 +137,7 @@ func TestA409IsMappedPerOperation(t *testing.T) {
 		{op: "CreateIssue", code: ""},
 		{op: "ListPRs", code: ""},
 	} {
-		kind, code := mapper(test.op, http.StatusConflict, http.Header{}, "")
+		kind, code := mapped(test.op, http.StatusConflict, http.Header{})
 		if kind != forgeapi.KindConflict || code != test.code {
 			t.Errorf("mapper(%s, 409) = %v / %q, want %v / %q", test.op, kind, code, forgeapi.KindConflict, test.code)
 		}
@@ -122,7 +151,7 @@ func TestA409IsMappedPerOperation(t *testing.T) {
 func TestA400HasNoCellOfItsOwn(t *testing.T) {
 	for _, op := range []string{"ListMyPRs", "ListMyIssues", "ListRepos", "ListRuns", "MergePR"} {
 		t.Run(op, func(t *testing.T) {
-			if kind, code := mapper(op, http.StatusBadRequest, http.Header{}, ""); kind != forgeapi.KindUpstream || code != "" {
+			if kind, code := mapped(op, http.StatusBadRequest, http.Header{}); kind != forgeapi.KindUpstream || code != "" {
 				t.Errorf("mapper(%s, 400) = kind %v code %q, want kind %v and no code", op, kind, code, forgeapi.KindUpstream)
 			}
 		})
@@ -499,7 +528,7 @@ func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 			if th.Header != "" {
 				header.Set(th.Header, cmp.Or(th.Value, "60"))
 			}
-			if kind, code := mapper("ListRuns", th.Status, header, ""); kind != forgeapi.KindRateLimited || code != "" {
+			if kind, code := mapped("ListRuns", th.Status, header); kind != forgeapi.KindRateLimited || code != "" {
 				t.Errorf("mapper(ListRuns, %d, %v) = %v, %q, want %v: %s", th.Status, header, kind, code, forgeapi.KindRateLimited, th.Says)
 			}
 		})

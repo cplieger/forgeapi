@@ -79,10 +79,25 @@ const (
 // family that knows those cells supplies the function and this package owns
 // everything around it.
 //
-// bodyError is the body's machine-readable error member, RFC 6750's `error`,
-// empty where the body carries none. It is a code the instance states, so a
-// family may map on it; the body's prose never reaches a mapper.
-type errorMapper func(op string, status int, header http.Header, bodyError string) (forgeapi.ErrorKind, string)
+// member is what the body states in machine-readable members; the body's prose
+// never reaches a mapper.
+type errorMapper func(op string, status int, header http.Header, member Member) Verdict
+
+// Member is the machine-readable part of a refusal's body: RFC 6750's error code
+// and the scope it names, each empty where the body carries none.
+type Member struct {
+	Error string
+	Scope string
+}
+
+// Verdict is a family's reading of one refusal: the code and kind the caller
+// branches on, and what the forge says the call needs, which becomes
+// [forgeapi.Error.Needs].
+type Verdict struct {
+	Code  string
+	Needs string
+	Kind  forgeapi.ErrorKind
+}
 
 // budgetSignal is how a family reads its product's budget signal off a response. It
 // returns the remaining units, the reset instant and whether the response carried
@@ -1665,11 +1680,13 @@ func contextSentinel(err error) error {
 // plus status plus selected headers rather than by status alone.
 func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, started time.Time) *forgeapi.Error {
 	answer := readRefusal(resp.Body)
-	kind, code := forgeapi.KindNotFound, forgeapi.CodeOwnerUnresolved
+	verdict := Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeOwnerUnresolved}
 	if req.OwnerStatus == 0 || resp.Status != req.OwnerStatus {
-		kind, code = c.mapper(req.Op, resp.Status, resp.Header, answer.Error)
+		verdict = c.mapper(req.Op, resp.Status, resp.Header, Member{Error: answer.Error, Scope: answer.Scope})
 	}
+	kind, code := verdict.Kind, verdict.Code
 	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
+	fe.Needs = resp.Quote(verdict.Needs) // upstream text, made safe as the message is
 	if kind == forgeapi.KindRateLimited {
 		fe.RetryAfter = httpclient.ParseRetryAfter(resp.Header.Get("Retry-After"))
 		if c.counters.RateLimited != nil {

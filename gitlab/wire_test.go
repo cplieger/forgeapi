@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/internal/spec"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // TestMapperAnswersOneCellPerStatus holds this family's error mapping to one case per
@@ -115,7 +116,7 @@ func TestMapperAnswersOneCellPerStatus(t *testing.T) {
 		{name: "an_unmapped_4xx_is_upstream", op: "ListPRs", status: http.StatusTeapot, kind: forgeapi.KindUpstream},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			kind, code := mapper(test.op, test.status, http.Header{}, "")
+			kind, code := mapped(test.op, test.status, http.Header{})
 			if kind != test.kind {
 				t.Errorf("mapper(%s, %d) = kind %v, want %v", test.op, test.status, kind, test.kind)
 			}
@@ -126,31 +127,58 @@ func TestMapperAnswersOneCellPerStatus(t *testing.T) {
 	}
 }
 
-// TestAScopeErrorMemberMovesOnlyTheForbiddenCell holds the body's error member to the
-// one cell that reads it: the member is upstream's, and on any other status the status
+// mapped is the mapping of a refusal whose body carries no machine-readable member.
+func mapped(op string, status int, header http.Header) (forgeapi.ErrorKind, string) {
+	got := mapper(op, status, header, transport.Member{})
+	return got.Kind, got.Code
+}
+
+// TestAScopeErrorMemberMovesOnlyTheForbiddenCell holds the body's members to the one
+// cell that reads them: the members are upstream's, and on any other status the status
 // decides, so a dead credential stays a reconnect and an absent project stays absent.
+// On the 403, what the call needs is the scope member RFC 6750's refusal names
+// (lib/api/api_guard.rb, InsufficientScopeForbidden), and the granular refusal names none.
 func TestAScopeErrorMemberMovesOnlyTheForbiddenCell(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		op        string
-		bodyError string
-		code      string
-		status    int
-		kind      forgeapi.ErrorKind
+		name   string
+		op     string
+		code   string
+		needs  string
+		member transport.Member
+		status int
+		kind   forgeapi.ErrorKind
 	}{
 		{
-			name: "401_naming_a_scope_is_still_a_dead_credential", op: "ListPRs", bodyError: errorScope,
+			name: "403_naming_a_scope_is_the_scope_refusal_with_its_scopes", op: "CreatePR",
+			member: transport.Member{Error: errorScope, Scope: "api read_api"},
+			status: http.StatusForbidden, kind: forgeapi.KindForbidden, code: forgeapi.CodeScopeInsufficient, needs: "api read_api",
+		},
+		{
+			name: "403_naming_a_granular_permission_is_the_scope_refusal_naming_nothing", op: "CreatePR",
+			member: transport.Member{Error: errorGranularScope},
+			status: http.StatusForbidden, kind: forgeapi.KindForbidden, code: forgeapi.CodeScopeInsufficient,
+		},
+		{
+			name: "403_with_another_member_is_a_plain_forbidden", op: "CreatePR",
+			member: transport.Member{Error: "forbidden", Scope: "api"},
+			status: http.StatusForbidden, kind: forgeapi.KindForbidden,
+		},
+		{
+			name: "401_naming_a_scope_is_still_a_dead_credential", op: "ListPRs",
+			member: transport.Member{Error: errorScope, Scope: "api"},
 			status: http.StatusUnauthorized, kind: forgeapi.KindUnauthorized,
 		},
 		{
-			name: "404_naming_a_fine_grained_permission_is_still_not_visible", op: "ReadPR", bodyError: errorGranularScope,
+			name: "404_naming_a_fine_grained_permission_is_still_not_visible", op: "ReadPR",
+			member: transport.Member{Error: errorGranularScope},
 			status: http.StatusNotFound, kind: forgeapi.KindNotFound, code: forgeapi.CodeRepoOrPRNotVisible,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			kind, code := mapper(test.op, test.status, http.Header{}, test.bodyError)
-			if kind != test.kind || code != test.code {
-				t.Errorf("mapper(%s, %d, %q) = (%v, %q), want (%v, %q)", test.op, test.status, test.bodyError, kind, code, test.kind, test.code)
+			got := mapper(test.op, test.status, http.Header{}, test.member)
+			want := transport.Verdict{Kind: test.kind, Code: test.code, Needs: test.needs}
+			if got != want {
+				t.Errorf("mapper(%s, %d, %+v) = %+v, want %+v", test.op, test.status, test.member, got, want)
 			}
 		})
 	}
@@ -192,7 +220,7 @@ func TestA409OffTheMergeIsNoStaleHead(t *testing.T) {
 		{op: "CreateIssue", code: ""},
 		{op: "ListPRs", code: ""},
 	} {
-		kind, code := mapper(test.op, http.StatusConflict, http.Header{}, "")
+		kind, code := mapped(test.op, http.StatusConflict, http.Header{})
 		if kind != forgeapi.KindConflict || code != test.code {
 			t.Errorf("mapper(%s, 409) = %v / %q, want %v / %q", test.op, kind, code, forgeapi.KindConflict, test.code)
 		}
@@ -739,7 +767,7 @@ func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 			if th.Header != "" {
 				header.Set(th.Header, cmp.Or(th.Value, "60"))
 			}
-			if kind, code := mapper("ListRuns", th.Status, header, ""); kind != forgeapi.KindRateLimited || code != "" {
+			if kind, code := mapped("ListRuns", th.Status, header); kind != forgeapi.KindRateLimited || code != "" {
 				t.Errorf("mapper(ListRuns, %d, %v) = %v, %q, want %v: %s", th.Status, header, kind, code, forgeapi.KindRateLimited, th.Says)
 			}
 		})

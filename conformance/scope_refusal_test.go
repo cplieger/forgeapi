@@ -36,11 +36,17 @@ var gitlabRESTReads = []string{
 // one status and body, and answers the operation's error.
 func refusedOn(t *testing.T, p spec.Product, method string, status int, body string) error {
 	t.Helper()
+	return refusedOnWith(t, p, method, status, http.Header{}, body)
+}
+
+// refusedOnWith is refusedOn whose answer also carries header.
+func refusedOnWith(t *testing.T, p spec.Product, method string, status int, header http.Header, body string) error {
+	t.Helper()
 	op, ok := operationFor(method)
 	if !ok {
 		t.Fatalf("Setup: the contract declares no case for %s", method)
 	}
-	srv, _ := newAnswerServer(t, requireEntry(t, p, method), status, body)
+	srv, _ := newAnswerServerWith(t, requireEntry(t, p, method), status, header, body)
 	conn := forgeapi.Connection{WebBaseURL: srv.URL, APIBaseURL: srv.URL + apiRoot(p)}
 	client, err := guard(func() (any, error) { return newClient(p, conn, offlineOptions(srv)...) })
 	if err != nil {
@@ -90,7 +96,11 @@ func TestAGitLabFineGrainedRefusalNamesThePermissionTheCredentialLacks(t *testin
 	for _, method := range gitlabRESTReads {
 		t.Run(method, func(t *testing.T) {
 			err := refusedOn(t, spec.GitLab, method, http.StatusForbidden, fineGrainedRefusal(mergeRequestRead))
-			checkScopeInsufficient(t, method, forgeErrorOf(t, method, err), mergeRequestRead)
+			fe := forgeErrorOf(t, method, err)
+			checkScopeInsufficient(t, method, fe, mergeRequestRead)
+			if fe.Needs != "" {
+				t.Errorf("%s on GitLab refused by the granular refusal = Needs %q, want empty: that answer names no scope member", method, fe.Needs)
+			}
 		})
 	}
 }
@@ -104,6 +114,9 @@ func TestAGitLabLegacyScopeRefusalNamesTheScopeTheCredentialLacks(t *testing.T) 
 	checkScopeInsufficient(t, "Identity.Whoami", fe, "higher privileges")
 	if !strings.Contains(fe.Message, "read_api") {
 		t.Errorf("Whoami on GitLab refused for a missing scope = message %q, want it to carry the scope member %q", fe.Message, "read_api api")
+	}
+	if fe.Needs != "read_api api" {
+		t.Errorf("Whoami on GitLab refused for a missing scope = Needs %q, want the scope member as sent, %q", fe.Needs, "read_api api")
 	}
 }
 
@@ -119,8 +132,8 @@ func TestAGitLabForbiddenWithoutAScopeErrorCarriesNoCode(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			err := refusedOn(t, spec.GitLab, "PullRequests.ListMyPRs", http.StatusForbidden, body)
 			fe := forgeErrorOf(t, "PullRequests.ListMyPRs", err)
-			if fe.Kind != forgeapi.KindForbidden || fe.Code != "" {
-				t.Errorf("ListMyPRs on GitLab answered 403 %s = (%v, %q), want (%v, no code)", body, fe.Kind, fe.Code, forgeapi.KindForbidden)
+			if fe.Kind != forgeapi.KindForbidden || fe.Code != "" || fe.Needs != "" {
+				t.Errorf("ListMyPRs on GitLab answered 403 %s = (%v, %q, Needs %q), want (%v, no code, nothing needed)", body, fe.Kind, fe.Code, fe.Needs, forgeapi.KindForbidden)
 			}
 		})
 	}
@@ -208,14 +221,96 @@ func TestAGitLabRefusalWhoseMessageIsNotAStringCarriesItsText(t *testing.T) {
 	}
 }
 
-// GitHub's fine-grained refusal carries message text only, so that family answers
-// it as the plain forbidden it reads.
-func TestAGitHubFineGrainedRefusalIsAPlainForbidden(t *testing.T) {
-	const body = `{"message":"Resource not accessible by personal access token","documentation_url":"https://docs.github.com/rest","status":"403"}`
-	err := refusedOn(t, spec.GitHub, "Identity.Whoami", http.StatusForbidden, body)
-	fe := forgeErrorOf(t, "Identity.Whoami", err)
-	if fe.Kind != forgeapi.KindForbidden || fe.Code != "" {
-		t.Errorf("Whoami on GitHub answered 403 %s = (%v, %q), want (%v, no code)", body, fe.Kind, fe.Code, forgeapi.KindForbidden)
+// githubResourceRefusal is GitHub's documented body for a token refused a resource
+// (https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api).
+const githubResourceRefusal = `{"message":"Resource not accessible by personal access token","documentation_url":"https://docs.github.com/rest","status":"403"}`
+
+// GitHub names what a refused credential lacks in headers, the permissions a
+// fine-grained token or an app needs and the scopes a classic token's route accepts
+// beside the ones it holds, so a 403 carrying either is the scope refusal with that
+// value as sent, on a read and a write alike.
+func TestAGitHubRefusalNamingWhatTheCredentialLacksIsTheScopeRefusal(t *testing.T) {
+	for _, test := range []struct {
+		header http.Header
+		name   string
+		method string
+		needs  string
+	}{
+		{
+			name: "a_fine_grained_permission_on_a_read", method: "Identity.Whoami", needs: "pull_requests=write",
+			header: http.Header{"X-Accepted-Github-Permissions": {"pull_requests=write"}},
+		},
+		{
+			name: "alternative_permission_sets_on_a_write", method: "PullRequests.CreatePR", needs: "pull_requests=write; contents=write",
+			header: http.Header{"X-Accepted-Github-Permissions": {"pull_requests=write; contents=write"}},
+		},
+		{
+			name: "a_classic_scope_the_token_lacks", method: "Issues.CreateIssue", needs: "repo",
+			header: http.Header{"X-Oauth-Scopes": {"gist, read:org"}, "X-Accepted-Oauth-Scopes": {"repo"}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fe := forgeErrorOf(t, test.method, refusedOnWith(t, spec.GitHub, test.method, http.StatusForbidden, test.header, githubResourceRefusal))
+			if fe.Kind != forgeapi.KindForbidden || fe.Code != "scope_insufficient" || fe.Needs != test.needs {
+				t.Errorf("%s on GitHub refused with %v = (%v, %q, Needs %q), want (%v, %q, Needs %q)",
+					test.method, test.header, fe.Kind, fe.Code, fe.Needs, forgeapi.KindForbidden, "scope_insufficient", test.needs)
+			}
+			if fe.Retryable || fe.Status != http.StatusForbidden || fe.Family != forgeapi.FamilyGitHub {
+				t.Errorf("%s on GitHub refused for a missing permission = (retryable %v, status %d, family %v), want (false, %d, %v)",
+					test.method, fe.Retryable, fe.Status, fe.Family, http.StatusForbidden, forgeapi.FamilyGitHub)
+			}
+			if !strings.Contains(fe.Message, "Resource not accessible") {
+				t.Errorf("%s on GitHub refused for a missing permission = message %q, want the instance's own words", test.method, fe.Message)
+			}
+		})
+	}
+}
+
+// A GitHub 403 naming nothing the credential lacks stays the plain forbidden a role
+// refusal answers, and the merge's 403 stays the merge permission whatever its
+// headers name.
+func TestAGitHubRefusalNamingNothingLackingKeepsItsCell(t *testing.T) {
+	for _, test := range []struct {
+		header http.Header
+		name   string
+		method string
+		code   string
+	}{
+		{name: "no_header", method: "Identity.Whoami", header: http.Header{}},
+		{
+			name: "a_classic_token_holding_an_accepted_scope", method: "Issues.CreateIssue",
+			header: http.Header{"X-Oauth-Scopes": {"repo, workflow"}, "X-Accepted-Oauth-Scopes": {"public_repo, repo"}},
+		},
+		{
+			name: "the_merge", method: "Merges.MergePR", code: "no_merge_permission",
+			header: http.Header{"X-Accepted-Github-Permissions": {"contents=write"}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fe := forgeErrorOf(t, test.method, refusedOnWith(t, spec.GitHub, test.method, http.StatusForbidden, test.header, githubResourceRefusal))
+			if fe.Kind != forgeapi.KindForbidden || fe.Code != test.code || fe.Needs != "" {
+				t.Errorf("%s on GitHub answered 403 with %v = (%v, %q, Needs %q), want (%v, %q, nothing needed)",
+					test.method, test.header, fe.Kind, fe.Code, fe.Needs, forgeapi.KindForbidden, test.code)
+			}
+		})
+	}
+}
+
+// Gitea and Forgejo name a missing scope in message text only (neither swagger's
+// APIError carries a machine-readable member), so their refusal names nothing needed.
+// The message is Gitea's own (routers/api/v1/api.go, tokenRequiresScopes).
+func TestAGiteaFamilyRefusalNamesNothingNeeded(t *testing.T) {
+	const body = `{"message":"token does not have at least one of required scope(s), required=[write:repository], token scope=read:repository","url":"https://gitea.example/api/swagger"}`
+	for _, p := range []spec.Product{spec.Gitea, spec.Forgejo} {
+		t.Run(string(p), func(t *testing.T) {
+			fe := forgeErrorOf(t, "Issues.CreateIssue", refusedOn(t, p, "Issues.CreateIssue", http.StatusForbidden, body))
+			if fe.Kind != forgeapi.KindForbidden || fe.Code != "" || fe.Needs != "" {
+				t.Errorf("CreateIssue on %s answered 403 = (%v, %q, Needs %q), want (%v, no code, nothing needed)", p, fe.Kind, fe.Code, fe.Needs, forgeapi.KindForbidden)
+			}
+			if !strings.Contains(fe.Message, "write:repository") {
+				t.Errorf("CreateIssue on %s answered 403 = message %q, want the instance's text naming the scope", p, fe.Message)
+			}
+		})
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/internal/spec"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // TestEveryWireTypeDecodesTheRecordedBytes holds each of this family's wire types
@@ -604,10 +605,97 @@ func TestTheErrorMappingReadsTheHeadersAndTheOperation(t *testing.T) {
 			if header == nil {
 				header = http.Header{}
 			}
-			kind, code := mapping(test.op, test.status, header, test.pinned)
+			got := mapping(test.op, test.status, header, test.pinned)
+			kind, code := got.Kind, got.Code
 			if kind != test.wantKind || code != test.wantCode {
 				t.Errorf("mapping(%q, %d, %v, pinned %t) = %v, %q, want %v, %q",
 					test.op, test.status, header, test.pinned, kind, code, test.wantKind, test.wantCode)
+			}
+		})
+	}
+}
+
+// TestA403NamingWhatTheCredentialLacksIsTheScopeRefusal holds the scope cell to the
+// two header pairs GitHub names a missing permission with: the permissions a
+// fine-grained token or an app needs, a comma list with alternatives separated by a
+// semicolon (https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api),
+// and a classic token's held scopes against the scopes the route accepts
+// (https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).
+// The accepted list and the role refusal below are measured answers.
+func TestA403NamingWhatTheCredentialLacksIsTheScopeRefusal(t *testing.T) {
+	headers := func(pairs ...string) http.Header {
+		h := http.Header{}
+		for i := 0; i < len(pairs); i += 2 {
+			h[http.CanonicalHeaderKey(pairs[i])] = []string{pairs[i+1]}
+		}
+		return h
+	}
+	scope := func(needs string) transport.Verdict {
+		return transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: needs}
+	}
+	plain := transport.Verdict{Kind: forgeapi.KindForbidden}
+	const hookScopes = "admin:repo_hook, public_repo, read:repo_hook, repo, write:repo_hook"
+	for _, test := range []struct {
+		header http.Header
+		name   string
+		op     string
+		want   transport.Verdict
+		status int
+	}{
+		{
+			name: "a_fine_grained_permission_is_needed_as_sent", op: "CreatePR", status: http.StatusForbidden,
+			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=write"),
+			want:   scope("pull_requests=write"),
+		},
+		{
+			name: "alternative_permission_sets_are_kept_verbatim", op: "CreatePR", status: http.StatusForbidden,
+			header: headers("X-Accepted-GitHub-Permissions", "issues=write; pull_requests=write,contents=read"),
+			want:   scope("issues=write; pull_requests=write,contents=read"),
+		},
+		{
+			name: "a_classic_token_lacking_every_accepted_scope_needs_the_accepted_list", op: "CreatePR", status: http.StatusForbidden,
+			header: headers("X-OAuth-Scopes", "gist, read:org", "X-Accepted-OAuth-Scopes", "repo"),
+			want:   scope("repo"),
+		},
+		{
+			name: "a_classic_token_with_no_scope_needs_the_accepted_list", op: "CreatePR", status: http.StatusForbidden,
+			header: headers("X-OAuth-Scopes", "", "X-Accepted-OAuth-Scopes", "repo"),
+			want:   scope("repo"),
+		},
+		{
+			name: "a_classic_token_holding_one_accepted_scope_is_a_plain_forbidden", op: "ListRuns", status: http.StatusForbidden,
+			header: headers("X-OAuth-Scopes", "gist, read:org, repo, workflow", "X-Accepted-OAuth-Scopes", hookScopes),
+			want:   plain,
+		},
+		{
+			name: "a_role_refusal_accepting_no_scope_is_a_plain_forbidden", op: "AddLabels", status: http.StatusForbidden,
+			header: headers("X-OAuth-Scopes", "gist, read:org, repo, workflow", "X-Accepted-OAuth-Scopes", ""),
+			want:   plain,
+		},
+		{
+			name: "accepted_scopes_with_no_held_list_name_nothing_lacking", op: "CreatePR", status: http.StatusForbidden,
+			header: headers("X-Accepted-OAuth-Scopes", "repo"),
+			want:   plain,
+		},
+		{
+			name: "a_throttle_naming_a_permission_stays_a_throttle", op: "CreatePR", status: http.StatusForbidden,
+			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=write", "X-RateLimit-Remaining", "0"),
+			want:   transport.Verdict{Kind: forgeapi.KindRateLimited},
+		},
+		{
+			name: "the_merge_naming_a_permission_keeps_the_merge_permission", op: opMergePR, status: http.StatusForbidden,
+			header: headers("X-Accepted-GitHub-Permissions", "contents=write"),
+			want:   transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeNoMergePermission},
+		},
+		{
+			name: "a_not_found_naming_a_permission_stays_not_visible", op: "ReadPR", status: http.StatusNotFound,
+			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=read"),
+			want:   transport.Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeRepoOrPRNotVisible},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := mapping(test.op, test.status, test.header, false); got != test.want {
+				t.Errorf("mapping(%q, %d, %v) = %+v, want %+v", test.op, test.status, test.header, got, test.want)
 			}
 		})
 	}
@@ -627,8 +715,8 @@ func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 				if th.Header != "" {
 					header.Set(th.Header, cmp.Or(th.Value, "60"))
 				}
-				if kind, code := mapping(op, th.Status, header, false); kind != forgeapi.KindRateLimited || code != "" {
-					t.Errorf("mapping(%q, %d, %v) = %v, %q, want %v: %s", op, th.Status, header, kind, code, forgeapi.KindRateLimited, th.Says)
+				if got := mapping(op, th.Status, header, false); got.Kind != forgeapi.KindRateLimited || got.Code != "" || got.Needs != "" {
+					t.Errorf("mapping(%q, %d, %v) = %+v, want %v: %s", op, th.Status, header, got, forgeapi.KindRateLimited, th.Says)
 				}
 			})
 		}

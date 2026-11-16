@@ -801,19 +801,20 @@ var runEvents = map[string]forgeapi.RunTrigger{
 // request that already exists, a request upstream rejected as invalid.
 var conflictCodes = map[string]string{"MergePR": forgeapi.CodeNotMergeable, "CreatePR": forgeapi.CodeValidation}
 
-// mapper is this family's error mapping, by operation plus status plus the headers
-// that decide a cell.
-//
-// A 409 is mapped per operation, by [conflictCodes]. An archived
-// repository is a permanent refusal whose remedy is an operator unarchiving it,
-// never retried and never reported as a conflict, because no rebase and no re-read
-// reaches that state. A 405 is the bare merge refusal, as on the other two: this
-// product answers it for a merge style the repository disallows and for every other
-// refusal of its merge route alike, a pull request not yet mergeable among them, so
-// the status names no cause.
-//
-// No cell reads the body's error member.
-func mapper(op string, status int, header http.Header, _ string) (kind forgeapi.ErrorKind, code string) {
+// mapper is this family's error mapping, [statusMapped]. No cell reads the body's
+// members: this product names a missing scope in message text only.
+func mapper(op string, status int, header http.Header, _ transport.Member) transport.Verdict {
+	kind, code := statusMapped(op, status, header)
+	return transport.Verdict{Kind: kind, Code: code}
+}
+
+// statusMapped is the mapping by operation, status and the throttle header. A 409 is
+// mapped per operation, by [conflictCodes]. An archived repository is a permanent
+// refusal an operator lifts, never retried or reported as a conflict, because no
+// rebase and no re-read reaches that state. A 405 is the bare merge refusal: this
+// product answers it for a disallowed merge style and every other refusal of its
+// merge route alike, a pull request not yet mergeable among them.
+func statusMapped(op string, status int, header http.Header) (kind forgeapi.ErrorKind, code string) {
 	switch status {
 	case http.StatusUnauthorized:
 		return forgeapi.KindUnauthorized, ""

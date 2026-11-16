@@ -1030,21 +1030,23 @@ func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 // branch, a request upstream rejected as invalid.
 var conflictCodes = map[string]string{opMergePR: forgeapi.CodeStaleHead, "CreatePR": forgeapi.CodeValidation}
 
-// mapper is this family's error mapping, by operation plus status plus the headers
-// that decide a cell.
-//
-// Two cells are the MERGE's rather than this product's, which is why the operation is
-// read: this product answers 400 to a merge sent without the head commit its own
-// setting can make compulsory, and 401 to a merge by a credential that may read the
-// merge request and not merge it. On every other operation those two statuses mean
-// what they ordinarily mean, so a list's bad parameter is not reported as an
-// unmergeable pull request and a dead credential is not reported as a permission.
-//
-// One cell reads the body's machine-readable error member, the 403 [forbidden] answers.
-//
-// A 409 is mapped per operation, by [conflictCodes]. An unmapped combination stays
-// upstream and is never guessed.
-func mapper(op string, status int, _ http.Header, bodyError string) (kind forgeapi.ErrorKind, code string) {
+// mapper is this family's error mapping: the 403 reads the body's machine-readable
+// members ([forbidden]), and every other cell is [statusMapped]'s.
+func mapper(op string, status int, _ http.Header, member transport.Member) transport.Verdict {
+	if status == http.StatusForbidden {
+		return forbidden(member)
+	}
+	kind, code := statusMapped(op, status)
+	return transport.Verdict{Kind: kind, Code: code}
+}
+
+// statusMapped is the mapping by operation and status. Two cells are the MERGE's:
+// this product answers 400 to a merge sent without the head commit its own setting
+// can make compulsory, and 401 to a merge by a credential that may read the merge
+// request and not merge it; on every other operation those statuses mean what they
+// ordinarily mean. A 409 is mapped per operation, by [conflictCodes]. An unmapped
+// combination stays upstream and is never guessed.
+func statusMapped(op string, status int) (kind forgeapi.ErrorKind, code string) {
 	switch status {
 	case http.StatusBadRequest:
 		if op == opMergePR {
@@ -1056,8 +1058,6 @@ func mapper(op string, status int, _ http.Header, bodyError string) (kind forgea
 			return forgeapi.KindForbidden, forgeapi.CodeNoMergePermission
 		}
 		return forgeapi.KindUnauthorized, ""
-	case http.StatusForbidden:
-		return forbidden(bodyError)
 	case http.StatusNotFound:
 		return forgeapi.KindNotFound, forgeapi.CodeRepoOrPRNotVisible
 	case http.StatusMethodNotAllowed:
@@ -1083,12 +1083,14 @@ const (
 
 // forbidden is the 403 cell. A refusal naming a scope the credential lacks is the
 // scope refusal rather than the plain forbidden a role refusal answers, because its
-// remedy is the credential's permission set and never a project role. The member is a
-// code the instance states; the description beside it is the message and is never
+// remedy is the credential's permission set and never a project role. What it needs
+// is the body's scope member, which RFC 6750's refusal names and the granular one
+// leaves out (lib/api/api_guard.rb, InsufficientScopeForbidden). The members are
+// codes the instance states; the description beside them is the message and is never
 // mapped on.
-func forbidden(bodyError string) (kind forgeapi.ErrorKind, code string) {
-	if bodyError == errorGranularScope || bodyError == errorScope {
-		return forgeapi.KindForbidden, forgeapi.CodeScopeInsufficient
+func forbidden(member transport.Member) transport.Verdict {
+	if member.Error == errorGranularScope || member.Error == errorScope {
+		return transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: member.Scope}
 	}
-	return forgeapi.KindForbidden, ""
+	return transport.Verdict{Kind: forgeapi.KindForbidden}
 }

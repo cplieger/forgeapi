@@ -3,6 +3,7 @@ package github
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1450,29 +1451,30 @@ func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 
 // mapper is this connection's error mapping: the mapping below, over the one fact
 // about the connection that a response cannot carry, which is whether the request
-// that was refused carried the version pin. No cell reads the body's error member:
-// this product's refusals carry message text only.
-func (c *Client) mapper(op string, status int, header http.Header, _ string) (kind forgeapi.ErrorKind, code string) {
+// that was refused carried the version pin. No cell reads the body's members: this
+// product's refusals carry message text only.
+func (c *Client) mapper(op string, status int, header http.Header, _ transport.Member) transport.Verdict {
 	return mapping(op, status, header, c.sendsPin())
 }
 
-// mapping is this family's error mapping, by operation plus status plus the headers
-// that decide a cell, which the reading below takes first.
-//
-// Cells turn on the OPERATION where one route answers a status for causes of its own.
-// The merge's 400 names no cause: a draft, a closed pull request and a head pin naming
-// another commit answer one body structure with different human text, measured. Its
-// 409 reaches this mapping only where the body names no merge in flight, since one
-// that does is the outcome the merge reads for itself.
-//
-// One cell turns on the connection instead: pinned says the refused request carried
-// the version pin, which is the only state in which a 400 can be that version's fault.
-//
-// An unmapped combination stays upstream and is never guessed.
-func mapping(op string, status int, header http.Header, pinned bool) (kind forgeapi.ErrorKind, code string) {
-	if mapped, ok := headerMapped(status, header, pinned); ok {
-		return mapped.kind, mapped.code
+// mapping is this family's error mapping: the cells a header decides
+// ([headerMapped]) first, then [statusMapped]'s. pinned says the refused request
+// carried the version pin, the only state in which a 400 can be that version's fault.
+func mapping(op string, status int, header http.Header, pinned bool) transport.Verdict {
+	if mapped, ok := headerMapped(op, status, header, pinned); ok {
+		return mapped
 	}
+	kind, code := statusMapped(op, status)
+	return transport.Verdict{Kind: kind, Code: code}
+}
+
+// statusMapped is the mapping by operation and status. The merge's 400 names no
+// cause: a draft, a closed pull request and a head pin naming another commit answer
+// one body structure with different human text, measured. Its 409 reaches this
+// mapping only where the body names no merge in flight, since one that does is the
+// outcome the merge reads for itself. An unmapped combination stays upstream and is
+// never guessed.
+func statusMapped(op string, status int) (kind forgeapi.ErrorKind, code string) {
 	switch status {
 	case http.StatusBadRequest:
 		if op == opMergePR {
@@ -1508,29 +1510,62 @@ func mapping(op string, status int, header http.Header, pinned bool) (kind forge
 	return forgeapi.KindUpstream, ""
 }
 
-// verdict is one mapped answer, which is a pair rather than two returns because the two
-// readings below hand it back through one predicate.
-type verdict struct {
-	code string
-	kind forgeapi.ErrorKind
-}
-
-// headerMapped is the part of the mapping a header decides rather than the status.
-//
-// A 403 whose headers say throttle (see throttled) is a rate limit, so nobody is
-// told to fix a token while the quota refills. A 400 to a request that carried the
-// version pin and was not answered under it is that version out of the instance's
-// reach. An unpinned request's echo names the instance's default on every response,
-// so the echo is read only when pinned.
-func headerMapped(status int, header http.Header, pinned bool) (verdict, bool) {
+// headerMapped is the part of the mapping a header decides. A 403 whose headers say
+// throttle is a rate limit, so nobody is told to fix a token while the quota refills.
+// Any other 403 whose headers name what the credential lacks ([lacking]) is the scope
+// refusal, except the merge's, whose 403 is the merge permission a role grants. A 400
+// to a pinned request not answered under the pin is that version out of the
+// instance's reach; an unpinned request's echo names the instance's default, so it is
+// read only when pinned.
+func headerMapped(op string, status int, header http.Header, pinned bool) (transport.Verdict, bool) {
 	switch {
 	case status == http.StatusForbidden && throttled(header):
-		return verdict{kind: forgeapi.KindRateLimited}, true
+		return transport.Verdict{Kind: forgeapi.KindRateLimited}, true
+	case status == http.StatusForbidden && op != opMergePR:
+		if needs := lacking(header); needs != "" {
+			return transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: needs}, true
+		}
 	case status == http.StatusBadRequest && pinned && retiredVersion(header):
-		return verdict{kind: forgeapi.KindUpstream, code: forgeapi.CodeAPIVersionRetired}, true
+		return transport.Verdict{Kind: forgeapi.KindUpstream, Code: forgeapi.CodeAPIVersionRetired}, true
 	}
-	return verdict{}, false
+	return transport.Verdict{}, false
 }
+
+// lacking is what a refusal's headers say the credential lacks, as sent, empty
+// where they name nothing it lacks: the permissions a fine-grained token or an app
+// needs, or the scopes a route accepts where a classic token holds none of them
+// (https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api,
+// https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).
+// The accepted list names each scope's parents too, so one held scope satisfies it;
+// only a response carrying X-OAuth-Scopes says what the token holds.
+func lacking(header http.Header) string {
+	if permissions := strings.TrimSpace(header.Get(headerAcceptedPermissions)); permissions != "" {
+		return permissions
+	}
+	accepted := strings.TrimSpace(header.Get(headerAcceptedScopes))
+	held, classic := header[headerScopes]
+	if accepted == "" || !classic {
+		return ""
+	}
+	granted := strings.Split(strings.Join(held, ","), ",")
+	for i := range granted {
+		granted[i] = strings.TrimSpace(granted[i])
+	}
+	for scope := range strings.SplitSeq(accepted, ",") {
+		if scope = strings.TrimSpace(scope); scope != "" && slices.Contains(granted, scope) {
+			return ""
+		}
+	}
+	return accepted
+}
+
+// The headers a refusal names what a credential holds and lacks with, in their
+// canonical form, which [lacking] indexes the header map by.
+const (
+	headerAcceptedPermissions = "X-Accepted-Github-Permissions"
+	headerAcceptedScopes      = "X-Accepted-Oauth-Scopes"
+	headerScopes              = "X-Oauth-Scopes"
+)
 
 // throttled reports whether a refusal is this product's quota rather than a
 // permission: the remaining-budget header at zero, the primary or a secondary limit

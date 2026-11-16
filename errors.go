@@ -110,12 +110,12 @@ const (
 	// until an operator unarchives it, so never retried or reported as a conflict.
 	CodeRepoArchived = "repo_archived"
 	// CodeScopeInsufficient is a credential the instance authenticated and
-	// refused for a permission or scope the operation needs: a fine-grained
-	// token without the resource permission, a legacy token on a group that
-	// requires fine-grained ones, or a legacy token without the scope. It rides
+	// refused for a permission or scope the operation needs. It rides
 	// [KindForbidden], and its remedy is the credential's permission set, never a
 	// role or a reconnect. It is issued only where the product names the cause in
-	// a machine-readable error member; [Error.Message] names what is missing.
+	// a machine-readable form, a body member or a header (GitHub's
+	// X-Accepted-GitHub-Permissions, X-Accepted-OAuth-Scopes beside X-OAuth-Scopes);
+	// [Error.Needs] carries what that form names and [Error.Message] its words.
 	CodeScopeInsufficient = "scope_insufficient"
 	// CodeAlreadyEnqueued is a merge in flight with no verdict yet: an
 	// equivalent merge another request started, or one accepted and running in

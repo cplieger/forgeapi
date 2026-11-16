@@ -368,11 +368,11 @@ func (s *AppSource) open() (*transport.Conn, error) {
 
 // appMapper maps the answers [appAnswers] leaves to the transport: a server
 // failure is worth another attempt, and anything else is unclassified.
-func appMapper(_ string, status int, _ http.Header, _ string) (kind forgeapi.ErrorKind, code string) {
+func appMapper(_ string, status int, _ http.Header, _ transport.Member) transport.Verdict {
 	if status >= http.StatusInternalServerError {
-		return forgeapi.KindTransient, ""
+		return transport.Verdict{Kind: forgeapi.KindTransient}
 	}
-	return forgeapi.KindUpstream, ""
+	return transport.Verdict{Kind: forgeapi.KindUpstream}
 }
 
 // plaintext reports whether a base URL names the http scheme.

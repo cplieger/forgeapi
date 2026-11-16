@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,21 +12,29 @@ import (
 	"github.com/cplieger/forgeapi/v3"
 )
 
-func statedMapper(_ string, status int, _ http.Header, bodyError string) (forgeapi.ErrorKind, string) {
+func statedMapper(_ string, status int, header http.Header, member Member) Verdict {
 	switch {
-	case bodyError == "insufficient_scope":
-		return forgeapi.KindForbidden, forgeapi.CodeScopeInsufficient
+	case member.Error == "insufficient_scope":
+		return Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: member.Scope}
+	case header.Get("X-Needs") != "":
+		return Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: header.Get("X-Needs")}
 	case status == http.StatusServiceUnavailable:
-		return forgeapi.KindTransient, ""
+		return Verdict{Kind: forgeapi.KindTransient}
 	case status == http.StatusNotFound:
-		return forgeapi.KindNotFound, ""
+		return Verdict{Kind: forgeapi.KindNotFound}
 	}
-	return forgeapi.KindForbidden, ""
+	return Verdict{Kind: forgeapi.KindForbidden}
 }
 
 func refusingConn(t *testing.T, status int, body string) *Conn {
 	t.Helper()
+	return refusingConnWith(t, status, http.Header{}, body)
+}
+
+func refusingConnWith(t *testing.T, status int, header http.Header, body string) *Conn {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		maps.Copy(w.Header(), header)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		if _, err := io.WriteString(w, body); err != nil {
@@ -71,6 +80,47 @@ func TestARefusalCarriesTheInstancesOwnWordsForWhatWentWrong(t *testing.T) {
 			}
 			if fe.Message != test.want {
 				t.Errorf("a read refused with %s = message %q, want %q", test.body, fe.Message, test.want)
+			}
+		})
+	}
+}
+
+// What the mapper says the call needs reaches the caller from either half of the
+// refusal it reads, the body's scope member or a header, and as untrusted text it is
+// made safe as the message is: the credential the request carried is redacted.
+func TestARefusalCarriesWhatTheMapperSaysTheCallNeeds(t *testing.T) {
+	for _, test := range []struct {
+		header http.Header
+		name   string
+		body   string
+		want   string
+	}{
+		{
+			name: "from_the_body", header: http.Header{},
+			body: `{"error":"insufficient_scope","scope":"api read_api"}`, want: "api read_api",
+		},
+		{
+			name: "from_a_header", header: http.Header{"X-Needs": {"pull_requests=write"}},
+			body: `{"message":"Resource not accessible by personal access token"}`, want: "pull_requests=write",
+		},
+		{
+			name: "with_the_credential_redacted", header: http.Header{"X-Needs": {"transport-placeholder"}},
+			body: `{}`, want: "[redacted]",
+		},
+		{
+			name: "nothing_where_the_mapper_names_nothing", header: http.Header{},
+			body: `{"error":"forbidden","scope":"api"}`, want: "",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := refusingConnWith(t, http.StatusForbidden, test.header, test.body)
+			_, err := c.Do(t.Context(), &Request{Op: "CreatePR", Method: http.MethodGet, Path: "/user"})
+			var fe *forgeapi.Error
+			if !asError(err, &fe) {
+				t.Fatalf("a read refused with %s = %v, want a *forgeapi.Error", test.body, err)
+			}
+			if fe.Needs != test.want {
+				t.Errorf("a read refused with %s = Needs %q, want %q", test.body, fe.Needs, test.want)
 			}
 		})
 	}
