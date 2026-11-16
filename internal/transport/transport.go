@@ -880,8 +880,16 @@ func (c *Conn) UnderAPI(address string) (string, bool) {
 }
 
 // AdmitFold asks the governor whether one folded-status read may be issued inside
-// the current rolling interval, and says why not when it may not.
-func (c *Conn) AdmitFold(op string) (forgeapi.PartialReason, bool) { return c.gov.admitFold(op) }
+// the current rolling interval, and says why not when it may not. Under
+// [forgeapi.ActionReads] with its bound not spent it holds the read only against a
+// pool at zero, as [Conn.admitRead] does; the read's own [Conn.Do] spends the bound.
+func (c *Conn) AdmitFold(ctx context.Context, op string) (forgeapi.PartialReason, bool) {
+	reserve := c.gov.reserve
+	if c.mutations && callmark.ActionReadsLeft(ctx) {
+		reserve = 0
+	}
+	return c.gov.admitFold(op, reserve)
+}
 
 // Rotate records how far the rotation of those reads got, so the next interval
 // starts after the row last served rather than at the first.

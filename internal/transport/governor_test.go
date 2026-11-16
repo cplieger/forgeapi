@@ -315,26 +315,26 @@ func TestAFoldedReadPastTheCountCapWaitsForTheNextInterval(t *testing.T) {
 	clock := newFakeClock()
 	c := foldConn(t, clock, 2)
 	for read := 1; read <= 2; read++ {
-		if reason, ok := c.AdmitFold("ListPRs"); !ok {
+		if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 			t.Fatalf("folded read %d of 2 = (%v, false), want it admitted", read, reason)
 		}
 	}
-	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); ok || reason != forgeapi.PartialBudget {
 		t.Fatalf("folded read 3 of 2 = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
 	}
 	clock.advance(time.Minute)
-	if reason, ok := c.AdmitFold("ListPRs"); !ok {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 		t.Errorf("a folded read one minute into a one-minute interval = (%v, false), want it admitted: that minute began the next interval", reason)
 	}
 }
 
 func TestAFoldedReadIsNotSentOnceTheIntervalsClockIsSpent(t *testing.T) {
 	c := foldConn(t, newFakeClock(), 10)
-	if reason, ok := c.AdmitFold("ListPRs"); !ok {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 		t.Fatalf("the first folded read = (%v, false), want it admitted", reason)
 	}
 	c.SpendFold(time.Minute)
-	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); ok || reason != forgeapi.PartialBudget {
 		t.Errorf("a folded read after one that took the whole minute = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
 	}
 }
@@ -343,17 +343,17 @@ func TestAFoldedReadIsAdmittedOnlyWhereItsMeasuredCostFitsTheIntervalLeft(t *tes
 	clock := newFakeClock()
 	c := foldConn(t, clock, 10)
 	for read := 1; read <= 2; read++ {
-		if reason, ok := c.AdmitFold("ListPRs"); !ok {
+		if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 			t.Fatalf("folded read %d = (%v, false), want it admitted", read, reason)
 		}
 		c.SpendFold(10 * time.Second)
 	}
 	clock.advance(50 * time.Second)
-	if reason, ok := c.AdmitFold("ListPRs"); !ok {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 		t.Errorf("a folded read costing 10s with 10s of the interval left = (%v, false), want it admitted: it fits exactly", reason)
 	}
 	clock.advance(time.Second)
-	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); ok || reason != forgeapi.PartialBudget {
 		t.Errorf("a folded read costing 10s with 9s of the interval left = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
 	}
 }

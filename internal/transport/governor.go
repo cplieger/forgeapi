@@ -212,9 +212,10 @@ func (g *governor) admitWithin(op string, reserve int) (forgeapi.PartialReason, 
 // admitFold reports whether one folded-status read may be issued inside the
 // current rolling interval, which is what the two per-interval knobs bound: how
 // MANY such reads it may issue and how much wall clock they may spend. A read past
-// either is not sent and its row is marked with the budget reason.
-func (g *governor) admitFold(op string) (forgeapi.PartialReason, bool) {
-	if reason, ok := g.admit(op); !ok {
+// either is not sent and its row is marked with the budget reason. reserve is what
+// the read must leave of its pool, as [governor.admitWithin] takes it.
+func (g *governor) admitFold(op string, reserve int) (forgeapi.PartialReason, bool) {
+	if reason, ok := g.admitWithin(op, reserve); !ok {
 		return reason, false
 	}
 	g.mu.Lock()

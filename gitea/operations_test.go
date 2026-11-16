@@ -1653,3 +1653,47 @@ func TestALabelResolutionReadsTheOrganizationsLabelsForANameTheRepositoryLacks(t
 		})
 	}
 }
+
+// An action's reads pass the mutation reserve up to their bound, a list's per-row
+// reads included: under ActionReads a ListPRs at the reserve folds its row rather
+// than marking it deferred while the bound still has reads.
+func TestAListUnderActionReadsFoldsItsRowsAtTheReserve(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		"GET /api/v1/user":                        userBody,
+		"GET /api/v1/repos/example/example/pulls": "[" + pullRow(1) + "]",
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
+	}, forgeapi.WithMutations(true), forgeapi.WithMutationReserve(1))
+	h.instance.answerHeader("RateLimit", "r=1;t=60")
+	if _, err := h.client.Whoami(t.Context()); err != nil {
+		t.Fatalf("Setup: Whoami = %v, want nil: the first read is what reads the signal", err)
+	}
+	t.Run("a_plain_list_is_deferred", func(t *testing.T) {
+		page, err := h.client.ListPRs(t.Context(), testRef())
+		if err != nil || page.Partial == nil || page.Partial.Reason != forgeapi.PartialRateLimited {
+			t.Errorf("ListPRs at the reserve = partial %v, %v, want the deferral", page.Partial, err)
+		}
+	})
+	t.Run("an_actions_list_folds_its_row", func(t *testing.T) {
+		before := h.instance.count()
+		page, err := h.client.ListPRs(forgeapi.ActionReads(t.Context(), 3), testRef())
+		if err != nil || len(page.Items) != 1 {
+			t.Fatalf("ListPRs under ActionReads(ctx, 3) at the reserve = %+v, %v, want its one row", page, err)
+		}
+		if row := page.Items[0]; row.Partial != nil || row.Action.Checks != forgeapi.CheckPassing {
+			t.Errorf("the row under ActionReads = partial %v, checks %v, want it folded to %v", row.Partial, row.Action.Checks, forgeapi.CheckPassing)
+		}
+		if sent := h.instance.count() - before; sent != 3 {
+			t.Errorf("ListPRs under ActionReads(ctx, 3) sent %d request(s), want 3: the page, the status and the reviews", sent)
+		}
+	})
+	t.Run("a_spent_bound_defers_the_fold", func(t *testing.T) {
+		page, err := h.client.ListPRs(forgeapi.ActionReads(t.Context(), 1), testRef())
+		if err != nil || len(page.Items) != 1 {
+			t.Fatalf("ListPRs under ActionReads(ctx, 1) = %+v, %v, want its one row", page, err)
+		}
+		if row := page.Items[0]; row.Partial == nil || row.Partial.Reason != forgeapi.PartialRateLimited {
+			t.Errorf("the row once the bound is spent = partial %v, want the rate-limited reason", row.Partial)
+		}
+	})
+}

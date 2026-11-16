@@ -358,7 +358,7 @@ func (c *Client) foldOntoRow(ctx context.Context, op string, list *address, item
 	if item.HeadSHA == "" && !reviews {
 		return false, nil
 	}
-	if reason, ok := c.core.AdmitFold(op); !ok {
+	if reason, ok := c.core.AdmitFold(ctx, op); !ok {
 		item.Partial = c.partial(reason, 0)
 		return false, nil
 	}
