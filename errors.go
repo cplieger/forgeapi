@@ -113,9 +113,10 @@ const (
 	// refused for a permission or scope the operation needs. It rides
 	// [KindForbidden], and its remedy is the credential's permission set, never a
 	// role or a reconnect. It is issued only where the product names the cause in
-	// a machine-readable form, a body member or a header (GitHub's
-	// X-Accepted-GitHub-Permissions, X-Accepted-OAuth-Scopes beside X-OAuth-Scopes);
-	// [Error.Needs] carries what that form names and [Error.Message] its words.
+	// a machine-readable form: GitLab's insufficient_scope member, GitHub's
+	// permission refusal message beside X-Accepted-GitHub-Permissions, or
+	// X-Accepted-OAuth-Scopes naming no scope X-OAuth-Scopes holds; [Error.Needs]
+	// carries what that form names and [Error.Message] its words.
 	CodeScopeInsufficient = "scope_insufficient"
 	// CodeAlreadyEnqueued is a merge in flight with no verdict yet: an
 	// equivalent merge another request started, or one accepted and running in

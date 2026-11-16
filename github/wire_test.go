@@ -607,7 +607,7 @@ func TestTheErrorMappingReadsTheHeadersAndTheOperation(t *testing.T) {
 			if header == nil {
 				header = http.Header{}
 			}
-			got := mapping(test.op, test.status, header, test.pinned)
+			got := mapping(test.op, test.status, header, "", test.pinned)
 			kind, code := got.Kind, got.Code
 			if kind != test.wantKind || code != test.wantCode {
 				t.Errorf("mapping(%q, %d, %v, pinned %t) = %v, %q, want %v, %q",
@@ -618,9 +618,10 @@ func TestTheErrorMappingReadsTheHeadersAndTheOperation(t *testing.T) {
 }
 
 // TestA403NamingWhatTheCredentialLacksIsTheScopeRefusal holds the scope cell to the
-// two header pairs GitHub names a missing permission with: the permissions a
-// fine-grained token or an app needs, a comma list with alternatives separated by a
-// semicolon (https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api),
+// two ways GitHub names a missing permission: the permission refusal's message
+// beside the permissions a fine-grained token or an app needs, a comma list with
+// alternatives separated by a semicolon
+// (https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api),
 // and a classic token's held scopes against the scopes the route accepts
 // (https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).
 // The accepted list and the role refusal below are measured answers.
@@ -641,18 +642,29 @@ func TestA403NamingWhatTheCredentialLacksIsTheScopeRefusal(t *testing.T) {
 		header http.Header
 		name   string
 		op     string
+		class  string
 		want   transport.Verdict
 		status int
 	}{
 		{
 			name: "a_fine_grained_permission_is_needed_as_sent", op: "CreatePR", status: http.StatusForbidden,
-			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=write"),
-			want:   scope("pull_requests=write"),
+			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=write"), class: classResourceRefused,
+			want: scope("pull_requests=write"),
 		},
 		{
 			name: "alternative_permission_sets_are_kept_verbatim", op: "CreatePR", status: http.StatusForbidden,
-			header: headers("X-Accepted-GitHub-Permissions", "issues=write; pull_requests=write,contents=read"),
-			want:   scope("issues=write; pull_requests=write,contents=read"),
+			header: headers("X-Accepted-GitHub-Permissions", "issues=write; pull_requests=write,contents=read"), class: classResourceRefused,
+			want: scope("issues=write; pull_requests=write,contents=read"),
+		},
+		{
+			name: "a_permission_header_beside_another_refusal_is_a_plain_forbidden", op: "AddLabels", status: http.StatusForbidden,
+			header: headers("X-Accepted-GitHub-Permissions", "issues=write"),
+			want:   plain,
+		},
+		{
+			name: "the_permission_refusal_naming_no_permission_is_a_plain_forbidden", op: "AddLabels", status: http.StatusForbidden,
+			header: headers("X-Accepted-GitHub-Permissions", " "), class: classResourceRefused,
+			want: plain,
 		},
 		{
 			name: "a_classic_token_lacking_every_accepted_scope_needs_the_accepted_list", op: "CreatePR", status: http.StatusForbidden,
@@ -681,23 +693,23 @@ func TestA403NamingWhatTheCredentialLacksIsTheScopeRefusal(t *testing.T) {
 		},
 		{
 			name: "a_throttle_naming_a_permission_stays_a_throttle", op: "CreatePR", status: http.StatusForbidden,
-			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=write", "X-RateLimit-Remaining", "0"),
-			want:   transport.Verdict{Kind: forgeapi.KindRateLimited},
+			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=write", "X-RateLimit-Remaining", "0"), class: classResourceRefused,
+			want: transport.Verdict{Kind: forgeapi.KindRateLimited},
 		},
 		{
 			name: "the_merge_naming_a_permission_keeps_the_merge_permission", op: opMergePR, status: http.StatusForbidden,
-			header: headers("X-Accepted-GitHub-Permissions", "contents=write"),
-			want:   transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeNoMergePermission},
+			header: headers("X-Accepted-GitHub-Permissions", "contents=write"), class: classResourceRefused,
+			want: transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeNoMergePermission},
 		},
 		{
 			name: "a_not_found_naming_a_permission_stays_not_visible", op: "ReadPR", status: http.StatusNotFound,
-			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=read"),
-			want:   transport.Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeRepoOrPRNotVisible},
+			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=read"), class: classResourceRefused,
+			want: transport.Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeRepoOrPRNotVisible},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := mapping(test.op, test.status, test.header, false); got != test.want {
-				t.Errorf("mapping(%q, %d, %v) = %+v, want %+v", test.op, test.status, test.header, got, test.want)
+			if got := mapping(test.op, test.status, test.header, test.class, false); got != test.want {
+				t.Errorf("mapping(%q, %d, %v, %q) = %+v, want %+v", test.op, test.status, test.header, test.class, got, test.want)
 			}
 		})
 	}
@@ -717,7 +729,7 @@ func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 				if th.Header != "" {
 					header.Set(th.Header, cmp.Or(th.Value, "60"))
 				}
-				if got := mapping(op, th.Status, header, false); got.Kind != forgeapi.KindRateLimited || got.Code != "" || got.Needs != "" {
+				if got := mapping(op, th.Status, header, "", false); got.Kind != forgeapi.KindRateLimited || got.Code != "" || got.Needs != "" {
 					t.Errorf("mapping(%q, %d, %v) = %+v, want %v: %s", op, th.Status, header, got, forgeapi.KindRateLimited, th.Says)
 				}
 			})
@@ -988,5 +1000,15 @@ func TestThePoolIsTheResourceTheResponseNames(t *testing.T) {
 	}
 	if name, limit := pool(http.Header{}); name != "" || limit != 0 {
 		t.Errorf("pool(no headers) = %q, %d, want the unnamed pool with no limit", name, limit)
+	}
+}
+
+// GitHub sends the permissions header on every answer to a fine-grained actor, so a
+// success carrying it is a success.
+func TestASuccessCarryingThePermissionsHeaderIsASuccess(t *testing.T) {
+	h := newHarness(t, map[string]string{userRoute: readCaptures(t).raw(t, "rest_user")})
+	h.instance.answerHeader("X-Accepted-GitHub-Permissions", "metadata=read")
+	if _, err := h.client.Whoami(t.Context()); err != nil {
+		t.Errorf("Whoami answered 200 with the permissions header = %v, want nil", err)
 	}
 }

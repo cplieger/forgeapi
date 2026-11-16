@@ -269,3 +269,44 @@ func TestACapabilityRefusalSaysWhetherTheInstanceLacksItOrNothingCouldTell(t *te
 		})
 	}
 }
+
+// A message member the family lists reaches its mapper as that class, matched whole
+// after trimming space; any other message, a near miss included, reaches it as none.
+func TestOnlyAListedRefusalMessageReachesTheMapperAsItsClass(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "a_listed_message", body: `{"message":"Resource not accessible"}`, want: "resource"},
+		{name: "a_listed_message_with_space", body: `{"message":" Resource not accessible\n"}`, want: "resource"},
+		{name: "a_longer_message", body: `{"message":"Resource not accessible, and more"}`, want: ""},
+		{name: "another_message", body: `{"message":"Repository was archived so is read-only."}`, want: ""},
+		{name: "no_message", body: `{}`, want: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var got string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				if _, err := io.WriteString(w, test.body); err != nil {
+					t.Errorf("Setup: writing the refusal: %v", err)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			opts := testOptions()
+			opts.MessageClasses = map[string]string{"Resource not accessible": "resource"}
+			opts.Mapper = func(_ string, _ int, _ http.Header, member Member) Verdict {
+				got = member.Class
+				return Verdict{Kind: forgeapi.KindForbidden}
+			}
+			c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, forgeapi.WithRetries(0))
+			if _, err := c.Do(t.Context(), &Request{Op: "CreatePR", Method: http.MethodGet, Path: "/user"}); err == nil {
+				t.Fatalf("a read refused with %s answered no error", test.body)
+			}
+			if got != test.want {
+				t.Errorf("a refusal with %s reached the mapper as class %q, want %q", test.body, got, test.want)
+			}
+		})
+	}
+}

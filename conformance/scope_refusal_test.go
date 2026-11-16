@@ -226,9 +226,9 @@ func TestAGitLabRefusalWhoseMessageIsNotAStringCarriesItsText(t *testing.T) {
 const githubResourceRefusal = `{"message":"Resource not accessible by personal access token","documentation_url":"https://docs.github.com/rest","status":"403"}`
 
 // GitHub names what a refused credential lacks in headers, the permissions a
-// fine-grained token or an app needs and the scopes a classic token's route accepts
-// beside the ones it holds, so a 403 carrying either is the scope refusal with that
-// value as sent, on a read and a write alike.
+// fine-grained token or an app needs beside the permission refusal's message, and the
+// scopes a classic token's route accepts beside the ones it holds, so a 403 carrying
+// either is the scope refusal with that value as sent, on a read and a write alike.
 func TestAGitHubRefusalNamingWhatTheCredentialLacksIsTheScopeRefusal(t *testing.T) {
 	for _, test := range []struct {
 		header http.Header
@@ -266,28 +266,38 @@ func TestAGitHubRefusalNamingWhatTheCredentialLacksIsTheScopeRefusal(t *testing.
 	}
 }
 
+// githubArchivedRefusal is GitHub's answer to a write on an archived repository,
+// which carries the permissions header like any answer to a fine-grained actor.
+const githubArchivedRefusal = `{"message":"Repository was archived so is read-only.","documentation_url":"https://docs.github.com/rest","status":"403"}`
+
 // A GitHub 403 naming nothing the credential lacks stays the plain forbidden a role
 // refusal answers, and the merge's 403 stays the merge permission whatever its
-// headers name.
+// headers name. The permissions header rides every answer to a fine-grained actor, so
+// beside any message but the permission refusal's it names nothing lacking.
 func TestAGitHubRefusalNamingNothingLackingKeepsItsCell(t *testing.T) {
 	for _, test := range []struct {
 		header http.Header
 		name   string
 		method string
+		body   string
 		code   string
 	}{
-		{name: "no_header", method: "Identity.Whoami", header: http.Header{}},
+		{name: "no_header", method: "Identity.Whoami", header: http.Header{}, body: githubResourceRefusal},
 		{
-			name: "a_classic_token_holding_an_accepted_scope", method: "Issues.CreateIssue",
+			name: "a_classic_token_holding_an_accepted_scope", method: "Issues.CreateIssue", body: githubResourceRefusal,
 			header: http.Header{"X-Oauth-Scopes": {"repo, workflow"}, "X-Accepted-Oauth-Scopes": {"public_repo, repo"}},
 		},
 		{
-			name: "the_merge", method: "Merges.MergePR", code: "no_merge_permission",
+			name: "an_archived_repository_on_a_fine_grained_token", method: "Issues.CreateIssue", body: githubArchivedRefusal,
+			header: http.Header{"X-Accepted-Github-Permissions": {"issues=write"}},
+		},
+		{
+			name: "the_merge", method: "Merges.MergePR", code: "no_merge_permission", body: githubResourceRefusal,
 			header: http.Header{"X-Accepted-Github-Permissions": {"contents=write"}},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fe := forgeErrorOf(t, test.method, refusedOnWith(t, spec.GitHub, test.method, http.StatusForbidden, test.header, githubResourceRefusal))
+			fe := forgeErrorOf(t, test.method, refusedOnWith(t, spec.GitHub, test.method, http.StatusForbidden, test.header, test.body))
 			if fe.Kind != forgeapi.KindForbidden || fe.Code != test.code || fe.Needs != "" {
 				t.Errorf("%s on GitHub answered 403 with %v = (%v, %q, Needs %q), want (%v, %q, nothing needed)",
 					test.method, test.header, fe.Kind, fe.Code, fe.Needs, forgeapi.KindForbidden, test.code)

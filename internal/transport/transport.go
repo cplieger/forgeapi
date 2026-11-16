@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -85,10 +86,13 @@ const (
 type errorMapper func(op string, status int, header http.Header, member Member) Verdict
 
 // Member is the machine-readable part of a refusal's body: RFC 6750's error code
-// and the scope it names, each empty where the body carries none.
+// and the scope it names, each empty where the body carries none, and Class, the
+// family's name for a message member it lists in [Options.MessageClasses], empty for
+// any other message.
 type Member struct {
 	Error string
 	Scope string
+	Class string
 }
 
 // Verdict is a family's reading of one refusal: the code and kind the caller
@@ -129,6 +133,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	logger     *slog.Logger
 	credential forgeapi.CredentialSource
 	mapper     errorMapper
+	classes    map[string]string
 	signal     budgetSignal
 	pool       budgetPool
 	apiBase    *url.URL
@@ -164,7 +169,11 @@ type Options struct {
 	PoolParent    budgetParent
 	DeriveAPIBase func(web *url.URL) string
 	Clock         func() time.Time
-	Family        forgeapi.Family
+	// MessageClasses maps each message member a product answers a stated cause with,
+	// matched whole after trimming space, to the class its mapper reads in
+	// [Member.Class]; no other message text reaches the mapper.
+	MessageClasses map[string]string
+	Family         forgeapi.Family
 	// FreeNotModified says the product bills nothing for a not-modified answer to
 	// an authorized conditional request, as its spec.Revalidations row states.
 	FreeNotModified bool
@@ -238,6 +247,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		logger:     loggerOf(set),
 		credential: set.Credential,
 		mapper:     opts.Mapper,
+		classes:    maps.Clone(opts.MessageClasses),
 		signal:     opts.Signal,
 		pool:       opts.Pool,
 		apiBase:    apiBase,
@@ -1706,7 +1716,8 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 	answer := readRefusal(resp.Body)
 	verdict := Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeOwnerUnresolved}
 	if req.OwnerStatus == 0 || resp.Status != req.OwnerStatus {
-		verdict = c.mapper(req.Op, resp.Status, resp.Header, Member{Error: answer.Error, Scope: answer.Scope})
+		member := Member{Error: answer.Error, Scope: answer.Scope, Class: c.classes[strings.TrimSpace(answer.instanceText())]}
+		verdict = c.mapper(req.Op, resp.Status, resp.Header, member)
 	}
 	kind, code := verdict.Kind, verdict.Code
 	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))

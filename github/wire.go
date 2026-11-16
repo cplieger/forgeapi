@@ -1539,17 +1539,29 @@ func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 
 // mapper is this connection's error mapping: the mapping below, over the one fact
 // about the connection that a response cannot carry, which is whether the request
-// that was refused carried the version pin. No cell reads the body's members: this
-// product's refusals carry message text only.
-func (c *Client) mapper(op string, status int, header http.Header, _ transport.Member) transport.Verdict {
-	return mapping(op, status, header, c.sendsPin())
+// that was refused carried the version pin.
+func (c *Client) mapper(op string, status int, header http.Header, member transport.Member) transport.Verdict {
+	return mapping(op, status, header, member.Class, c.sendsPin())
+}
+
+// classResourceRefused is the class of the message GitHub answers a GitHub App or a
+// fine-grained token refused for a permission with
+// (https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api,
+// "Resource not accessible").
+const classResourceRefused = "resource_refused"
+
+// messageClasses is the refusal messages this family's mapping reads, by class.
+var messageClasses = map[string]string{
+	"Resource not accessible by integration":           classResourceRefused,
+	"Resource not accessible by personal access token": classResourceRefused,
 }
 
 // mapping is this family's error mapping: the cells a header decides
-// ([headerMapped]) first, then [statusMapped]'s. pinned says the refused request
-// carried the version pin, the only state in which a 400 can be that version's fault.
-func mapping(op string, status int, header http.Header, pinned bool) transport.Verdict {
-	if mapped, ok := headerMapped(op, status, header, pinned); ok {
+// ([headerMapped]) first, then [statusMapped]'s. class is the refusal message's
+// class from [messageClasses]; pinned says the refused request carried the version
+// pin, the only state in which a 400 can be that version's fault.
+func mapping(op string, status int, header http.Header, class string, pinned bool) transport.Verdict {
+	if mapped, ok := headerMapped(op, status, header, class, pinned); ok {
 		return mapped
 	}
 	kind, code := statusMapped(op, status)
@@ -1600,17 +1612,17 @@ func statusMapped(op string, status int) (kind forgeapi.ErrorKind, code string) 
 
 // headerMapped is the part of the mapping a header decides. A 403 whose headers say
 // throttle is a rate limit, so nobody is told to fix a token while the quota refills.
-// Any other 403 whose headers name what the credential lacks ([lacking]) is the scope
+// Any other 403 that names what the credential lacks ([lacking]) is the scope
 // refusal, except the merge's, whose 403 is the merge permission a role grants. A 400
 // to a pinned request not answered under the pin is that version out of the
 // instance's reach; an unpinned request's echo names the instance's default, so it is
 // read only when pinned.
-func headerMapped(op string, status int, header http.Header, pinned bool) (transport.Verdict, bool) {
+func headerMapped(op string, status int, header http.Header, class string, pinned bool) (transport.Verdict, bool) {
 	switch {
 	case status == http.StatusForbidden && throttled(header):
 		return transport.Verdict{Kind: forgeapi.KindRateLimited}, true
 	case status == http.StatusForbidden && op != opMergePR:
-		if needs := lacking(header); needs != "" {
+		if needs := lacking(header, class); needs != "" {
 			return transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: needs}, true
 		}
 	case status == http.StatusBadRequest && pinned && retiredVersion(header):
@@ -1619,15 +1631,16 @@ func headerMapped(op string, status int, header http.Header, pinned bool) (trans
 	return transport.Verdict{}, false
 }
 
-// lacking is what a refusal's headers say the credential lacks, as sent, empty
-// where they name nothing it lacks: the permissions a fine-grained token or an app
-// needs, or the scopes a route accepts where a classic token holds none of them
-// (https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api,
-// https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).
-// The accepted list names each scope's parents too, so one held scope satisfies it;
-// only a response carrying X-OAuth-Scopes says what the token holds.
-func lacking(header http.Header) string {
-	if permissions := strings.TrimSpace(header.Get(headerAcceptedPermissions)); permissions != "" {
+// lacking is what a refusal says the credential lacks, as sent, empty where it
+// names nothing it lacks: the permissions a fine-grained token or an app needs, where
+// the message is the permission refusal's, or the scopes a route accepts where a
+// classic token holds none of them
+// (https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).
+// The permissions header rides every answer to such an actor, 200s included, so it
+// alone proves nothing lacking. The accepted list names each scope's parents too, so
+// one held scope satisfies it; only X-OAuth-Scopes says what the token holds.
+func lacking(header http.Header, class string) string {
+	if permissions := strings.TrimSpace(header.Get(headerAcceptedPermissions)); permissions != "" && class == classResourceRefused {
 		return permissions
 	}
 	accepted := strings.TrimSpace(header.Get(headerAcceptedScopes))
