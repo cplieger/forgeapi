@@ -33,8 +33,9 @@ type Store interface {
 
 // NewStore returns the [Store] over b, with the library's custody around it: one
 // rotation per key, the rotated pair held where b could not take it, and the mark
-// owed where b could not take that. The custody lives in the returned store, so
-// every [StoredSource] over b shares that one store.
+// owed where b could not take that. The custody lives in the returned store, not
+// in b: call NewStore once per backend and share the store between every
+// [StoredSource] over it, since two stores over one backend can lose a rotated pair.
 //
 // Exactly one process may refresh from b, the one calling [StoredSource.Token];
 // readers such as the git credential helper may share it. Nothing detects a second

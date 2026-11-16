@@ -3116,6 +3116,13 @@ var Table = []Entry{
 		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{name} for each name it carries, by name, since this product reads digits as an id only where no label has that name, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed",
 		Requests:  Requests{Min: 1, Max: 2, PerNameCeiling: 1},
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "removal, a name the repository and its organization share",
+				Kind:  CannotSupply,
+				Says:  "the repository's label alone: this product's removal resolves a name to the repository's label before the organization's and an id to a repository label only, so an organization label the item carries stays where the repository defines a label of its name, and the call answers nil",
+			},
+		},
 	},
 }
 

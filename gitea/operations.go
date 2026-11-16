@@ -1414,10 +1414,12 @@ func labelItem(repo forgeapi.RepoRef, target forgeapi.LabelTarget) (int, error) 
 
 // RemoveLabels implements [forgeapi.Labels]. The item's own label read names every
 // label it carries, an organization's included, so only those are removed. Gitea's
-// route takes the label's id; Forgejo's takes a name or an id and reads digits as an
-// id only where no label has that name, so it is sent the name, which an id could be
-// mistaken for (routers/api/v1/repo/issue_label.go DeleteIssueLabel on each). A label
-// or item gone since the read answers 404 or 422 there, and the item carries no label.
+// route takes the label's id, so every carried label of a name is removed, a
+// repository's and an organization's of one name both. Forgejo's takes a name or an
+// id, resolving a name to the repository's label before the organization's and an id
+// to a repository label only, so it is sent the name, which an id could be mistaken
+// for (routers/api/v1/repo/issue_label.go DeleteIssueLabel on each). A label or item
+// gone since the read answers 404 or 422 there, and the item carries no label.
 func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
 	const op = "RemoveLabels"
 	ctx = transport.CallWrite(ctx, op)
@@ -1438,27 +1440,36 @@ func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target
 	if stale := c.moved(ctx, op, addr); stale != nil {
 		return stale
 	}
-	ids := make(map[string]int64, len(carried))
-	for _, label := range carried {
-		ids[label.Name] = label.ID
-	}
+	segments := removalSegments(carried, caps.Product == forgeapi.ProductForgejo)
 	var removed []string
 	for _, name := range transport.DistinctNames(names) {
-		id, ok := ids[name]
-		if !ok {
-			continue
-		}
-		segment := strconv.FormatInt(id, 10)
-		if caps.Product == forgeapi.ProductForgejo {
-			segment = url.PathEscape(name)
-		}
-		took, err := c.removeAt(ctx, op, addr, rest+"/", segment)
-		if err != nil {
-			return transport.AfterRemovals(err, removed)
+		took := false
+		for _, segment := range segments[name] {
+			ok, err := c.removeAt(ctx, op, addr, rest+"/", segment)
+			if err != nil {
+				return transport.AfterRemovals(err, removed)
+			}
+			took = took || ok
 		}
 		if took {
 			removed = append(removed, name)
 		}
 	}
 	return nil
+}
+
+// removalSegments maps each carried name to the path segments that remove it: every
+// carried label's id, or on Forgejo the escaped name once.
+func removalSegments(carried []wireLabel, byName bool) map[string][]string {
+	segments := make(map[string][]string, len(carried))
+	for _, label := range carried {
+		segment := strconv.FormatInt(label.ID, 10)
+		if byName {
+			segment = url.PathEscape(label.Name)
+		}
+		if !slices.Contains(segments[label.Name], segment) {
+			segments[label.Name] = append(segments[label.Name], segment)
+		}
+	}
+	return segments
 }

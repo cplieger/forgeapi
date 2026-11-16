@@ -822,10 +822,11 @@ var operations = []operation{
 		expect: func(spec.Product, any) []check { return nil },
 	},
 	{
-		method:   "Labels.RemoveLabels",
-		zero:     nil,
-		mutation: true,
-		names:    1,
+		method:    "Labels.RemoveLabels",
+		zero:      nil,
+		mutation:  true,
+		names:     1,
+		errorArms: []string{sharedLabelName},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.Labels)
 			if !ok {

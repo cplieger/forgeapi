@@ -957,7 +957,9 @@ type Issues interface {
 	//	labels  body  the labels the caller named, as the numeric ids this product's creation declares in place of their names, which is what the label read this row prices resolves
 	CreateIssue(ctx context.Context, repo RepoRef, req NewIssue) (Issue, error)
 
-	// CloseIssue closes an issue and returns it as the forge now reports it.
+	// CloseIssue closes an issue and returns it as the forge now reports it. On
+	// GitHub, Gitea and Forgejo a pull request's number reaches that pull request,
+	// whose numbers the issues share, while [Issues.ReadIssue] answers it not found.
 	//
 	// Per forge:
 	//
@@ -979,7 +981,9 @@ type Issues interface {
 	CloseIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
 
 	// ReopenIssue reopens an issue and returns it as the forge now reports it. An
-	// issue already open is answered as it stands, with no error.
+	// issue already open is answered as it stands, with no error. On GitHub, Gitea
+	// and Forgejo a pull request's number reaches that pull request, as with
+	// [Issues.CloseIssue].
 	//
 	// Per forge:
 	//
@@ -1221,6 +1225,10 @@ type Labels interface {
 	//	GitLab   PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}, whose remove_labels ignores a name the item does not carry; a name with a comma or with surrounding space names no label of this product and is not sent, 1 request
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries with its id, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{label_id} for each name it carries, by the id this product's route takes, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed, 1 to 2 requests plus up to one per label name
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{name} for each name it carries, by name, since this product reads digits as an id only where no label has that name, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed, 1 to 2 requests plus up to one per label name
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	removal, a name the repository and its organization share  cannot supply  the repository's label alone: this product's removal resolves a name to the repository's label before the organization's and an id to a repository label only, so an organization label the item carries stays where the repository defines a label of its name, and the call answers nil
 	RemoveLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
 }
 

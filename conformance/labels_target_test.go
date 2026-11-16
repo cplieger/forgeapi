@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -346,6 +347,46 @@ func TestAGiteaFamilyRemovalRemovesOnlyWhatTheItemCarries(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// sharedLabelName is the table's field for a removal of a name a repository and its
+// organization both define.
+const sharedLabelName = "removal, a name the repository and its organization share"
+
+// An item can carry a repository label and an organization label of one name. Gitea
+// removes each by its id; Forgejo's removal by name reaches the repository's label
+// alone, which its departure row states, and an id would reach a repository label
+// only, so it sends the name once.
+func TestAGiteaFamilyRemovalOfANameTwoLabelsShare(t *testing.T) {
+	carried := []map[string]any{{"id": 9, "name": "shared"}, {"id": 71, "name": "shared"}}
+	labels := giteaRepos + selector + "/issues/1/labels"
+	for p, segments := range map[spec.Product][]string{spec.Gitea: {"9", "71"}, spec.Forgejo: {"shared"}} {
+		t.Run(string(p), func(t *testing.T) {
+			if p == spec.Forgejo {
+				e := requireEntry(t, p, "Labels.RemoveLabels")
+				if d, ok := departureFor(&e, sharedLabelName); !ok || d.Kind != spec.CannotSupply {
+					t.Errorf("RemoveLabels on %s states no %q departure, want the cannot-supply row", p, sharedLabelName)
+				}
+			}
+			routes := []wire{{Method: http.MethodGet, Path: labels, Status: http.StatusOK, Body: jsonBody(t, carried)}}
+			want := make([]string, 0, len(segments))
+			for _, segment := range segments {
+				routes = append(routes, wire{Method: http.MethodDelete, Path: labels + "/" + segment, Status: http.StatusNoContent, Body: json.RawMessage(`null`)})
+				want = append(want, http.MethodDelete+" "+labels+"/"+segment)
+			}
+			arrived, _, err := labelCall(t, p, "Labels.RemoveLabels", forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{"shared"}, routes...)
+			if err != nil {
+				t.Fatalf("RemoveLabels on %s = %v, want nil", p, err)
+			}
+			got := make([]string, 0, len(segments))
+			for _, w := range writes(arrived) {
+				got = append(got, w.String())
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("RemoveLabels of a shared name on %s wrote %v, want %v", p, got, want)
+			}
+		})
 	}
 }
 

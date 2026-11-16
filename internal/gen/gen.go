@@ -346,7 +346,7 @@ func departures(entry *spec.Entry) string {
 	for i, g := range groups {
 		subjects[i] = list(g.fields)
 	}
-	if len(groups) == 1 && len(groups[0].fields) == spec.Fields[entry.Method] {
+	if len(groups) == 1 && len(groups[0].fields) > 1 && len(groups[0].fields) == spec.Fields[entry.Method] {
 		subjects[0] = "every field"
 	}
 	subject, kind := 0, 0
