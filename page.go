@@ -153,4 +153,11 @@ type Page[T any] struct { //nolint:govet // fieldalignment: the items come first
 	// answering the same question on the success arm: one concept carries one
 	// name, and nil is the one absence test on every carrier.
 	Successor *RepoRef
+	// Indexed reports a page served from the forge's search index rather than
+	// its database, a property of the list and never of one answer: true on
+	// every page of GitHub's [PullRequests.ListMyPRs] and [Issues.ListMyIssues],
+	// false everywhere else. The index can lag a change to a record, so an item
+	// missing from an indexed page is unconfirmed until [PullRequests.ReadPR]
+	// or [Issues.ReadIssue] reads it.
+	Indexed bool
 }

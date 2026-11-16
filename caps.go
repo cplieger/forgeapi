@@ -421,4 +421,13 @@ type ActionState struct {
 	QueuePosition int
 	// MergeBlocked is the cause a merge is refused, or MergeBlockNone.
 	MergeBlocked MergeBlockReason
+	// Approvals is the number of reviewers whose latest opinionated review, the
+	// latest one that approves or requests changes, approves; [CountUnknown]
+	// where the read does not carry it or [WithReviews] left it unread. It is a
+	// fact for the person deciding: whether the forge lets the merge through is
+	// MergeBlocked's.
+	Approvals int
+	// ChangesRequested is the number of reviewers whose latest opinionated
+	// review requests changes, on the same terms as Approvals.
+	ChangesRequested int
 }

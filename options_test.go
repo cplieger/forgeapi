@@ -12,7 +12,7 @@ func TestResolveList_answers_the_first_open_page_without_options(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveList() = %v, want the defaults", err)
 	}
-	want := forgeapi.ListSettings{PageBound: 100, State: forgeapi.ListStateOpen, MergeState: true}
+	want := forgeapi.ListSettings{PageBound: 100, State: forgeapi.ListStateOpen, MergeState: true, Reviews: true}
 	if got != want {
 		t.Errorf("ResolveList() = %+v, want %+v", got, want)
 	}
@@ -36,6 +36,32 @@ func TestWithMergeState_records_the_last_value_named(t *testing.T) {
 			}
 			if got.MergeState != test.want || !got.MergeStateSet {
 				t.Errorf("ResolveList(%s) = merge state %t (set %t), want %t set", test.name, got.MergeState, got.MergeStateSet, test.want)
+			}
+		})
+	}
+}
+
+func TestWithReviews_records_the_last_value_named(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		opts []forgeapi.ListOption
+		want bool
+	}{
+		{name: "false", opts: []forgeapi.ListOption{forgeapi.WithReviews(false)}, want: false},
+		{name: "true", opts: []forgeapi.ListOption{forgeapi.WithReviews(true)}, want: true},
+		{name: "false_then_true", opts: []forgeapi.ListOption{forgeapi.WithReviews(false), forgeapi.WithReviews(true)}, want: true},
+		{name: "true_then_false", opts: []forgeapi.ListOption{forgeapi.WithReviews(true), forgeapi.WithReviews(false)}, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := forgeapi.ResolveList(test.opts...)
+			if err != nil {
+				t.Fatalf("ResolveList(%s) = %v, want the settings", test.name, err)
+			}
+			if got.Reviews != test.want || !got.ReviewsSet {
+				t.Errorf("ResolveList(%s) = reviews %t (set %t), want %t set", test.name, got.Reviews, got.ReviewsSet, test.want)
+			}
+			if !got.MergeState || got.MergeStateSet {
+				t.Errorf("ResolveList(%s) = merge state %t (set %t), want the default true unset: the two options are independent", test.name, got.MergeState, got.MergeStateSet)
 			}
 		})
 	}

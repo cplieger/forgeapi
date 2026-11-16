@@ -298,8 +298,8 @@ func listOptions(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi
 // inapplicable is the refusal of an option the list cannot apply, nil where every
 // option set applies: a state filter on a list that fixes its state, an owner on
 // every list but the scoped ones and the repository listing, a since bound on every
-// list but the run listing, and a merge state option on every list but the pull
-// request lists.
+// list but the run listing, and a merge state or reviews option on every list but
+// the pull request lists.
 func inapplicable(op string, kind listKind, set *forgeapi.ListSettings) *forgeapi.Error {
 	switch {
 	case set.StateSet && kind != statefulList:
@@ -314,6 +314,9 @@ func inapplicable(op string, kind listKind, set *forgeapi.ListSettings) *forgeap
 	case set.MergeStateSet && op != opListPRs && op != opListMyPRs:
 		return transport.Local(forgeapi.CodeListMergeStateInvalid,
 			op+" lists rows that carry no merge state, so a merge state option cannot apply")
+	case set.ReviewsSet && op != opListPRs && op != opListMyPRs:
+		return transport.Local(forgeapi.CodeListReviewsInvalid,
+			op+" lists rows that carry no review counts, so a reviews option cannot apply")
 	}
 	return nil
 }

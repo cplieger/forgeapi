@@ -353,6 +353,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	if bounded, ok := c.unpagedList[forgeapi.PullRequest](set.After); ok {
+		bounded.Indexed = true
 		return bounded, nil
 	}
 	query := searchQuery(searchPulls, &set)
@@ -363,6 +364,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	result, err := c.execute(ctx, op, prMine, vars, &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
+			deferred.Indexed = true
 			return deferred, nil
 		}
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -436,16 +438,14 @@ type searchWalk struct {
 }
 
 // searchPage is one page of a cross-repository search: its rows, the continuation
-// carrying what the walk has been served, and the marker of the page that ends a walk.
-//
-// A page whose document answered errors beside its data carries the document's own
-// marker, because that says this page's rows are in question, which outranks a
-// statement about rows beyond it. Otherwise a page minting no continuation while the
-// search's stated total is more than the walk was served carries the result window,
-// counting the whole walk through the continuation rather than one page.
+// carrying what the walk has been served, and the marker of the page that ends a walk:
+// the document's own marker where it answered errors beside its data, since this
+// page's rows are in question, else the result window where no continuation is minted
+// while the search's stated total exceeds what the walk was served. Every page a search
+// list answers is Indexed, its bounded and deferred pages included.
 func (c *Client) searchPage[T any](items []T, info docPageInfo, walk searchWalk, total int, documentPartial bool) forgeapi.Page[T] {
 	served := walk.served + len(items)
-	page := forgeapi.Page[T]{Items: items, Next: searchNext(info, walk.call, served)}
+	page := forgeapi.Page[T]{Items: items, Next: searchNext(info, walk.call, served), Indexed: true}
 	switch {
 	case documentPartial:
 		page.Partial = c.partial(forgeapi.PartialGraphQLPartial, len(items))
@@ -498,6 +498,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
 	if bounded, ok := c.unpagedList[forgeapi.Issue](set.After); ok {
+		bounded.Indexed = true
 		return bounded, nil
 	}
 	query := searchQuery(searchIssues, &set)
@@ -505,6 +506,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 	result, err := c.execute(ctx, op, issueMine, searchVariables(query, &set, after), &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.Issue](err); ok {
+			deferred.Indexed = true
 			return deferred, nil
 		}
 		return forgeapi.Page[forgeapi.Issue]{}, err

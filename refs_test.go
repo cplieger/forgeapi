@@ -201,3 +201,38 @@ func TestValidateSelector_takes_an_owner_and_a_name_on_github_and_gitea(t *testi
 		}
 	}
 }
+
+func TestLabelTargetValidate_accepts_exactly_one_positive_item(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target forgeapi.LabelTarget
+	}{
+		{name: "pull_request", target: forgeapi.LabelTarget{PR: forgeapi.PRRef{Number: 3, Sigil: "#"}}},
+		{name: "issue", target: forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 3}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.target.Validate(); err != nil {
+				t.Errorf("%+v.Validate() = %v, want nil", test.target, err)
+			}
+		})
+	}
+}
+
+func TestLabelTargetValidate_refuses_a_target_it_cannot_address(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target forgeapi.LabelTarget
+	}{
+		{name: "neither", target: forgeapi.LabelTarget{}},
+		{name: "both", target: forgeapi.LabelTarget{PR: forgeapi.PRRef{Number: 1}, Issue: forgeapi.IssueRef{Number: 2}}},
+		{name: "negative_pull_request", target: forgeapi.LabelTarget{PR: forgeapi.PRRef{Number: -1}}},
+		{name: "negative_issue", target: forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: -1}}},
+		{name: "sigil_without_a_number", target: forgeapi.LabelTarget{PR: forgeapi.PRRef{Sigil: "!"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if problem := localRefusal(test.target.Validate(), forgeapi.CodeRepoRefInvalid); problem != nil {
+				t.Errorf("%+v.Validate(): %v", test.target, problem)
+			}
+		})
+	}
+}

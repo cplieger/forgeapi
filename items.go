@@ -125,6 +125,11 @@ func (a AccountKind) String() string {
 
 var _ fmt.Stringer = AccountKind(0)
 
+// CountUnknown is the value of a count field whose read did not carry it:
+// [PullRequest.Comments], [Issue.Comments], [ActionState.Approvals] and
+// [ActionState.ChangesRequested]. It is negative because zero is a count.
+const CountUnknown = -1
+
 // PullRequest is one pull request, called a merge request on one family.
 type PullRequest struct { //nolint:govet // fieldalignment: field order is the reading order this type documents, addressing first
 	// Ref addresses it, sigil included.
@@ -162,6 +167,10 @@ type PullRequest struct { //nolint:govet // fieldalignment: field order is the r
 	// Labels are the labels on it, nil on a family that has none. Where the
 	// product served part of the set, [PullRequest.Partial] says so.
 	Labels []Label
+	// Comments is the number of comments people wrote on it, review comments
+	// included and system notes excluded, or [CountUnknown] where the read does
+	// not carry it. Each product's cells are in the operation's per-forge block.
+	Comments int
 	// CreatedAt is when it was opened, zero where the instance reported none.
 	CreatedAt time.Time
 	// UpdatedAt is its last update, zero where the instance reported none.
@@ -240,6 +249,10 @@ type Issue struct { //nolint:govet // fieldalignment: field order is the reading
 	WebURL string
 	// Labels are the labels on it.
 	Labels []Label
+	// Comments is the number of comments people wrote on it, system notes
+	// excluded, or [CountUnknown] where the read does not carry it. Each
+	// product's cells are in the operation's per-forge block.
+	Comments int
 	// CreatedAt is when it was filed, zero where the instance reported none.
 	CreatedAt time.Time
 	// UpdatedAt is its last update, zero where the instance reported none.

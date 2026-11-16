@@ -258,6 +258,30 @@ type IssueRef struct {
 	Number int
 }
 
+// LabelTarget is the item a label change addresses: exactly one of a pull
+// request and an issue, the other left zero.
+type LabelTarget struct {
+	// PR is set for a pull request.
+	PR PRRef
+	// Issue is set for an issue.
+	Issue IssueRef
+}
+
+// Validate refuses, before any request, a target naming neither item or both,
+// or one whose number is not positive, with [CodeRepoRefInvalid], the code a
+// family answers for an item number it cannot address.
+func (t LabelTarget) Validate() error {
+	switch pr, issue := t.PR.Number, t.Issue.Number; {
+	case pr == 0 && issue == 0:
+		return localError(CodeRepoRefInvalid, "label target names neither a pull request nor an issue")
+	case pr != 0 && issue != 0:
+		return localError(CodeRepoRefInvalid, "label target names both a pull request and an issue")
+	case pr < 0 || issue < 0:
+		return localError(CodeRepoRefInvalid, "label target number is not positive")
+	}
+	return nil
+}
+
 // RunRef identifies one CI run within its repository.
 type RunRef struct {
 	// ID is the identifier the product's own run routes take. A re-run keeps it on

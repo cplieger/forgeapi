@@ -94,6 +94,12 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)",
 		"func NewStoredSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*StoredSource, error)",
 		"func New(store creds.Store, opts ...forgeapi.Option) *Helper",
+		"const CountUnknown = -1",
+		"func WithReviews(read bool) ListOption",
+		"type LabelTarget struct {",
+		"func (t LabelTarget) Validate() error",
+		"\tIndexed bool\n",
+		"\tNeeds string\n",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("surface.Generate(%q) does not render %q", ".", want)
@@ -213,6 +219,7 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 		{fn: "WithPageBound", defaultClause: "Default: [DefaultPageBound].", names: []string{"CodePageBoundInvalid"}},
 		{fn: "WithSince", defaultClause: "Default: no bound,", names: []string{"CodeListSinceInvalid"}},
 		{fn: "WithMergeState", defaultClause: "Default: true.", names: []string{"CodeListMergeStateInvalid"}},
+		{fn: "WithReviews", defaultClause: "Default: true.", names: []string{"CodeListReviewsInvalid", "CountUnknown"}},
 		{fn: "WithReadCache", defaultClause: "Default: [DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and sends every read unconditionally.", names: []string{"CodeBudgetInvalid"}},
 	} {
 		t.Run(test.fn, func(t *testing.T) {

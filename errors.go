@@ -192,6 +192,9 @@ const (
 	// CodeListMergeStateInvalid is a [WithMergeState] named on a list with no
 	// merge state to leave out, refused by the family method at either value.
 	CodeListMergeStateInvalid = "list_merge_state_invalid"
+	// CodeListReviewsInvalid is a [WithReviews] named on a list with no review
+	// counts to leave out, refused by the family method at either value.
+	CodeListReviewsInvalid = "list_reviews_invalid"
 	// CodeRunUndated is a run row with no creation time on a listing held to a
 	// [WithSince] bound. Read with no bound, the row answers a zero CreatedAt;
 	// any other malformed run row is [CodeValidation].
@@ -298,6 +301,7 @@ func Codes() []string {
 		CodeListOwnerInvalid,
 		CodeListSinceInvalid,
 		CodeListMergeStateInvalid,
+		CodeListReviewsInvalid,
 		CodeRunUndated,
 		CodeCursorInvalid,
 		CodeRefInvalid,
@@ -379,6 +383,10 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// [CodeCapabilityUnsupported] and zero everywhere else: the value
 	// [Capabilities.ConnectionCaps] renders beside a disabled control.
 	Evidence Evidence
+	// Needs is what the forge says the call needs, as the forge spells it,
+	// such as a permission or a scope list; empty where its answer names
+	// nothing. It is carried on [CodeScopeInsufficient].
+	Needs string
 }
 
 // Error renders the operation, code, status and message. The separator after
