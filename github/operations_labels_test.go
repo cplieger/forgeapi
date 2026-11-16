@@ -36,3 +36,27 @@ func TestALabelRemovalEscapesTheNameAndRemovesItOnce(t *testing.T) {
 		t.Errorf("RemoveLabels sent %v, want the one escaped removal %s", got, route)
 	}
 }
+
+// An empty name names no label: sent, it would be the collection's DELETE, which
+// takes every label off the item.
+func TestALabelRemovalSendsNoEmptyName(t *testing.T) {
+	const route = "DELETE /api/v3/repos/example/example/issues/1/labels/bug"
+	for _, tc := range []struct {
+		name  string
+		names []string
+		want  []string
+	}{
+		{name: "an empty name alone sends nothing", names: []string{""}, want: nil},
+		{name: "an empty name beside a label removes only that label", names: []string{"bug", ""}, want: []string{route}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{route: `[]`})
+			if err := h.client.RemoveLabels(t.Context(), testRef(), forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, tc.names); err != nil {
+				t.Fatalf("RemoveLabels(%q) = %v, want nil", tc.names, err)
+			}
+			if got := h.instance.arrived(); !slices.Equal(got, tc.want) {
+				t.Errorf("RemoveLabels(%q) sent %v, want %v", tc.names, got, tc.want)
+			}
+		})
+	}
+}

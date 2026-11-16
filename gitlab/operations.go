@@ -1447,7 +1447,7 @@ func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target
 	}
 	titles := make([]string, 0, len(names))
 	for _, name := range transport.DistinctNames(names) {
-		if name != "" && name == strings.TrimSpace(name) && !strings.Contains(name, ",") {
+		if name == strings.TrimSpace(name) && !strings.Contains(name, ",") {
 			titles = append(titles, name)
 		}
 	}

@@ -9,9 +9,9 @@ import (
 	"github.com/cplieger/forgeapi/v3"
 )
 
-func TestDistinctNamesKeepsTheFirstOfEachInOrder(t *testing.T) {
+func TestDistinctNamesKeepsTheFirstOfEachNamedLabelInOrder(t *testing.T) {
 	got := DistinctNames([]string{"b", "a", "b", "", "a", ""})
-	if want := []string{"b", "a", ""}; !slices.Equal(got, want) {
+	if want := []string{"b", "a"}; !slices.Equal(got, want) {
 		t.Errorf("DistinctNames = %q, want %q", got, want)
 	}
 	if got := DistinctNames(nil); len(got) != 0 {
