@@ -2,8 +2,8 @@ package gitlab
 
 import (
 	"encoding/json"
-	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -151,44 +151,89 @@ func TestAMergeSendsTheSquashFlagItsIntentNames(t *testing.T) {
 	}
 }
 
-// With no pin the re-run reads the merge request's current head and filters by it,
-// so a failed pipeline of another head the listing answers is never the one retried.
-func TestAReRunWithNoHeadRetriesAPipelineOfTheMergeRequestsHead(t *testing.T) {
-	mergeRequest := "GET /api/v4/projects/" + testEncoded + "/merge_requests/1"
-	pipelines := `[{"id": 5, "sha": "0000000000000000000000000000000000000000", "status": "failed", "ref": "other"},` +
-		`{"id": 77, "sha": "` + testHeadSHA + `", "status": "failed", "ref": "main"}]`
-	harness := func(t *testing.T, sha string) *harness {
-		h := newHarness(t, map[string]string{
-			metadataRoute:  metadataBody,
-			documentRoute:  docAcceptanceAnswer,
-			mergeRequest:   `{"iid":1,"sha":"` + sha + `"}`,
-			pipelinesRoute: pipelines,
-			retryRoute:     `{}`,
-		})
-		h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
-		return h
+// headPipelineRequest is a merge request on head whose head pipeline is pipeline,
+// at a target project the addressed one's id names, or none where target is 0.
+func headPipelineRequest(head string, target int, pipeline string) string {
+	body := `{"iid": 1, "sha": "` + head + `", "source_project_id": 1`
+	if target != 0 {
+		body += `, "target_project_id": ` + strconv.Itoa(target)
 	}
-	t.Run("a_head", func(t *testing.T) {
-		h := harness(t, testHeadSHA)
-		if err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), ""); err != nil {
-			t.Fatalf("RerunFailedChecks with no head = %v, want the retry", err)
-		}
-		if got := h.instance.query(pipelinesRoute, "sha"); got != testHeadSHA {
-			t.Errorf("the resolving read sent sha %q, want the merge request's head %q", got, testHeadSHA)
-		}
-		if arrived := h.instance.arrived(); !reflect.DeepEqual(arrived[len(arrived)-3:], []string{mergeRequest, pipelinesRoute, retryRoute}) {
-			t.Errorf("RerunFailedChecks with no head sent %v, want it to end on the merge request read, the pipeline read and %s", arrived, retryRoute)
-		}
-	})
-	t.Run("no_head", func(t *testing.T) {
-		h := harness(t, "")
-		err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), "")
-		var fe *forgeapi.Error
-		if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeMissingSHA {
-			t.Errorf("RerunFailedChecks on a merge request with no head = %v, want code %q", err, forgeapi.CodeMissingSHA)
-		}
-		if arrived := h.instance.arrived(); slices.Contains(arrived, pipelinesRoute) || slices.Contains(arrived, retryRoute) {
-			t.Errorf("RerunFailedChecks on a merge request with no head sent %v, want no pipeline read or retry", arrived)
-		}
-	})
+	return body + `, "head_pipeline": ` + pipeline + `}`
+}
+
+// headPipeline is one head pipeline as the merge request read answers it, with no
+// project id where project is 0.
+func headPipeline(project int, sha, ref, status string) string {
+	body := `{"id": 77`
+	if project != 0 {
+		body += `, "project_id": ` + strconv.Itoa(project)
+	}
+	return body + `, "sha": "` + sha + `", "ref": "` + ref + `", "status": "` + status + `"}`
+}
+
+// The re-run retries the merge request's head pipeline, the one its checks verdict
+// reads: on merged results it ran on a merge commit of the head, on a fork's merge
+// request in the fork's project, and neither is a row of the project's pipelines on
+// the head. Every refusal is sent before any write, and no pipeline listing is read.
+func TestTheReRunRetriesTheMergeRequestsHeadPipeline(t *testing.T) {
+	const other = "0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293"
+	const forkRetryRoute = "POST /api/v4/projects/99/pipelines/77/retry"
+	const targetRetryRoute = "POST /api/v4/projects/1/pipelines/77/retry"
+	failedOnHead := headPipeline(1, testHeadSHA, "example-feature", "failed")
+	for _, test := range []struct {
+		name, pin, request, retry, code string
+		kind                            forgeapi.ErrorKind
+	}{
+		{name: "a_failed_branch_pipeline_on_the_pin", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, failedOnHead), retry: retryRoute},
+		{name: "no_pin_takes_the_merge_requests_head", request: headPipelineRequest(testHeadSHA, 1, failedOnHead), retry: retryRoute},
+		{name: "a_canceled_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, testHeadSHA, "example-feature", "canceled")), retry: retryRoute},
+		{name: "a_merged_results_pipeline_on_a_merge_commit", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "refs/merge-requests/1/merge", "failed")), retry: retryRoute},
+		{name: "a_merge_train_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "refs/merge-requests/1/train", "failed")), retry: retryRoute},
+		{name: "a_fork_pipeline_in_the_forks_project", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(99, testHeadSHA, "example-feature", "failed")), retry: forkRetryRoute},
+		{name: "a_pipeline_naming_no_project", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(0, testHeadSHA, "example-feature", "failed")), retry: retryRoute},
+		{name: "a_merge_request_naming_no_target_project", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 0, failedOnHead), retry: targetRetryRoute},
+		{name: "a_pin_the_merge_request_moved_past", pin: other, request: headPipelineRequest(testHeadSHA, 1, failedOnHead), code: forgeapi.CodeStaleHead, kind: forgeapi.KindConflict},
+		{name: "a_head_pipeline_that_passed", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, testHeadSHA, "example-feature", "success")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "a_running_head_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, testHeadSHA, "example-feature", "running")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "no_head_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, "null"), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "a_head_pipeline_of_an_earlier_commit", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "example-feature", "failed")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "an_earlier_commits_pipeline_on_the_head_ref", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "refs/merge-requests/1/head", "failed")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "another_merge_requests_merge_ref", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "refs/merge-requests/2/merge", "failed")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "a_merge_request_with_no_head", request: headPipelineRequest("", 1, failedOnHead), code: forgeapi.CodeMissingSHA, kind: forgeapi.KindUpstream},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{
+				metadataRoute:    metadataBody,
+				documentRoute:    docAcceptanceAnswer,
+				readRoute:        test.request,
+				pipelinesRoute:   pipelinesBody,
+				retryRoute:       `{}`,
+				forkRetryRoute:   `{}`,
+				targetRetryRoute: `{}`,
+			})
+			h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
+			if _, err := h.client.ConnectionCaps(t.Context()); err != nil {
+				t.Fatalf("Setup: ConnectionCaps = %v", err)
+			}
+			before := h.instance.count()
+			err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), test.pin)
+			sent := h.instance.arrived()[before:]
+			if test.code == "" {
+				if err != nil {
+					t.Fatalf("RerunFailedChecks = %v, want the retry", err)
+				}
+				if want := []string{readRoute, test.retry}; !slices.Equal(sent, want) {
+					t.Errorf("RerunFailedChecks sent %v, want %v", sent, want)
+				}
+				return
+			}
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != test.code || fe.Kind != test.kind {
+				t.Errorf("RerunFailedChecks = %v, want code %q on %v", err, test.code, test.kind)
+			}
+			if want := []string{readRoute}; !slices.Equal(sent, want) {
+				t.Errorf("RerunFailedChecks sent %v, want %v alone and no retry", sent, want)
+			}
+		})
+	}
 }

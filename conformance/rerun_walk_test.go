@@ -3,6 +3,7 @@ package conformance
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,12 +11,17 @@ import (
 	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
+// walkedProducts are the products whose re-run walks the head's runs for one that
+// failed; GitLab retries the merge request's head pipeline instead, held by
+// TestAGitLabReRunRetriesTheMergeRequestsHeadPipeline.
+var walkedProducts = []spec.Product{spec.GitHub, spec.Gitea, spec.Forgejo}
+
 // runPageMaximum is the page size each product's re-run reads its runs at: the REST
-// page maximum on GitHub and GitLab, the stated maximum the Gitea-family setup serves.
-var runPageMaximum = map[spec.Product]int{spec.GitHub: 100, spec.GitLab: 100, spec.Gitea: 50, spec.Forgejo: 50}
+// page maximum on GitHub, the stated maximum the Gitea-family setup serves.
+var runPageMaximum = map[spec.Product]int{spec.GitHub: 100, spec.Gitea: 50, spec.Forgejo: 50}
 
 // runPageKey is the query parameter each product's runs route takes its page size in.
-var runPageKey = map[spec.Product]string{spec.GitHub: "per_page", spec.GitLab: "per_page", spec.Gitea: "limit", spec.Forgejo: "limit"}
+var runPageKey = map[spec.Product]string{spec.GitHub: "per_page", spec.Gitea: "limit", spec.Forgejo: "limit"}
 
 // runPagesWalked is the most pages a re-run reads, which the table's prices state as
 // "up to three pages".
@@ -26,8 +32,6 @@ func runRow(p spec.Product, id int, head string, failed bool) map[string]any {
 	switch p {
 	case spec.GitHub:
 		return map[string]any{"id": id, "head_sha": head, "status": "completed", "conclusion": map[bool]string{true: "failure", false: "success"}[failed]}
-	case spec.GitLab:
-		return map[string]any{"id": id, "sha": head, "status": map[bool]string{true: "failed", false: "success"}[failed], "ref": "main"}
 	case spec.Forgejo:
 		return map[string]any{"id": id, "commit_sha": head, "status": map[bool]string{true: "failure", false: "success"}[failed]}
 	}
@@ -39,10 +43,6 @@ func runPage(t *testing.T, p spec.Product, rows []map[string]any, repeat int) wi
 	t.Helper()
 	path := apiRoot(p) + "/repos/" + selector + "/actions/runs"
 	body := jsonBody(t, map[string]any{"total_count": 1000, "workflow_runs": rows})
-	if p == spec.GitLab {
-		path = "/api/v4/projects/" + strings.ReplaceAll(selector, "/", "%2F") + "/pipelines"
-		body = jsonBody(t, rows)
-	}
 	return wire{Method: http.MethodGet, Path: path, Status: http.StatusOK, Body: body, Repeat: repeat}
 }
 
@@ -58,12 +58,6 @@ func passingRows(p spec.Product, n int) []map[string]any {
 // pullHeadRead is each product's read of the pull request's current head.
 func pullHeadRead(t *testing.T, p spec.Product, head string) wire {
 	t.Helper()
-	if p == spec.GitLab {
-		return wire{
-			Method: http.MethodGet, Path: "/api/v4/projects/" + strings.ReplaceAll(selector, "/", "%2F") + "/merge_requests/1",
-			Status: http.StatusOK, Body: jsonBody(t, map[string]any{"iid": prNumber, "sha": head}),
-		}
-	}
 	return wire{
 		Method: http.MethodGet, Path: apiRoot(p) + "/repos/" + selector + "/pulls/1",
 		Status: http.StatusOK, Body: jsonBody(t, map[string]any{"number": prNumber, "head": map[string]any{"ref": sourceBranch, "sha": head}}),
@@ -71,8 +65,8 @@ func pullHeadRead(t *testing.T, p spec.Product, head string) wire {
 }
 
 // rerunOver is the re-run of the canonical pull request on p, pinned to head, over the
-// recorded case's setup and re-run routes with its runs read replaced by routes, and
-// the requests it sent.
+// recorded case's setup and re-run routes with each read routes also answers replaced
+// by it, and the requests it sent.
 func rerunOver(t *testing.T, p spec.Product, head string, routes ...wire) ([]sent, error) {
 	t.Helper()
 	f, err := loadFixture(p, "PullRequests.RerunFailedChecks")
@@ -81,10 +75,10 @@ func rerunOver(t *testing.T, p spec.Product, head string, routes ...wire) ([]sen
 	}
 	var kept []wire
 	for _, w := range f.Routes {
-		if w.Method == http.MethodGet && (strings.HasSuffix(w.Path, "/actions/runs") || strings.HasSuffix(w.Path, "/pipelines")) {
-			continue
+		replaced := slices.ContainsFunc(routes, func(r wire) bool { return r.Method == w.Method && r.Path == w.Path })
+		if w.Method != http.MethodGet || !replaced {
+			kept = append(kept, w)
 		}
-		kept = append(kept, w)
 	}
 	srv, rec := newFixtureServer(t, fixture{path: "inline", Routes: append(routes, kept...)})
 	client := pagedClient(t, p, srv, forgeapi.WithMutations(true))
@@ -92,7 +86,7 @@ func rerunOver(t *testing.T, p spec.Product, head string, routes ...wire) ([]sen
 	return rec.since(0), err
 }
 
-// runReads is the runs reads among requests.
+// runReads is the runs reads among requests, GitLab's pipelines listing included.
 func runReads(requests []sent) []sent {
 	var out []sent
 	for _, s := range requests {
@@ -117,7 +111,7 @@ func reRunOf(requests []sent, id int) bool {
 // until a failed run turns up, and refused as a list that continues where the last
 // page the price allows came back full with none, never as a head with nothing failed.
 func TestAReRunWalksTheHeadsRunsAtThePageMaximum(t *testing.T) {
-	for _, p := range spec.Products {
+	for _, p := range walkedProducts {
 		size := runPageMaximum[p]
 		t.Run(string(p)+"_a_failed_run_on_page_2", func(t *testing.T) {
 			sent, err := rerunOver(t, p, headSHA,
@@ -172,7 +166,7 @@ func TestAReRunWalksTheHeadsRunsAtThePageMaximum(t *testing.T) {
 // failed run of another branch the instance answers beside it is never re-run.
 func TestAReRunWithNoPinReRunsARunOfThePullRequestsHead(t *testing.T) {
 	const other = "0000000000000000000000000000000000000000"
-	for _, p := range spec.Products {
+	for _, p := range walkedProducts {
 		t.Run(string(p), func(t *testing.T) {
 			sent, err := rerunOver(t, p, "", pullHeadRead(t, p, headSHA),
 				runPage(t, p, []map[string]any{runRow(p, 5, other, true), runRow(p, 7, headSHA, true)}, 1))
@@ -180,7 +174,7 @@ func TestAReRunWithNoPinReRunsARunOfThePullRequestsHead(t *testing.T) {
 				t.Fatalf("RerunFailedChecks with no pin on %s = %v, want the re-run of run 7", p, err)
 			}
 			reads := runReads(sent)
-			if len(reads) != 1 || reads[0].query.Get(map[bool]string{true: "sha", false: "head_sha"}[p == spec.GitLab]) != headSHA {
+			if len(reads) != 1 || reads[0].query.Get("head_sha") != headSHA {
 				t.Errorf("RerunFailedChecks with no pin on %s read the runs as %v, want one read filtered by the pull request's head", p, reads)
 			}
 			if reRunOf(sent, 5) || !reRunOf(sent, 7) {
@@ -195,6 +189,90 @@ func TestAReRunWithNoPinReRunsARunOfThePullRequestsHead(t *testing.T) {
 			}
 			if reads := runReads(sent); len(reads) != 0 || len(writes(sent)) != 0 {
 				t.Errorf("RerunFailedChecks on a pull request with no head on %s sent %s, want no run read and no write", p, describeRequests(sent))
+			}
+		})
+	}
+}
+
+// gitlabProject is the canonical project as GitLab's routes address it.
+var gitlabProject = "/api/v4/projects/" + strings.ReplaceAll(selector, "/", "%2F")
+
+// headPipelineRead is GitLab's read of the canonical merge request on head, its head
+// pipeline answered as pipeline, or null where pipeline is nil.
+func headPipelineRead(t *testing.T, head string, pipeline map[string]any) wire {
+	t.Helper()
+	return wire{
+		Method: http.MethodGet, Path: gitlabProject + "/merge_requests/1", Status: http.StatusOK,
+		Body: jsonBody(t, map[string]any{"iid": prNumber, "sha": head, "source_project_id": 1, "target_project_id": 1, "head_pipeline": pipeline}),
+	}
+}
+
+// GitLab's checks verdict is the merge request's head pipeline, so its re-run retries
+// that pipeline, at its own project: on merged results it runs on a merge commit of
+// the head and on a fork's merge request in the fork's project, the two shapes a
+// listing filtered by the head misses. The merged results shape is the documented
+// single merge request example's (https://docs.gitlab.com/api/merge_requests/), whose
+// head pipeline's sha differs from the merge request's and whose ref is
+// refs/merge-requests/:iid/merge.
+func TestAGitLabReRunRetriesTheMergeRequestsHeadPipeline(t *testing.T) {
+	const mergeCommit = "1604b0c46c395822e4e9478777f8e54ac99fe5b9"
+	pipeline := func(project int, sha, ref, status string) map[string]any {
+		return map[string]any{"id": 538, "project_id": project, "sha": sha, "ref": ref, "status": status}
+	}
+	forkRetry := wire{Method: http.MethodPost, Path: "/api/v4/projects/99/pipelines/538/retry", Status: http.StatusCreated, Body: jsonBody(t, map[string]any{})}
+	for _, test := range []struct {
+		name, pin string
+		read      wire
+		retry     string
+		code      string
+	}{
+		{
+			name: "a_merged_results_pipeline", pin: headSHA,
+			read:  headPipelineRead(t, headSHA, pipeline(1, mergeCommit, "refs/merge-requests/1/merge", "failed")),
+			retry: gitlabProject + "/pipelines/538/retry",
+		},
+		{
+			name: "a_fork_pipeline_in_the_forks_project", pin: headSHA,
+			read:  headPipelineRead(t, headSHA, pipeline(99, headSHA, sourceBranch, "failed")),
+			retry: forkRetry.Path,
+		},
+		{
+			name: "a_pin_the_merge_request_moved_past", pin: mergeCommit,
+			read: headPipelineRead(t, headSHA, pipeline(1, headSHA, sourceBranch, "failed")),
+			code: forgeapi.CodeStaleHead,
+		},
+		{
+			name: "a_head_pipeline_that_passed", pin: headSHA,
+			read: headPipelineRead(t, headSHA, pipeline(1, headSHA, sourceBranch, "success")),
+			code: forgeapi.CodeRunNotFailed,
+		},
+		{
+			name: "no_head_pipeline", pin: headSHA,
+			read: headPipelineRead(t, headSHA, nil),
+			code: forgeapi.CodeRunNotFailed,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sent, err := rerunOver(t, spec.GitLab, test.pin, test.read, forkRetry)
+			if reads := runReads(sent); len(reads) != 0 {
+				t.Errorf("RerunFailedChecks on GitLab read the pipelines as %s, want the merge request read alone", describeRequests(reads))
+			}
+			w := writes(sent)
+			if test.code != "" {
+				var fe *forgeapi.Error
+				if !asForgeError(err, &fe) || fe.Code != test.code {
+					t.Errorf("RerunFailedChecks on GitLab = %v, want code %q", err, test.code)
+				}
+				if len(w) != 0 {
+					t.Errorf("RerunFailedChecks on GitLab wrote %s, want nothing", describeRequests(w))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("RerunFailedChecks on GitLab = %v, want the retry of pipeline 538", err)
+			}
+			if len(w) != 1 || w[0].path != test.retry {
+				t.Errorf("RerunFailedChecks on GitLab wrote %s, want POST %s alone: %s", describeRequests(w), test.retry, headPipelineRerun)
 			}
 		})
 	}

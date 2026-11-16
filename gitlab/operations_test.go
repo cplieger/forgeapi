@@ -35,12 +35,10 @@ const (
 
 	pipelinesBody = `[{"id": 77, "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d", "status": "failed", "ref": "main"}]`
 
-	// pipelinesMovedHeadBody is the same route answering a row whose head is NOT the
-	// one the caller pinned, which is what an instance that ignores the sha filter, a
-	// proxy that drops the query, or a merge request that moved since the row was
-	// rendered puts on the wire. The id is nonzero so the refusal cannot come from the
-	// zero-id arm instead.
-	pipelinesMovedHeadBody = `[{"id": 78, "sha": "0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293", "status": "failed", "ref": "main"}]`
+	// headPipelineBody is the merge request whose head pipeline failed on its head,
+	// which the re-run reads for the pipeline it retries.
+	headPipelineBody = `{"iid": 1, "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d", "source_project_id": 1, "target_project_id": 1,
+  "head_pipeline": {"id": 77, "project_id": 1, "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d", "ref": "example-feature", "status": "failed"}}`
 
 	mergedBody = `{"iid": 1, "state": "merged", "title": "Example pull request", "description": "Example body.",
   "author": {"username": "example-user"},
@@ -64,7 +62,6 @@ const (
 	mergeRoute        = "PUT /api/v4/projects/" + testEncoded + "/merge_requests/1/merge"
 	pipelinesRoute    = "GET /api/v4/projects/" + testEncoded + "/pipelines"
 	retryRoute        = "POST /api/v4/projects/" + testEncoded + "/pipelines/77/retry"
-	movedRetryRoute   = "POST /api/v4/projects/" + testEncoded + "/pipelines/78/retry"
 	metadataRoute     = "GET /api/v4/metadata"
 	myMergeRoute      = "GET /api/v4/merge_requests"
 	myIssuesRoute     = "GET /api/v4/issues"
@@ -356,6 +353,7 @@ func TestEveryOperationSpendsThePriceItPublishes(t *testing.T) {
 		groupIssuesRoute:  "[" + crossIssueBody + "]",
 		metadataRoute:     metadataBody,
 		pipelinesRoute:    pipelinesBody,
+		readRoute:         headPipelineBody,
 		retryRoute:        `{}`,
 		mergeRoute:        mergedBody,
 		"GET /api/v4/user": `{"username": "example-user", "name": "Example User",
@@ -434,7 +432,7 @@ func TestEveryOperationSpendsThePriceItPublishes(t *testing.T) {
 			before := h.instance.count()
 			err := h.client.RerunFailedChecks(t.Context(), repo, testPR(), testHeadSHA)
 			if spent := h.instance.count() - before; spent != 2 {
-				t.Errorf("RerunFailedChecks sent %d request(s) after the capability was resolved, want 2: the retry verb is addressed by a pipeline id, so the head has to be resolved first",
+				t.Errorf("RerunFailedChecks sent %d request(s) after the capability was resolved, want 2: the retry verb is addressed by a pipeline id, which the merge request read names",
 					spent)
 			}
 			return err
@@ -458,10 +456,10 @@ func TestEveryOperationSpendsThePriceItPublishes(t *testing.T) {
 // paid once and every later call answers from what the client holds.
 func TestTheCapabilityAccessorIsResolvedOncePerConnection(t *testing.T) {
 	h := newHarness(t, map[string]string{
-		metadataRoute:  metadataBody,
-		documentRoute:  docAcceptanceAnswer,
-		pipelinesRoute: pipelinesBody,
-		retryRoute:     `{}`,
+		metadataRoute: metadataBody,
+		documentRoute: docAcceptanceAnswer,
+		readRoute:     headPipelineBody,
+		retryRoute:    `{}`,
 	})
 	h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
 	for range 3 {
@@ -504,10 +502,10 @@ func TestTheCapabilityAccessorIsResolvedOncePerConnection(t *testing.T) {
 // and refusing there would disable a control that works on every instance of it.
 func TestTheReRunCostsTheSameOnAFreshConnectionAsOnAUsedOne(t *testing.T) {
 	routes := map[string]string{
-		metadataRoute:  metadataBody,
-		documentRoute:  docAcceptanceAnswer,
-		pipelinesRoute: pipelinesBody,
-		retryRoute:     `{}`,
+		metadataRoute: metadataBody,
+		documentRoute: docAcceptanceAnswer,
+		readRoute:     headPipelineBody,
+		retryRoute:    `{}`,
 	}
 	for _, test := range []struct {
 		name  string
@@ -536,7 +534,7 @@ func TestTheReRunCostsTheSameOnAFreshConnectionAsOnAUsedOne(t *testing.T) {
 			}
 			spent := h.instance.count() - before
 			if spent != 2 {
-				t.Errorf("RerunFailedChecks sent %d request(s), want 2: the resolving read and the retry, which is every request this row prices", spent)
+				t.Errorf("RerunFailedChecks sent %d request(s), want 2: the merge request read and the retry, which is every request this row prices", spent)
 			}
 			for _, sent := range h.instance.arrived()[before:] {
 				if sent == metadataRoute || sent == documentRoute {
@@ -678,78 +676,6 @@ func TestAMergedAnswerIsTheMergeAndAnythingElseIsNotGuessed(t *testing.T) {
 				t.Errorf("MergePR named the unreadable state %v, want %v: an answer nothing mapped has to be visible as that rather than as a merge", named, test.named)
 			}
 		})
-	}
-}
-
-// TestTheReRunRefusesAHeadThePipelinesDoNotCarry holds ONE of the pin's two arms: the
-// route answered no row at all, so the loop found nothing to retry. That is the arm an
-// instance applying the sha filter upstream takes when the merge request has moved.
-//
-// The other arm is the local comparison, held by
-// TestTheReRunRefusesAPipelineRowCarryingAnotherHead, and the two are separate because
-// an empty page reaches the refusal without ever evaluating the head at all.
-func TestTheReRunRefusesAHeadThePipelinesDoNotCarry(t *testing.T) {
-	h := newHarness(t, map[string]string{
-		metadataRoute:  metadataBody,
-		pipelinesRoute: `[]`,
-		retryRoute:     `{}`,
-	})
-	h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
-	err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), testHeadSHA)
-	var fe *forgeapi.Error
-	if !asForgeError(err, &fe) {
-		t.Fatalf("RerunFailedChecks against a head no pipeline carries = %v, want a *forgeapi.Error", err)
-	}
-	if fe.Code != forgeapi.CodeStaleHead {
-		t.Errorf("RerunFailedChecks = code %q, want %q", fe.Code, forgeapi.CodeStaleHead)
-	}
-	for _, sent := range h.instance.arrived() {
-		if sent == retryRoute {
-			t.Error("RerunFailedChecks retried a pipeline for a head the caller did not pin, which can carry deployment side effects on a commit the caller never saw")
-		}
-	}
-	if got := h.instance.query(pipelinesRoute, "sha"); got != testHeadSHA {
-		t.Errorf("the resolving read sent sha %q, want the caller's pin %q: upstream declares that filter, so the comparison here is a second check rather than the only one",
-			got, testHeadSHA)
-	}
-}
-
-// TestTheReRunRefusesAPipelineRowCarryingAnotherHead holds the arm the empty page never
-// reaches: the route answered a row, and its head is not the one the caller pinned.
-//
-// The sha is a declared parameter of that route, so a conformant instance filters
-// upstream and this comparison is the second check. It is the one that has to hold when
-// the first does not: a proxy that drops the query, a version that changes the filter's
-// meaning, or an instance that ignores it all put a foreign row on the wire, and a
-// re-run can carry deployment side effects, so a row displaying one commit's red status
-// must not act on another's.
-//
-// The instance serves the retry route the foreign row's own id addresses, so an
-// implementation that dropped the comparison would SUCCEED here rather than fail on a
-// missing route: the failure this case reports is the retry that happened.
-func TestTheReRunRefusesAPipelineRowCarryingAnotherHead(t *testing.T) {
-	h := newHarness(t, map[string]string{
-		metadataRoute:   metadataBody,
-		pipelinesRoute:  pipelinesMovedHeadBody,
-		retryRoute:      `{}`,
-		movedRetryRoute: `{}`,
-	})
-	h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
-	err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), testHeadSHA)
-	var fe *forgeapi.Error
-	if !asForgeError(err, &fe) {
-		t.Fatalf("RerunFailedChecks against a row carrying another head = %v, want a *forgeapi.Error", err)
-	}
-	if fe.Code != forgeapi.CodeStaleHead {
-		t.Errorf("RerunFailedChecks = code %q, want %q", fe.Code, forgeapi.CodeStaleHead)
-	}
-	if fe.Kind != forgeapi.KindConflict {
-		t.Errorf("RerunFailedChecks = kind %v, want %v", fe.Kind, forgeapi.KindConflict)
-	}
-	for _, sent := range h.instance.arrived() {
-		if sent == retryRoute || sent == movedRetryRoute {
-			t.Errorf("RerunFailedChecks reached %s, so it retried a pipeline built for a commit the caller never saw", sent)
-		}
 	}
 }
 

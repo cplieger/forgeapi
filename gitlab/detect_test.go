@@ -114,9 +114,9 @@ func TestTheFamilyIsEstablishedFromAMarkerRatherThanFromAVersionKey(t *testing.T
 // operation gated on it is refused before any request rather than sent to fail.
 func TestACapabilityUnknownRefusesTheOperationRatherThanSendingIt(t *testing.T) {
 	h := newHarness(t, map[string]string{
-		metadataRoute:  `{"message":"401 Unauthorized"}`,
-		pipelinesRoute: pipelinesBody,
-		retryRoute:     `{}`,
+		metadataRoute: `{"message":"401 Unauthorized"}`,
+		readRoute:     headPipelineBody,
+		retryRoute:    `{}`,
 	})
 	h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
 	if _, err := h.client.ConnectionCaps(t.Context()); err != nil {

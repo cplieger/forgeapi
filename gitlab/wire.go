@@ -229,6 +229,7 @@ type (
 	restPipeline struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
 		ID        int64     `json:"id"`
 		IID       int64     `json:"iid"`
+		ProjectID int64     `json:"project_id"`
 		SHA       string    `json:"sha"`
 		Ref       string    `json:"ref"`
 		Status    string    `json:"status"`

@@ -9,19 +9,17 @@ import (
 )
 
 // MaxRunPages is the most pages a re-run's resolving read walks for a run that
-// failed. Each family's price for [forgeapi.PullRequests.RerunFailedChecks] in
-// internal/spec counts this many reads, so a change here changes those prices.
+// failed. The GitHub, Gitea and Forgejo prices for
+// [forgeapi.PullRequests.RerunFailedChecks] in internal/spec count this many reads.
 const MaxRunPages = 3
 
 // PickRun walks a re-run's resolving read from page 1, each page read by read at
 // size rows, and answers the first row on which pick reports both that it carries
 // the head and that it failed or was cancelled. A page shorter than size ends the
-// walk, and so does page [MaxRunPages].
-//
-// Where no row qualifies the answer is the refusal, sent before any write:
-// [forgeapi.CodeRunPageTruncated] where the last page read came back full, else
-// [forgeapi.CodeStaleHead] where the caller pinned the head and no row carried it,
-// else [forgeapi.CodeRunNotFailed]. noun is the row as the refusal names it.
+// walk, and so does page [MaxRunPages]. With no such row it refuses before any
+// write: [forgeapi.CodeRunPageTruncated] after a full last page, else
+// [forgeapi.CodeStaleHead] for a pin no row carried, else
+// [forgeapi.CodeRunNotFailed], each naming the row by noun.
 func PickRun[T any](
 	ctx context.Context, c *Conn, op, noun string, size int, pinned bool,
 	read func(page int) ([]T, error), pick func(*T) (onHead, rerunnable bool),

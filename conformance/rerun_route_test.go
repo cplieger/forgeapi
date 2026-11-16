@@ -16,6 +16,7 @@ import (
 // connection read answer on a Forgejo before 17.
 const (
 	jobsRerun          = "jobs re-run"
+	headPipelineRerun  = "run re-run"
 	verbAbsentBefore17 = "error, verb absent, before 17"
 	capsBefore17       = "Caps[rerun_checks], before 17"
 )
@@ -198,6 +199,28 @@ func TestAReRunOfARunWithNoIDSendsNothing(t *testing.T) {
 					t.Errorf("RerunFailedRun on %s of run %d sent %d request(s), want none", p, id, n)
 				}
 			})
+		}
+	}
+}
+
+// A pull-request number that is not positive addresses no pull request, so every
+// product refuses a re-run of its checks before any request, pinned or not.
+func TestAReRunOfAPullRequestWithNoNumberSendsNothing(t *testing.T) {
+	for _, p := range spec.Products {
+		for _, number := range []int{0, -1} {
+			for _, pin := range []string{headSHA, ""} {
+				t.Run(string(p)+"_"+strconv.Itoa(number)+map[bool]string{true: "_pinned", false: "_unpinned"}[pin != ""], func(t *testing.T) {
+					srv, rec := newFixtureServer(t, fixture{path: "inline"})
+					client := pagedClient(t, p, srv, forgeapi.WithMutations(true))
+					err := client.(forgeapi.PullRequests).RerunFailedChecks(t.Context(), repoRef(p), forgeapi.PRRef{Number: number, Sigil: sigil(p)}, pin)
+					if fe, ok := errors.AsType[*forgeapi.Error](err); !ok || fe.Code != forgeapi.CodeRepoRefInvalid {
+						t.Errorf("RerunFailedChecks on %s of pull request %d = %v, want code %s", p, number, err, forgeapi.CodeRepoRefInvalid)
+					}
+					if n := rec.count(); n != 0 {
+						t.Errorf("RerunFailedChecks on %s of pull request %d sent %d request(s), want none", p, number, n)
+					}
+				})
+			}
 		}
 	}
 }

@@ -1637,8 +1637,8 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.RerunFailedChecks",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects/{id}/merge_requests/{merge_request_iid} for the merge request's current head where the caller brought none, then GET /api/v4/projects/{id}/pipelines filtered by that head, up to three pages of 100, to resolve a pipeline on it that failed or was canceled, then POST /api/v4/projects/{id}/pipelines/{run}/retry",
-		Requests:  Requests{Min: 2, Max: 5},
+		Exercises: "GET /api/v4/projects/{id}/merge_requests/{iid} for the merge request's head and its head pipeline, the one its checks verdict reads, then POST /api/v4/projects/{id}/pipelines/{run}/retry, addressed instead at the project that pipeline names where it is another, a fork's",
+		Requests:  Requests{Min: 2, Max: 2},
 		Needs:     "rerun_checks",
 		Support:   Supported,
 		Departures: []Departure{
@@ -1647,20 +1647,10 @@ var Table = []Entry{
 				Kind:  DiffersInShape,
 				Says:  "failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict",
 			},
-		},
-		Sends: []Sent{
 			{
-				Field: "sha",
-				Where: InQuery,
-				Holds: HoldsHeadSHA,
-				Says:  "the head the caller pinned, or the merge request's current one where the caller brought none, as the filter this product's pipelines route declares, so the retry addresses a pipeline of that commit rather than one of another branch",
-			},
-			{
-				Field: "per_page",
-				Where: InQuery,
-				Holds: HoldsLiteral,
-				Value: "100",
-				Says:  "this product's most rows on one page, so the walk for a failed pipeline reads as few pages as it can",
+				Field: "run re-run",
+				Kind:  DiffersInShape,
+				Says:  "the merge request's head pipeline rather than a run picked among the head's: on a project with merged results pipelines it ran on a merge commit of the head, and on a fork's merge request in the fork's project; one on an earlier commit is refused with CodeRunNotFailed",
 			},
 		},
 	},

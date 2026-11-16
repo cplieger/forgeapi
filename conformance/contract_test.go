@@ -385,7 +385,7 @@ var operations = []operation{
 		method:    "PullRequests.RerunFailedChecks",
 		zero:      nil,
 		mutation:  true,
-		errorArms: []string{jobsRerun, verbAbsentBefore17},
+		errorArms: []string{jobsRerun, verbAbsentBefore17, headPipelineRerun},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {

@@ -353,6 +353,12 @@ var decides = map[string]bool{
 	"Labels.AddLabels":               true,
 }
 
+// decidesNowhere are the cells of an operation above whose request carries no
+// decision on that product: GitLab's re-run takes its pipeline off the merge request
+// rather than filtering a listing by the head, a pick
+// TestAGitLabReRunRetriesTheMergeRequestsHeadPipeline holds.
+var decidesNowhere = map[spec.Product]map[string]bool{spec.GitLab: {"PullRequests.RerunFailedChecks": true}}
+
 // TestEveryRequestDecisionTheDesignNamesIsStated holds the table to the operations
 // above in both directions: each one states what it sends on every product whose
 // family serves it, and no other operation states one, because a request carrying no
@@ -360,7 +366,7 @@ var decides = map[string]bool{
 func TestEveryRequestDecisionTheDesignNamesIsStated(t *testing.T) {
 	for _, e := range spec.Table {
 		switch {
-		case !decides[e.Method]:
+		case !decides[e.Method] || decidesNowhere[e.Product][e.Method]:
 			if len(e.Sends) > 0 {
 				t.Errorf("%s on %s states %d request fact(s), want none: this operation's request carries no decision a caller makes",
 					e.Method, e.Product, len(e.Sends))

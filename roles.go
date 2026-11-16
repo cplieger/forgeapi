@@ -524,8 +524,9 @@ type PullRequests interface {
 	//
 	// A head carries a run per workflow, and the one re-run is the first on it that
 	// failed or was cancelled, looked for on up to three pages at the most rows
-	// the instance serves on one. Before any write, a head whose runs all passed
-	// or are still running is refused with [CodeRunNotFailed], and one whose
+	// the instance serves on one; GitLab re-runs the merge request's head pipeline
+	// instead (its departure below). Before any write, a head with nothing that
+	// failed or was cancelled is refused with [CodeRunNotFailed], and one whose
 	// third page came back full with none of them qualifying with
 	// [CodeRunPageTruncated].
 	//
@@ -543,7 +544,7 @@ type PullRequests interface {
 	// Per forge:
 	//
 	//	GitHub   GET /repos/{owner}/{repo}/pulls/{pull_number} for the pull request's current head where the caller brought none, then GET /repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages of 100, to resolve a run on it that failed or was cancelled, then POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where any of them answered from another address, 2 to 6 requests; needs rerun_checks
-	//	GitLab   GET /api/v4/projects/{id}/merge_requests/{merge_request_iid} for the merge request's current head where the caller brought none, then GET /api/v4/projects/{id}/pipelines filtered by that head, up to three pages of 100, to resolve a pipeline on it that failed or was canceled, then POST /api/v4/projects/{id}/pipelines/{run}/retry, 2 to 5 requests; needs rerun_checks
+	//	GitLab   GET /api/v4/projects/{id}/merge_requests/{iid} for the merge request's head and its head pipeline, the one its checks verdict reads, then POST /api/v4/projects/{id}/pipelines/{run}/retry, addressed instead at the project that pipeline names where it is another, a fork's, 2 requests; needs rerun_checks
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, both of which this product's swagger document names, 2 to 5 requests; needs rerun_checks
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 2 to 5 requests; needs rerun_checks
 	//
@@ -554,6 +555,7 @@ type PullRequests interface {
 	// GitLab departs from the normalized contract:
 	//
 	//	jobs re-run  differs in shape  failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict
+	//	run re-run   differs in shape  the merge request's head pipeline rather than a run picked among the head's: on a project with merged results pipelines it ran on a merge commit of the head, and on a fork's merge request in the fork's project; one on an earlier commit is refused with CodeRunNotFailed
 	//
 	// Forgejo departs from the normalized contract:
 	//
@@ -564,11 +566,6 @@ type PullRequests interface {
 	//
 	//	head_sha  query  the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the retry addresses a workflow run of that commit rather than one of another branch
 	//	per_page  query  this product's most rows on one page, so the walk for a failed run reads as few pages as it can
-	//
-	// GitLab sends this, where a wrong default would change the request silently:
-	//
-	//	sha       query  the head the caller pinned, or the merge request's current one where the caller brought none, as the filter this product's pipelines route declares, so the retry addresses a pipeline of that commit rather than one of another branch
-	//	per_page  query  this product's most rows on one page, so the walk for a failed pipeline reads as few pages as it can
 	//
 	// Gitea sends this, where a wrong default would change the request silently:
 	//

@@ -96,14 +96,16 @@ const (
 	// [CodeNotMergeable]. The remedy for both is reading the pull request again.
 	CodeStaleHead = "stale_head"
 	// CodeRunNotFailed is a re-run refused before any write because nothing it
-	// addresses failed or was cancelled: the run, or every run on the head. It
-	// rides [KindConflict], and the remedy is reading the checks again.
+	// addresses failed or was cancelled: the run, every run on the head, or on
+	// GitLab the merge request's head pipeline, absent or of an earlier commit
+	// included. It rides [KindConflict], and the remedy is reading the checks again.
 	CodeRunNotFailed = "run_not_failed"
-	// CodeRunPageTruncated is a re-run of a pull request's failed checks refused
-	// before any write because no run on the pages it read, at the most rows the
-	// instance serves on one, failed or was cancelled, and the last of them came
-	// back full, so such a run may sit past it. The message names the page count
-	// and size. [Checks.ListRuns] and [Checks.RerunFailedRun] reach a run past it.
+	// CodeRunPageTruncated is a re-run of a pull request's failed checks, on every
+	// family but GitLab, refused before any write because no run on the pages it
+	// read, at the most rows the instance serves on one, failed or was cancelled,
+	// and the last of them came back full, so such a run may sit past it. The
+	// message names the page count and size. [Checks.ListRuns] and
+	// [Checks.RerunFailedRun] reach a run past it.
 	CodeRunPageTruncated = "run_page_truncated"
 	// CodeValidation is a request upstream rejected as invalid, a response
 	// body this library could not decode, or a label name a creation or

@@ -16,11 +16,6 @@ import (
 // computed over, so a smaller page spends more requests for the same verdict.
 const maxStatusPageItems = 100
 
-// maxPipelinePageItems is the page size the re-run's resolving read asks for, this
-// product's own maximum, so the walk for a failed pipeline on a head with many spends
-// as few reads as it can.
-const maxPipelinePageItems = 100
-
 // maxLabelPageItems is the page size an addition's label read asks for, the most a
 // REST page serves: "per_page ... (default: 20, max: 100)", per the REST API's
 // pagination (https://docs.gitlab.com/api/rest/#offset-based-pagination).
@@ -648,13 +643,12 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 	return c.normalizeRESTPull(&record, repo, restMutated), nil
 }
 
-// RerunFailedChecks implements [forgeapi.PullRequests]: the pipeline on the head is
-// resolved first, because this product's retry is addressed by a pipeline id, by a
-// read filtered by the head (the caller's pin, or the merge request's own, read
-// first). The capability is the connection's, priced at setup by
-// [Client.ConnectionCaps]. The route takes an order parameter and this read sends
-// none, so among several failed or canceled pipelines on the head the one retried is
-// the first the instance returns.
+// RerunFailedChecks implements [forgeapi.PullRequests]: the pipeline retried is the
+// merge request's head pipeline, the one its checks verdict is read from, at the
+// project that pipeline names where it is not the addressed one. A merged results
+// pipeline runs on a merge commit and a fork's in another project, so a pipeline
+// listing filtered by the head finds neither. The capability is the connection's,
+// priced at setup by [Client.ConnectionCaps].
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
 	ctx = transport.CallWrite(ctx, op)
@@ -664,8 +658,7 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if pr.Number <= 0 {
 		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
 	}
-	pinned := headSHA != ""
-	if pinned {
+	if headSHA != "" {
 		if err := forgeapi.ValidateRef(headSHA); err != nil {
 			return err
 		}
@@ -673,43 +666,56 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if err := c.capability(ctx, op, forgeapi.CapRerunChecks); err != nil {
 		return err
 	}
-	if !pinned {
-		head, err := c.mergeRequestHead(ctx, op, repo, pr)
-		if err != nil {
-			return err
-		}
-		headSHA = head
+	var record restMergeRequest
+	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/merge_requests/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
+		return err
 	}
-	read := func(page int) ([]restPipeline, error) {
-		query := url.Values{keyPerPage: {strconv.Itoa(maxPipelinePageItems)}, keyPage: {strconv.Itoa(page)}, "sha": {headSHA}}
-		pipelines, _, err := c.readPipelines(ctx, op, repo, query)
-		return pipelines, err
-	}
-	pick := func(p *restPipeline) (onHead, rerunnable bool) {
-		status := strings.ToLower(p.Status)
-		return p.ID != 0 && p.SHA == headSHA, status == "failed" || status == "canceled"
-	}
-	pipeline, err := transport.PickRun(ctx, c.core, op, "pipeline", maxPipelinePageItems, pinned, read, pick)
+	pipeline, err := c.headPipeline(ctx, op, &record, pr, headSHA)
 	if err != nil {
 		return err
 	}
-	path := projectRoute(repo, "/pipelines/"+strconv.FormatInt(pipeline.ID, 10)+"/retry")
+	project := projectPath(repo)
+	if id := pipeline.ProjectID; id != 0 && (record.TargetProjectID == nil || *record.TargetProjectID != id) {
+		project = strconv.FormatInt(id, 10)
+	}
+	path := "/projects/" + project + "/pipelines/" + strconv.FormatInt(pipeline.ID, 10) + "/retry"
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
-// mergeRequestHead is the head commit a merge request carries now, for a re-run
-// whose caller brought no pin. A merge request answering none is refused before any
-// write.
-func (c *Client) mergeRequestHead(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef) (string, error) {
-	var record restMergeRequest
-	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/merge_requests/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
-		return "", err
+// headPipeline is the pipeline a re-run of r retries, or the refusal sent before any
+// write: no head, a pin r has moved past, no head pipeline, one that neither failed
+// nor was canceled, or one of an earlier commit.
+func (c *Client) headPipeline(ctx context.Context, op string, r *restMergeRequest, pr forgeapi.PRRef, pin string) (*restPipeline, error) {
+	refuse := func(code string, kind forgeapi.ErrorKind, message string) error {
+		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), code, kind, http.StatusOK, message)
 	}
-	if record.SHA == "" {
-		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeMissingSHA, forgeapi.KindUpstream, http.StatusOK,
-			"the merge request answered no head commit")
+	switch p := r.HeadPipeline; {
+	case r.SHA == "":
+		return nil, refuse(forgeapi.CodeMissingSHA, forgeapi.KindUpstream, "the merge request answered no head commit")
+	case pin != "" && pin != r.SHA:
+		return nil, refuse(forgeapi.CodeStaleHead, forgeapi.KindConflict, "the merge request's head is no longer the one this caller pinned")
+	case p == nil || p.ID == 0:
+		return nil, refuse(forgeapi.CodeRunNotFailed, forgeapi.KindConflict,
+			"the merge request answered no head pipeline, which it omits where none ran or this caller cannot view the project's pipelines")
+	case p.SHA != r.SHA && !mergeCommitRef(p.Ref, pr.Number):
+		return nil, refuse(forgeapi.CodeRunNotFailed, forgeapi.KindConflict,
+			"the merge request's head pipeline ran on an earlier commit, and its head has none yet")
+	default:
+		if status := strings.ToLower(p.Status); status != "failed" && status != "canceled" {
+			return nil, refuse(forgeapi.CodeRunNotFailed, forgeapi.KindConflict, "the merge request's head pipeline did not fail and was not canceled")
+		}
+		return p, nil
 	}
-	return record.SHA, nil
+}
+
+// mergeCommitRef reports whether ref is one of the refs under a merge request's own
+// namespace other than its head (merge, train, rebase_on_merge), whose pipelines run
+// on a merge of the head rather than the head itself. The REST pipeline omits the
+// source_sha GitLab matches such a pipeline by, and the merge request answers its
+// stored head_pipeline unmatched (app/models/merge_request.rb diff_head_pipeline).
+func mergeCommitRef(ref string, iid int) bool {
+	rest, ok := strings.CutPrefix(ref, "refs/merge-requests/"+strconv.Itoa(iid)+"/")
+	return ok && rest != "" && rest != "head"
 }
 
 // RerunFailedRun implements [forgeapi.Checks]: one POST to the pipeline's retry,
