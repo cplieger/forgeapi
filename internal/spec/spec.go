@@ -1141,7 +1141,7 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.CreatePR",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls",
 		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
@@ -1188,7 +1188,7 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.CreatePR",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls",
 		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
@@ -2502,7 +2502,7 @@ var Table = []Entry{
 	{
 		Method:    "Issues.CreateIssue",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues",
 		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Sends: []Sent{
@@ -2517,7 +2517,7 @@ var Table = []Entry{
 	{
 		Method:    "Issues.CreateIssue",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues",
 		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
@@ -3062,7 +3062,7 @@ var Table = []Entry{
 	{
 		Method:    "Labels.AddLabels",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written",
 		Requests:  Requests{Min: 2, Max: 3},
 		Support:   Supported,
 		Sends: []Sent{
@@ -3077,7 +3077,7 @@ var Table = []Entry{
 	{
 		Method:    "Labels.AddLabels",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing there, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written",
 		Requests:  Requests{Min: 2, Max: 3},
 		Support:   Supported,
 		Sends: []Sent{

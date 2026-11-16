@@ -1135,9 +1135,12 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 
 // labelIDs resolves the caller's label NAMES onto the numeric ids both products'
 // creation and label addition options take, from ONE page of the repository's labels
-// at the instance's stated maximum, and where a name is missing there, ONE page of
-// its owner's organization labels at the same bound, which both products' option
-// also takes. A name both pages lack is refused, never dropped: under the truncated
+// at the instance's stated maximum, and where a name is missing from that page and
+// it was the whole list, ONE page of its owner's organization labels at the same
+// bound, which both products' option also takes. A name missing from a full
+// repository page is refused as truncated before the organization is read, since the
+// repository's own label of that name may sit past the page and outranks the
+// organization's. A name both pages lack is refused, never dropped: under the truncated
 // code where either page came back full, the only witness this product gives that a
 // list continues, and as a validation where each was the whole list. A read that
 // meets a move refuses with the successor and sends no write: writing to another
@@ -1166,7 +1169,11 @@ func (c *Client) labelIDs(ctx context.Context, op string, addr *address, names [
 		byName[row.Name] = row.ID
 	}
 	read := labelRead{repo: len(rows), limit: limit}
-	if slices.ContainsFunc(names, func(name string) bool { _, ok := byName[name]; return !ok }) {
+	missing := slices.IndexFunc(names, func(name string) bool { _, ok := byName[name]; return !ok })
+	if missing >= 0 && read.repo >= read.limit {
+		return nil, c.unresolvedLabel(ctx, op, names[missing], read)
+	}
+	if missing >= 0 {
 		if read.org, read.orgFound, err = c.addOrgLabels(ctx, op, addr, query, byName); err != nil {
 			return nil, err
 		}

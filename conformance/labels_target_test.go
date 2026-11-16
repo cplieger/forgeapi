@@ -242,6 +242,21 @@ func TestAGiteaFamilyAdditionResolvesAnOrganizationLabel(t *testing.T) {
 				t.Errorf("AddLabels of an organization label on %s wrote %s, want one write carrying its id 71", p, describeRequests(w))
 			}
 		})
+		t.Run(string(p)+"_a_full_repository_page", func(t *testing.T) {
+			orgRows := jsonBody(t, []map[string]any{{"id": 71, "name": labelName, "color": "ededed"}})
+			org := wire{Method: http.MethodGet, Path: giteaOrgLabels, Status: http.StatusOK, Body: orgRows}
+			full := wire{Method: http.MethodGet, Path: labelReadPath(p), Status: http.StatusOK, Body: jsonBody(t, labelRows(labelPageMaximum[p]))}
+			arrived, _, err := labelCall(t, p, "Labels.AddLabels", forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{labelName}, full, org)
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeLabelPageTruncated {
+				t.Errorf("AddLabels past a full repository page on %s = %v, want code %q", p, err, forgeapi.CodeLabelPageTruncated)
+			}
+			for _, s := range arrived {
+				if s.path == giteaOrgLabels {
+					t.Errorf("AddLabels past a full repository page on %s read %s, want no organization read: the repository's own label may sit past the page", p, s.path)
+				}
+			}
+		})
 		t.Run(string(p)+"_a_user_owned_repository", func(t *testing.T) {
 			arrived, _, err := labelCall(t, p, "Labels.AddLabels", forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{labelName}, repoPage(t, p), userOwner)
 			var fe *forgeapi.Error
