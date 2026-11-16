@@ -187,8 +187,10 @@ var Fields = map[string]int{
 	"Checks.ListRuns":                15,
 	"Issues.ListIssues":              18,
 	"Issues.ListMyIssues":            18,
+	"Issues.ReadIssue":               15,
 	"Issues.CreateIssue":             15,
 	"Issues.CloseIssue":              15,
+	"Issues.ReopenIssue":             15,
 	"Capabilities.ConnectionCaps":    4,
 	"Capabilities.GrantCaps":         2,
 	"Capabilities.RepoAffordances":   6,
@@ -2243,6 +2245,68 @@ var Table = []Entry{
 		},
 	},
 	{
+		Method:    "Issues.ReadIssue",
+		Product:   GitHub,
+		Exercises: "GET /repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record carrying a pull-request key is answered not found; where the issue was transferred, the 301 its old address answers, whose name-addressed Location is the issue in the repository it now lives in, read there; and where the repository moved, one read against the id-addressed location to resolve the successor the stale refusal carries",
+		Requests:  Requests{Min: 0, Max: 3},
+		Support:   Supported,
+	},
+	{
+		Method:    "Issues.ReadIssue",
+		Product:   GitLab,
+		Exercises: "GET /api/v4/projects/{id}/issues/{iid}",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "Ref",
+				Kind:  DiffersInSpelling,
+				Says:  "iid int, the project's own sequence",
+			},
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-11-16, while a merge request's author answers it",
+			},
+			{
+				Field: "Labels[].Color",
+				Kind:  CannotSupply,
+				Says:  "no colour on the answer: its labels arrive as name strings, the label detail parameter of the list routes ignored on this one, measured on gitlab.com 2026-11-16",
+			},
+			{
+				Field: "Labels[].Description",
+				Kind:  CannotSupply,
+				Says:  "no description on the answer: its labels arrive as name strings, the label detail parameter of the list routes ignored on this one, measured on gitlab.com 2026-11-16",
+			},
+			{
+				Field: "State",
+				Kind:  DiffersInSpelling,
+				Says:  "state string, opened",
+			},
+		},
+	},
+	{
+		Method:    "Issues.ReadIssue",
+		Product:   Gitea,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record whose pull_request is set is answered not found, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries",
+		Requests:  Requests{Min: 1, Max: 2},
+		Support:   Supported,
+	},
+	{
+		Method:    "Issues.ReadIssue",
+		Product:   Forgejo,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record whose pull_request is set is answered not found, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries",
+		Requests:  Requests{Min: 1, Max: 2},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-11-16",
+			},
+		},
+	},
+	{
 		Method:    "Issues.CreateIssue",
 		Product:   GitHub,
 		Exercises: "POST /repos/{owner}/{repo}/issues, whose own body carries the labels the caller named, then one read against the id-addressed location to resolve the successor where it answered from another address",
@@ -2381,6 +2445,68 @@ var Table = []Entry{
 	},
 	{
 		Method:    "Issues.CloseIssue",
+		Product:   Forgejo,
+		Exercises: "PATCH /api/v1/repos/{owner}/{repo}/issues/{number}",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+		},
+	},
+	{
+		Method:    "Issues.ReopenIssue",
+		Product:   GitHub,
+		Exercises: "PATCH /repos/{owner}/{repo}/issues/{number}, then one read against the id-addressed location to resolve the successor where it answered from another address",
+		Requests:  Requests{Min: 1, Max: 2},
+		Support:   Supported,
+	},
+	{
+		Method:    "Issues.ReopenIssue",
+		Product:   GitLab,
+		Exercises: "PUT /api/v4/projects/{id}/issues/{iid}",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "Ref",
+				Kind:  DiffersInSpelling,
+				Says:  "iid int, the project's own sequence",
+			},
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it",
+			},
+			{
+				Field: "Labels[].Color",
+				Kind:  CannotSupply,
+				Says:  "no colour on the answer: its labels arrive as name strings",
+			},
+			{
+				Field: "Labels[].Description",
+				Kind:  CannotSupply,
+				Says:  "no description on the answer: its labels arrive as name strings",
+			},
+			{
+				Field: "State",
+				Kind:  DiffersInSpelling,
+				Says:  "state string, opened",
+			},
+		},
+	},
+	{
+		Method:    "Issues.ReopenIssue",
+		Product:   Gitea,
+		Exercises: "PATCH /api/v1/repos/{owner}/{repo}/issues/{number}",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+	},
+	{
+		Method:    "Issues.ReopenIssue",
 		Product:   Forgejo,
 		Exercises: "PATCH /api/v1/repos/{owner}/{repo}/issues/{number}",
 		Requests:  Requests{Min: 1, Max: 1},

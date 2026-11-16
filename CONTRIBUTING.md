@@ -25,11 +25,11 @@ FORGEAPI_LIVE_GITEA_URL=https://gitea.com go test -count=1 -run TestLive ./confo
 
 Each product-specific variable is `FORGEAPI_LIVE_<PRODUCT>_<NAME>`, with `<PRODUCT>` one of `GITHUB`, `GITLAB`, `GITEA` or `FORGEJO`. `_URL` opts a product in and `_TOKEN` adds the credentialed cases.
 
-With your own `_REPO`, also set `_REF` and `_PR`, whose defaults belong to the default project.
+With your own `_REPO`, also set `_REF` and `_PR`, whose defaults belong to the default project. The case that reads one issue reads the one `_ISSUE` names and skips where it is unset, since no default project vouches for an issue number.
 
 The write cases run only where `_SANDBOX` names the same repository as `_REPO`. Use one from an account that owns nothing else. On GitLab, keep it under a group, because the owner-scoped cases read a group route.
 
-That repository needs a `main` branch, a `seed` branch one commit ahead, an open issue, and an open pull request from `seed` into `main` that carries the `_LABEL` label. Set `_PR` to that pull request's number.
+That repository needs a `main` branch, a `seed` branch one commit ahead, an open issue, and an open pull request from `seed` into `main` that carries the `_LABEL` label. Set `_PR` to that pull request's number and `_ISSUE` to that issue's.
 
 Start no name or title there with `forgeapi-live-` or `forgeapi-ci-live-`, because the run closes or deletes everything that does.
 
@@ -43,6 +43,7 @@ FORGEAPI_LIVE_GITHUB_REPO=you/forgeapi-sandbox \
 FORGEAPI_LIVE_GITHUB_SANDBOX=you/forgeapi-sandbox \
 FORGEAPI_LIVE_GITHUB_REF=main \
 FORGEAPI_LIVE_GITHUB_PR=7 \
+FORGEAPI_LIVE_GITHUB_ISSUE=8 \
 FORGEAPI_LIVE_GITHUB_LABEL=your-label \
 go test -count=1 -v -timeout 25m -run TestLive ./conformance/
 ```

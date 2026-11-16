@@ -73,6 +73,9 @@ type operation struct {
 	// readsPR marks a read addressed at the subject's pull request, which a live
 	// run can make only where the lane says which pull request its subject holds.
 	readsPR bool
+	// readsIssue marks a read addressed at the subject's issue, which a live run
+	// can make only where the lane says which issue its subject holds.
+	readsIssue bool
 }
 
 // ownerUnresolved is the table's field for what a cross-repository list answers
@@ -560,6 +563,22 @@ var operations = []operation{
 		},
 	},
 	{
+		method:     "Issues.ReadIssue",
+		zero:       forgeapi.Issue{},
+		rowArms:    []string{authorKind},
+		readsIssue: true,
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Issues)
+			if !ok {
+				return nil, roleAbsent("Issues")
+			}
+			return r.ReadIssue(ctx, s.repo, s.issue)
+		},
+		expect: func(p spec.Product, got any) []check {
+			return issueChecks("", p, got.(forgeapi.Issue), forgeapi.IssueStateOpen)
+		},
+	},
+	{
 		method:   "Issues.CreateIssue",
 		zero:     forgeapi.Issue{},
 		rowArms:  []string{authorKind},
@@ -593,6 +612,22 @@ var operations = []operation{
 		},
 		expect: func(p spec.Product, got any) []check {
 			return issueChecks("", p, got.(forgeapi.Issue), forgeapi.IssueStateClosed)
+		},
+	},
+	{
+		method:   "Issues.ReopenIssue",
+		zero:     forgeapi.Issue{},
+		rowArms:  []string{authorKind},
+		mutation: true,
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Issues)
+			if !ok {
+				return nil, roleAbsent("Issues")
+			}
+			return r.ReopenIssue(ctx, s.repo, s.issue)
+		},
+		expect: func(p spec.Product, got any) []check {
+			return issueChecks("", p, got.(forgeapi.Issue), forgeapi.IssueStateOpen)
 		},
 	},
 	{

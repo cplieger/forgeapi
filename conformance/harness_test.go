@@ -132,29 +132,25 @@ func prRef(p spec.Product) forgeapi.PRRef {
 }
 
 // subject is what one case addresses: the canonical one offline, and the one the
-// live lane's environment names live. It is a parameter rather than a constant
-// because an offline fixture answers for example/example and a live instance
-// answers for whatever repository the operator pointed the lane at.
-//
-// The fields after ref are what a mutation writes: the text a created title starts
-// with, the label it applies, the two branches a pull request joins, and the tag a
-// release is cut at. Offline they are the canonical values; live, the mutation's
-// own setup points them at what it made in the sandbox.
-//
+// live lane's environment names live. The fields after ref are what a mutation
+// writes, which a live mutation's setup points at what it made in the sandbox.
 // prInvalid and prUnnamed say why a live subject holds no pull request a read may
-// address: the lane's pull-request variable does not hold a number, or the lane
-// named a repository and no pull request on it. Both are empty offline and wherever
-// pr is one the lane or the harness vouches for.
+// address, a variable holding no number or a named repository with none named on
+// it; issueInvalid and issueUnnamed say the same of issue, which no default
+// subject names. All four are empty offline.
 type subject struct {
-	prInvalid error
-	product   spec.Product
-	ref       string
-	prefix    string
-	label     string
-	source    string
-	target    string
-	tag       string
-	prUnnamed string
+	prInvalid    error
+	issueInvalid error
+	product      spec.Product
+	ref          string
+	prefix       string
+	label        string
+	source       string
+	target       string
+	tag          string
+	prUnnamed    string
+	// issueUnnamed is why a live subject names no issue, empty offline.
+	issueUnnamed string
 	// owner scopes the cross-repository lists to one owner's open items; empty is
 	// the viewer's own.
 	owner string
@@ -195,6 +191,7 @@ func liveSubject(p spec.Product) subject {
 	}
 	s.ref = env(p, "REF", defaultLiveRef(p))
 	s.pr, s.prUnnamed, s.prInvalid = livePullRequest(p)
+	s.issue, s.issueUnnamed, s.issueInvalid = liveIssue(p)
 	s.since = time.Time{}
 	return s
 }
@@ -220,6 +217,23 @@ func livePullRequest(p spec.Product) (forgeapi.PRRef, string, error) {
 		return forgeapi.PRRef{}, "", fmt.Errorf("%sPR = %q, want the positive number of the pull request the live reads address", prefix, raw)
 	}
 	return forgeapi.PRRef{Number: n, Sigil: sigil(p)}, "", nil
+}
+
+// liveIssue is the issue a live read of one issue addresses: the number the
+// product's ISSUE variable names, and none where it is unset, with the reason, since
+// no default project vouches for an issue at any number. A variable that is set and
+// holds no positive number is an error, as on [livePullRequest].
+func liveIssue(p spec.Product) (forgeapi.IssueRef, string, error) {
+	name := liveVar(p, "ISSUE")
+	raw := os.Getenv(name)
+	if raw == "" {
+		return forgeapi.IssueRef{}, name + " is unset, so no issue is known to exist on the live subject to read", nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return forgeapi.IssueRef{}, "", fmt.Errorf("%s = %q, want the positive number of the issue the live reads address", name, raw)
+	}
+	return forgeapi.IssueRef{Number: n}, "", nil
 }
 
 // env reads one of the live lane's per-product variables.

@@ -141,6 +141,9 @@ type (
 		Labels     []wireLabel   `json:"labels"`
 		Comments   *int          `json:"comments"`
 		Repository *wireRepoMeta `json:"repository"`
+		// PullRequest is set on the record of a pull request, which these routes
+		// answer beside issues because both share one number space.
+		PullRequest *wirePullMeta `json:"pull_request"`
 	}
 
 	wireRelease struct {

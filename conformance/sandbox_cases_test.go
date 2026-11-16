@@ -65,6 +65,28 @@ var liveMutations = map[string]liveMutation{
 			return map[string]any{"State": forgeapi.IssueStateClosed, "Title": s.prefix + issueTitle, "Body": issueBody}
 		},
 	},
+	"Issues.ReopenIssue": {
+		prepare: func(t *testing.T, l *lane, s *subject) {
+			titled(s)
+			n, err := l.openIssue(t.Context(), s.prefix+issueTitle)
+			if err != nil {
+				t.Fatalf("Setup: opening the issue the case reopens: %v", err)
+			}
+			l.later(t, "closing the issue the setup opened", func(ctx context.Context) error { return l.closeIssue(ctx, n) })
+			if err := l.closeIssue(t.Context(), n); err != nil {
+				t.Fatalf("Setup: closing the issue the case reopens: %v", err)
+			}
+			s.issue = forgeapi.IssueRef{Number: n}
+		},
+		made: func(t *testing.T, l *lane, s subject, _ any) {
+			if err := l.reopen(t.Context(), l.issuePath(s.issue.Number)); err != nil {
+				t.Errorf("reopening the issue the case reopened, now open: %v, want the forge's answer with no error, which ReopenIssue states", err)
+			}
+		},
+		fixes: func(s subject) map[string]any {
+			return map[string]any{"State": forgeapi.IssueStateOpen, "Title": s.prefix + issueTitle, "Body": issueBody}
+		},
+	},
 	"PullRequests.CreatePR": {
 		prepare: func(t *testing.T, l *lane, s *subject) {
 			titled(s)
@@ -90,6 +112,11 @@ var liveMutations = map[string]liveMutation{
 			openPullRequest(t, l, s, "reopen-pr")
 			if err := l.closePR(t.Context(), s.pr.Number); err != nil {
 				t.Fatalf("Setup: closing the pull request the case reopens: %v", err)
+			}
+		},
+		made: func(t *testing.T, l *lane, s subject, _ any) {
+			if err := l.reopen(t.Context(), l.prPath(s.pr.Number)); err != nil {
+				t.Errorf("reopening the pull request the case reopened, now open: %v, want the forge's answer with no error, which ReopenPR states", err)
 			}
 		},
 		fixes: func(s subject) map[string]any { return openedPullRequest(s, forgeapi.PRStateOpen) },

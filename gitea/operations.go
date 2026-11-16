@@ -1145,7 +1145,42 @@ func (c *Client) unresolvedLabel(ctx context.Context, op, name string, rows, lim
 
 // CloseIssue implements [forgeapi.Issues].
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
-	const op = "CloseIssue"
+	return c.setIssueState(ctx, "CloseIssue", repo, issue, stateClosed)
+}
+
+// ReopenIssue implements [forgeapi.Issues].
+func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	return c.setIssueState(ctx, "ReopenIssue", repo, issue, stateOpen)
+}
+
+// ReadIssue implements [forgeapi.Issues]. A [forgeapi.Issue] carries no successor,
+// so a repository that moved answers [forgeapi.CodeRepoRefStale] carrying it.
+func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	const op = "ReadIssue"
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return forgeapi.Issue{}, err
+	}
+	if issue.Number <= 0 {
+		return forgeapi.Issue{}, errorf(forgeapi.CodeRepoRefInvalid, "issue number is not positive")
+	}
+	addr := &address{named: repo}
+	var record wireIssue
+	if err := c.readAt(ctx, op, addr, "/issues/"+strconv.Itoa(issue.Number), nil, &record); err != nil {
+		return forgeapi.Issue{}, err
+	}
+	if stale := c.moved(ctx, op, addr); stale != nil {
+		return forgeapi.Issue{}, stale
+	}
+	if record.PullRequest != nil {
+		return forgeapi.Issue{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), "", forgeapi.KindNotFound, http.StatusOK,
+			"number "+strconv.Itoa(issue.Number)+" is a pull request on this product, and this operation reads issues only")
+	}
+	return c.normalizeIssue(&record, repo), nil
+}
+
+// setIssueState is the one transition both issue lifecycle operations make.
+func (c *Client) setIssueState(ctx context.Context, op string, repo forgeapi.RepoRef, issue forgeapi.IssueRef, state string) (forgeapi.Issue, error) {
 	ctx = transport.Call(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
@@ -1155,7 +1190,7 @@ func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue fo
 	}
 	var record wireIssue
 	rest := "/issues/" + strconv.Itoa(issue.Number)
-	if err := c.sendAt(ctx, op, http.MethodPatch, &address{named: repo}, rest, map[string]any{"state": stateClosed}, &record); err != nil {
+	if err := c.sendAt(ctx, op, http.MethodPatch, &address{named: repo}, rest, map[string]any{"state": state}, &record); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	return c.normalizeIssue(&record, repo), nil

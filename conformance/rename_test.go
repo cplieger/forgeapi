@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,7 +38,7 @@ var successorCarriers = []string{
 
 // carrierlessReads are the Gitea family's repository-addressed reads whose answer
 // declares no successor, so a rename reaches the caller through the error.
-var carrierlessReads = []string{"PullRequests.ReadPR", "Capabilities.RepoAffordances"}
+var carrierlessReads = []string{"PullRequests.ReadPR", "Capabilities.RepoAffordances", "Issues.ReadIssue"}
 
 // movedInstance serves one case's fixture where the canonical subject's repository
 // moved: every request under from, the repository's old address, answers a 301
@@ -317,7 +318,7 @@ func TestAGiteaFamilyRedirectToTheSameRepositoryIsNoRename(t *testing.T) {
 // one request the write sent.
 func TestAWriteToARenamedGiteaFamilyRepositoryRefusesWithItsSuccessor(t *testing.T) {
 	for _, p := range giteaFamilyProducts {
-		for _, method := range []string{"Issues.CloseIssue", "PullRequests.ClosePR"} {
+		for _, method := range []string{"Issues.CloseIssue", "Issues.ReopenIssue", "PullRequests.ClosePR"} {
 			e := requireEntry(t, p, method)
 			t.Run(caseName(e), func(t *testing.T) {
 				f, err := loadFixture(p, method)
@@ -370,6 +371,10 @@ func TestACreationOnARenamedGiteaFamilyRepositoryWritesNothingAfterItsReadMeetsT
 // fixtures serve over REST, where a rename is witnessed by the redirect.
 var githubRESTCarriers = []string{"Issues.ListIssues", "Releases.ListReleases", "Labels.ListLabels", "Checks.ListRuns"}
 
+// githubCarrierlessReads are GitHub's REST reads whose answer declares no successor,
+// so the rename reaches the caller through the stale refusal.
+var githubCarrierlessReads = []string{"Capabilities.RepoAffordances", "Issues.ReadIssue"}
+
 // movedRecord is the id-addressed repository record GitHub answers for the moved
 // repository: the recorded one where the case reads it, naming the successor.
 func movedRecord(t *testing.T, f fixture) []byte {
@@ -394,7 +399,7 @@ func movedRecord(t *testing.T, f fixture) []byte {
 // id-addressed, so the successor costs one further read: a one-read call sends its
 // read, the hop and the resolving read, which is the arm the table prices.
 func TestARenamedGitHubRepositorysRESTReadCostsItsReadItsHopAndOneResolvingRead(t *testing.T) {
-	for _, method := range append(append([]string(nil), githubRESTCarriers...), "Capabilities.RepoAffordances") {
+	for _, method := range append(append([]string(nil), githubRESTCarriers...), githubCarrierlessReads...) {
 		e := requireEntry(t, spec.GitHub, method)
 		t.Run(caseName(e), func(t *testing.T) {
 			f, err := loadFixture(spec.GitHub, method)
@@ -405,7 +410,7 @@ func TestARenamedGitHubRepositorysRESTReadCostsItsReadItsHopAndOneResolvingRead(
 
 			call := callOn(t, e, srv, rec)
 			succ := successorOf(call.got)
-			if method == "Capabilities.RepoAffordances" {
+			if slices.Contains(githubCarrierlessReads, method) {
 				if fe := staleCode(t, method+" on "+string(spec.GitHub)+" on a moved repository", call.err); fe != nil {
 					succ = fe.Successor
 				}

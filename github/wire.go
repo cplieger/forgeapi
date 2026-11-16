@@ -433,9 +433,10 @@ type (
 		UpdatedAt time.Time   `json:"updated_at"`
 		Labels    []restLabel `json:"labels"`
 		Comments  *int        `json:"comments"`
-		// PullRequest is the key that makes a row of the issues route a PULL
-		// REQUEST. It is read to DROP that row, because this route's population is
-		// issues and pull requests both and the operation publishes issues.
+		// PullRequest is the key that makes a record of the issues routes a PULL
+		// REQUEST, which a list drops and a read of one number refuses, because
+		// these routes' population is issues and pull requests both and the
+		// operations publish issues.
 		PullRequest *struct{} `json:"pull_request"`
 	}
 

@@ -128,17 +128,23 @@ func (c *Client) readRepoJSON(ctx context.Context, op, path string, query url.Va
 // answer leaves no response to read the hop from and is the transport failure.
 func (c *Client) readMovedJSON(ctx context.Context, op, path string, query url.Values, out any, moved *rename) (*transport.Response, error) {
 	resp, err := c.readJSON(ctx, op, path, query, out)
+	return resp, c.followMove(ctx, op, resp, err, moved)
+}
+
+// followMove is [Client.readMovedJSON]'s verdict on one read's answer, for a caller
+// that reads the hop's location itself before deciding it is a move.
+func (c *Client) followMove(ctx context.Context, op string, resp *transport.Response, err error, moved *rename) error {
 	if resp == nil || !resp.Redirected || transport.ContextSentinel(err) != nil {
-		return resp, err
+		return err
 	}
 	if !moved.read {
 		moved.read = true
 		moved.to = c.successorOf(ctx, op, resp.Ended)
 	}
 	if moved.to == nil || err != nil {
-		return resp, c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+		return c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
 	}
-	return resp, nil
+	return nil
 }
 
 // successorOf is the repository a followed hop led to, resolved at one read against
@@ -186,6 +192,37 @@ func repoIDIn(address string) string {
 		return id
 	}
 	return ""
+}
+
+// transferredTo is the repository a followed hop's location names where that location
+// is a name-addressed issue route, nil where it is not: measured 2026-11-16, this
+// product answers a transferred issue's old address with a 301 to
+// /repos/{owner}/{repo}/issues/{number} where it now lives, and a renamed
+// repository's with an id-addressed one.
+func (c *Client) transferredTo(address string) *forgeapi.RepoRef {
+	rest, ok := c.core.UnderAPI(address)
+	if !ok {
+		return nil
+	}
+	tail, ok := strings.CutPrefix(rest, "/repos/")
+	if !ok {
+		return nil
+	}
+	segments := strings.Split(tail, "/")
+	if len(segments) != 4 || segments[2] != "issues" {
+		return nil
+	}
+	owner, ownerErr := url.PathUnescape(segments[0])
+	name, nameErr := url.PathUnescape(segments[1])
+	if ownerErr != nil || nameErr != nil {
+		return nil
+	}
+	selector := owner + "/" + name
+	if forgeapi.ValidateSelector(forgeapi.FamilyGitHub, selector) != nil {
+		return nil
+	}
+	ref := repoRef(selector)
+	return &ref
 }
 
 // stale is the refusal a repository-addressed call answers when the transport followed

@@ -458,7 +458,8 @@ type PullRequests interface {
 	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	ClosePR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
 
-	// ReopenPR reopens a closed pull request and returns it.
+	// ReopenPR reopens a closed pull request and returns it. A pull request
+	// already open is answered as it stands, with no error.
 	//
 	// Per forge:
 	//
@@ -828,6 +829,32 @@ type Issues interface {
 	//	Items[].AuthorKind  cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
 	ListMyIssues(ctx context.Context, opts ...ListOption) (Page[Issue], error)
 
+	// ReadIssue reads one issue by number. A number naming a pull request, on a
+	// product whose issues and pull requests share one number space, answers
+	// [KindNotFound] with no code, since this role reads issues only. An issue
+	// the forge answers from another repository, where it now lives, carries
+	// that repository in [Issue.Repo] and its number there in [Issue.Ref].
+	//
+	// Per forge:
+	//
+	//	GitHub   GET /repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record carrying a pull-request key is answered not found; where the issue was transferred, the 301 its old address answers, whose name-addressed Location is the issue in the repository it now lives in, read there; and where the repository moved, one read against the id-addressed location to resolve the successor the stale refusal carries, 0 to 3 requests
+	//	GitLab   GET /api/v4/projects/{id}/issues/{iid}, 1 request
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record whose pull_request is set is answered not found, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 1 to 2 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record whose pull_request is set is answered not found, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 1 to 2 requests
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	Ref                   differs in spelling  iid int, the project's own sequence
+	//	AuthorKind            cannot supply        AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-11-16, while a merge request's author answers it
+	//	Labels[].Color        cannot supply        no colour on the answer: its labels arrive as name strings, the label detail parameter of the list routes ignored on this one, measured on gitlab.com 2026-11-16
+	//	Labels[].Description  cannot supply        no description on the answer: its labels arrive as name strings, the label detail parameter of the list routes ignored on this one, measured on gitlab.com 2026-11-16
+	//	State                 differs in spelling  state string, opened
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	AuthorKind  cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-11-16
+	ReadIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
+
 	// CreateIssue files an issue and returns the created object.
 	//
 	// Per forge:
@@ -882,6 +909,29 @@ type Issues interface {
 	//
 	//	AuthorKind  cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
 	CloseIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
+
+	// ReopenIssue reopens an issue and returns it as the forge now reports it. An
+	// issue already open is answered as it stands, with no error.
+	//
+	// Per forge:
+	//
+	//	GitHub   PATCH /repos/{owner}/{repo}/issues/{number}, then one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 2 requests
+	//	GitLab   PUT /api/v4/projects/{id}/issues/{iid}, 1 request
+	//	Gitea    PATCH /api/v1/repos/{owner}/{repo}/issues/{number}, 1 request
+	//	Forgejo  PATCH /api/v1/repos/{owner}/{repo}/issues/{number}, 1 request
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	Ref                   differs in spelling  iid int, the project's own sequence
+	//	AuthorKind            cannot supply        AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it
+	//	Labels[].Color        cannot supply        no colour on the answer: its labels arrive as name strings
+	//	Labels[].Description  cannot supply        no description on the answer: its labels arrive as name strings
+	//	State                 differs in spelling  state string, opened
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	AuthorKind  cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
+	ReopenIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
 }
 
 // Capabilities reads the three response-level capability scopes, so a consumer

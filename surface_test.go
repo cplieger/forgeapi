@@ -105,6 +105,8 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"type Backend interface {",
 		"func NewStore(b Backend) Store",
 		"func (r *Record) Equal(o *Record) bool",
+		"\tReadIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)\n",
+		"\tReopenIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)\n",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("surface.Generate(%q) does not render %q", ".", want)

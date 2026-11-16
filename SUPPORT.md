@@ -27,8 +27,10 @@ Where a product departs from the normalized contract, the operation's own godoc 
 | `Checks.ListRuns` | supported | supported | supported | supported |
 | `Issues.ListIssues` | supported | supported | supported | supported |
 | `Issues.ListMyIssues` | supported | supported | supported | supported |
+| `Issues.ReadIssue` | supported | supported | supported | supported |
 | `Issues.CreateIssue` | supported | supported | supported | supported |
 | `Issues.CloseIssue` | supported | supported | supported | supported |
+| `Issues.ReopenIssue` | supported | supported | supported | supported |
 | `Capabilities.ConnectionCaps` | supported | supported | supported | supported |
 | `Capabilities.GrantCaps` | supported | supported | supported | supported |
 | `Capabilities.RepoAffordances` | supported | supported | supported | supported |

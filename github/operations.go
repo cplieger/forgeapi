@@ -1497,6 +1497,51 @@ func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...
 	}, nil
 }
 
+// ReadIssue implements [forgeapi.Issues].
+func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	const op = "ReadIssue"
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return forgeapi.Issue{}, err
+	}
+	if issue.Number <= 0 {
+		return forgeapi.Issue{}, errorf(forgeapi.CodeRepoRefInvalid, "issue number is not positive")
+	}
+	var record restIssue
+	resp, err := c.readJSON(ctx, op, repoRoute(repo, "/issues/"+strconv.Itoa(issue.Number)), nil, &record)
+	home, err := c.issueHome(ctx, op, repo, resp, err)
+	if err != nil {
+		return forgeapi.Issue{}, err
+	}
+	if record.PullRequest != nil {
+		return forgeapi.Issue{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), "", forgeapi.KindNotFound, resp.Status,
+			"number "+strconv.Itoa(issue.Number)+" is a pull request on this product, and this operation reads issues only")
+	}
+	return c.normalizeIssue(&record, home), nil
+}
+
+// issueHome is the repository one issue read's answer lives in: the one the caller
+// named, or where a transfer's hop led. A hop that is no transfer is the repository's
+// move, which this answer has no carrier for, so it is the stale refusal.
+func (c *Client) issueHome(ctx context.Context, op string, repo forgeapi.RepoRef, resp *transport.Response, err error) (forgeapi.RepoRef, error) {
+	if resp != nil && resp.Redirected && transport.ContextSentinel(err) == nil {
+		if to := c.transferredTo(resp.Ended); to != nil {
+			if to.ID == repo.ID {
+				return repo, err
+			}
+			return *to, err
+		}
+	}
+	var moved rename
+	if stale := c.followMove(ctx, op, resp, err, &moved); stale != nil {
+		return forgeapi.RepoRef{}, stale
+	}
+	if moved.to != nil {
+		return forgeapi.RepoRef{}, c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+	}
+	return repo, nil
+}
+
 // CreateIssue implements [forgeapi.Issues]. It is ONE request: this product's issue
 // creation takes label NAMES, so nothing has to resolve them to identifiers first,
 // which is the difference from the pull-request creation, whose route declares no
@@ -1528,7 +1573,16 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 // CloseIssue implements [forgeapi.Issues]. This product fills the close REASON itself
 // on a plain close, measured, so the request sends the state alone.
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
-	const op = "CloseIssue"
+	return c.setIssueState(ctx, "CloseIssue", repo, issue, stateClosed)
+}
+
+// ReopenIssue implements [forgeapi.Issues].
+func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	return c.setIssueState(ctx, "ReopenIssue", repo, issue, stateOpen)
+}
+
+// setIssueState is the one transition both issue lifecycle operations make.
+func (c *Client) setIssueState(ctx context.Context, op string, repo forgeapi.RepoRef, issue forgeapi.IssueRef, state string) (forgeapi.Issue, error) {
 	ctx = transport.Call(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
@@ -1538,7 +1592,7 @@ func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue fo
 	}
 	var record restIssue
 	path := repoRoute(repo, "/issues/"+strconv.Itoa(issue.Number))
-	if err := c.sendJSON(ctx, op, http.MethodPatch, path, map[string]any{keyState: stateClosed}, &record); err != nil {
+	if err := c.sendJSON(ctx, op, http.MethodPatch, path, map[string]any{keyState: state}, &record); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	return c.normalizeIssue(&record, repo), nil

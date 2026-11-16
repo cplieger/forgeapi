@@ -478,6 +478,18 @@ func (l *lane) closeIssue(ctx context.Context, n int) error {
 	return err
 }
 
+// reopen sends the reopening the library sends to the issue or pull request at path,
+// with the lane's credential, so a case can read what the forge answers when the
+// object is already open.
+func (l *lane) reopen(ctx context.Context, path string) error {
+	if l.product == spec.GitLab {
+		_, err := l.call(ctx, http.MethodPut, path, map[string]string{"state_event": "reopen"}, nil)
+		return err
+	}
+	_, err := l.call(ctx, http.MethodPatch, path, map[string]string{"state": "open"}, nil)
+	return err
+}
+
 // The statuses a removal reads as "already gone": GitHub answers a missing ref with
 // 422 as well as 404.
 var (

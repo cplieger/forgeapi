@@ -1168,7 +1168,17 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 
 // CloseIssue implements [forgeapi.Issues].
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
-	const op = "CloseIssue"
+	return c.setIssueState(ctx, "CloseIssue", repo, issue, "close")
+}
+
+// ReopenIssue implements [forgeapi.Issues].
+func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	return c.setIssueState(ctx, "ReopenIssue", repo, issue, "reopen")
+}
+
+// setIssueState is the one transition both issue lifecycle operations make, event
+// being the state_event value the update route takes.
+func (c *Client) setIssueState(ctx context.Context, op string, repo forgeapi.RepoRef, issue forgeapi.IssueRef, event string) (forgeapi.Issue, error) {
 	ctx = transport.Call(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
@@ -1178,7 +1188,24 @@ func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue fo
 	}
 	var record restIssue
 	path := projectRoute(repo, "/issues/"+strconv.Itoa(issue.Number))
-	if err := c.sendJSON(ctx, op, http.MethodPut, path, map[string]any{keyStateEvent: "close"}, &record); err != nil {
+	if err := c.sendJSON(ctx, op, http.MethodPut, path, map[string]any{keyStateEvent: event}, &record); err != nil {
+		return forgeapi.Issue{}, err
+	}
+	return c.normalizeIssue(&record, repo), nil
+}
+
+// ReadIssue implements [forgeapi.Issues].
+func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	const op = "ReadIssue"
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return forgeapi.Issue{}, err
+	}
+	if issue.Number <= 0 {
+		return forgeapi.Issue{}, errorf(forgeapi.CodeRepoRefInvalid, "issue number is not positive")
+	}
+	var record restIssue
+	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/issues/"+strconv.Itoa(issue.Number)), nil, &record); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	return c.normalizeIssue(&record, repo), nil
