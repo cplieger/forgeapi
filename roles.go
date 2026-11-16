@@ -128,47 +128,54 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRList document, asking for at most 30 rows a page whatever the page bound asks, since a page of 50 of its rows answered 502 on 8 of 15 attempts on two large repositories, 1 request per page
-	//	GitLab   the PRList document, or GET /api/v4/projects/{id}/merge_requests where this connection's setup found the documents refused, 1 request per page; needs read_merge_state
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus one per row
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus one per row
+	//	GitHub   the PRList document, asking for at most 30 rows a page whatever the page bound asks, since a page of 50 of its rows answered 502 on 8 of 15 attempts on two large repositories; each row selects latestOpinionatedReviews(first: 20), one review per reviewer, and a row naming more than 20 reviewers answers both counts CountUnknown with pagination_cap on its Partial, 1 request per page
+	//	GitLab   the PRList document, or GET /api/v4/projects/{id}/merge_requests where this connection's setup found the documents refused; each row selects approvedBy.count and the review state of its first 100 reviewers, and a row whose reviewers continue past them answers ChangesRequested CountUnknown with pagination_cap on its Partial; the REST route carries neither, so that arm answers both counts CountUnknown, 1 request per page; needs read_merge_state
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, then under the same per-interval admission one page of each row's reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on the row's Partial, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus 2 per row
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, then under the same per-interval admission one page of each row's reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on the row's Partial, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus 2 per row
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Items[].Comments                                          differs in shape  totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16
-	//	Items[].Action.Checks, under a fine-grained token         cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup
-	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply     SupportUnknown on every row: the document leaves mergeable out of the request
-	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply     MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
+	//	Items[].Comments                                                                                               differs in shape  totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16
+	//	Items[].Action.Checks, under a fine-grained token                                                              cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup
+	//	Items[].Action.Mergeable, under WithMergeState(false)                                                          cannot supply     SupportUnknown on every row: the document leaves mergeable out of the request
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)                                                       cannot supply     MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
+	//	Items[].Action.Approvals, under WithReviews(false), Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply     CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Items[].Ref                                               differs in spelling  iid, sigil "!"
-	//	Items[].Labels[].Name                                     differs in spelling  labels.nodes[].title, not name
-	//	Items[].Labels[].Color                                    differs in spelling  color string, leading #
-	//	Items[].Action.Checks                                     differs in shape     headPipeline.status scalar, no fold
-	//	Items[].Action.ChecksPassing .. ChecksTotal               cannot supply        absent: one scalar status
-	//	Items[].Action.QueueState                                 cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
-	//	Items[].Action.QueuePosition                              cannot supply        no position; train index null
-	//	Successor                                                 cannot supply        nil: GraphQL sends no successor
-	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply        SupportUnknown on every row: the document leaves mergeable out of the request, and the REST route reads none on a list row
-	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply        MergeBlockUnknown on every row: the document leaves detailedMergeStatus out of the request, and the REST route reads none on a list row
+	//	Items[].Ref                                                differs in spelling  iid, sigil "!"
+	//	Items[].Labels[].Name                                      differs in spelling  labels.nodes[].title, not name
+	//	Items[].Labels[].Color                                     differs in spelling  color string, leading #
+	//	Items[].Action.Checks                                      differs in shape     headPipeline.status scalar, no fold
+	//	Items[].Action.ChecksPassing .. ChecksTotal                cannot supply        absent: one scalar status
+	//	Items[].Action.QueueState                                  cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
+	//	Items[].Action.QueuePosition                               cannot supply        no position; train index null
+	//	Successor                                                  cannot supply        nil: GraphQL sends no successor
+	//	Items[].Action.Mergeable, under WithMergeState(false)      cannot supply        SupportUnknown on every row: the document leaves mergeable out of the request, and the REST route reads none on a list row
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)   cannot supply        MergeBlockUnknown on every row: the document leaves detailedMergeStatus out of the request, and the REST route reads none on a list row
+	//	Items[].Action.Approvals                                   differs in shape     approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review
+	//	Items[].Action.ChangesRequested                            differs in shape     the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented
+	//	Items[].Action.Approvals, under WithReviews(false)         cannot supply        CountUnknown on every row: the document leaves approvedBy out of the request, and the REST route reads none
+	//	Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply        CountUnknown on every row: the document leaves reviewers out of the request, and the REST route reads none
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Items[].Action.AutoMergeArmed                          cannot supply  no auto_merge key: unknown
-	//	Items[].Action.QueueState                              cannot supply  QueueNone always
-	//	Items[].Action.QueuePosition                           cannot supply  QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked                            cannot supply  mergeable and draft, no reason
-	//	Items[].Action.Mergeable, under WithMergeState(false)  cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
+	//	Items[].Action.AutoMergeArmed                                                                                  cannot supply  no auto_merge key: unknown
+	//	Items[].Action.QueueState                                                                                      cannot supply  QueueNone always
+	//	Items[].Action.QueuePosition                                                                                   cannot supply  QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                                                                                    cannot supply  mergeable and draft, no reason
+	//	Items[].Action.Mergeable, under WithMergeState(false)                                                          cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
+	//	Items[].Action.Approvals, under WithReviews(false), Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply  CountUnknown on every row: no row's reviews are read, which spends one request per row less
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	Items[].AuthorKind                                     cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Items[].Action.AutoMergeArmed                          cannot supply  no auto_merge key: unknown
-	//	Items[].Action.QueueState                              cannot supply  QueueNone always
-	//	Items[].Action.QueuePosition                           cannot supply  QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked                            cannot supply  mergeable and draft, no reason
-	//	Items[].Action.Mergeable, under WithMergeState(false)  cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
+	//	Items[].AuthorKind                                                                                             cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Items[].Action.AutoMergeArmed                                                                                  cannot supply  no auto_merge key: unknown
+	//	Items[].Action.QueueState                                                                                      cannot supply  QueueNone always
+	//	Items[].Action.QueuePosition                                                                                   cannot supply  QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                                                                                    cannot supply  mergeable and draft, no reason
+	//	Items[].Action.Mergeable, under WithMergeState(false)                                                          cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
+	//	Items[].Action.Approvals, under WithReviews(false), Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply  CountUnknown on every row: no row's reviews are read, which spends one request per row less
 	ListPRs(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[PullRequest], error)
 
 	// ListMyPRs lists the credential's OPEN pull requests across every repository it
@@ -182,19 +189,20 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRMine search document, asking for at most 15 rows a page whatever the page bound asks, since a page of 25 of its rows answered 502 on 2 of 5 attempts under an owner holding 57,746 open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user, 1 request per page
+	//	GitHub   the PRMine search document, asking for at most 15 rows a page whatever the page bound asks, since a page of 25 of its rows answered 502 on 2 of 5 attempts under an owner holding 57,746 open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user; each row selects latestOpinionatedReviews(first: 20), one review per reviewer, and a row naming more than 20 reviewers answers both counts CountUnknown with pagination_cap on its Partial, 1 request per page
 	//	GitLab   GET /api/v4/merge_requests?scope=created_by_me; under an owner scope GET /api/v4/groups/{owner}/merge_requests with the open state, which answers 404 for a user's own namespace; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page; on either route, GET /api/v4/projects/{id} once for each distinct fork a row's source_project_id names, 1 to 2 requests per page plus up to one per row
 	//	Gitea    GET /api/v1/repos/issues/search filtered to pull requests and to the rows the authenticated credential created, whose rows carry no head commit and therefore no folded status; under an owner scope the same route filtered by owner={owner} in place of created=true, 1 request per page
 	//	Forgejo  GET /api/v1/repos/issues/search filtered to pull requests and to the rows the authenticated credential created, whose rows carry no head commit and therefore no folded status; under an owner scope the same route filtered by owner={owner} in place of created=true, 1 request per page
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Items[].Comments                                          differs in shape  totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16
-	//	Items[].Action.Checks, under a fine-grained token         cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on this document
-	//	Next                                                      differs in shape  a continuation while hasNextPage holds, as on a viewer's first page of 20 rows over issueCount 23; past the search connection's 1,000th result, where it answers hasNextPage false while issueCount states 2673, and a page asked for after it answers no rows and a null end cursor, so a walk ends there with no continuation and carries result_window
-	//	error, owner unresolved                                   cannot supply     empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open
-	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply     SupportUnknown on every row: the document leaves mergeable out of the request
-	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply     MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
+	//	Items[].Comments                                                                                               differs in shape  totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16
+	//	Items[].Action.Checks, under a fine-grained token                                                              cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on this document
+	//	Next                                                                                                           differs in shape  a continuation while hasNextPage holds, as on a viewer's first page of 20 rows over issueCount 23; past the search connection's 1,000th result, where it answers hasNextPage false while issueCount states 2673, and a page asked for after it answers no rows and a null end cursor, so a walk ends there with no continuation and carries result_window
+	//	error, owner unresolved                                                                                        cannot supply     empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open
+	//	Items[].Action.Mergeable, under WithMergeState(false)                                                          cannot supply     SupportUnknown on every row: the document leaves mergeable out of the request
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)                                                       cannot supply     MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
+	//	Items[].Action.Approvals, under WithReviews(false), Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply     CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request
 	//
 	// GitLab departs from the normalized contract:
 	//
@@ -210,39 +218,42 @@ type PullRequests interface {
 	//	Items[].Partial                                            cannot supply        nil: no status read runs for a list row, which carries no head_pipeline
 	//	error, owner unresolved                                    cannot supply        404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds
 	//	Items[], from an archived repository under an owner scope  cannot supply        none: the group route's non_archived defaults to true
+	//	Items[].Action.Approvals .. ChangesRequested               cannot supply        CountUnknown: a REST list row carries no approval count and no reviewer review state
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Items[].Comments                             differs in shape  comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted
-	//	Items[].SourceBranch, Items[].SourceRepo     cannot supply     no head key on an issue-search row
-	//	Items[].TargetBranch                         cannot supply     no base key on an issue-search row
-	//	Items[].HeadSHA                              cannot supply     no head key on an issue-search row
-	//	Items[].Action.Mergeable                     cannot supply     no mergeable key on an issue-search row
-	//	Items[].Action.Checks                        cannot supply     CheckUnknown: no head commit on an issue-search row, so no status read addresses it
-	//	Items[].Action.ChecksPassing .. ChecksTotal  cannot supply     zero: no fold runs on a row that carries no head commit
-	//	Items[].Action.AutoMergeArmed                cannot supply     no auto-merge key on an issue-search row
-	//	Items[].Action.QueueState                    cannot supply     QueueNone always
-	//	Items[].Action.QueuePosition                 cannot supply     QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked                  cannot supply     no merge-blocked key on an issue-search row
-	//	Items[].Partial                              cannot supply     nil: no fold runs on a row that carries no head commit, so none can stop short
-	//	Items[].Draft                                differs in shape  draft on the pull_request object, not at the row's top level
+	//	Items[].Comments                              differs in shape  comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted
+	//	Items[].SourceBranch, Items[].SourceRepo      cannot supply     no head key on an issue-search row
+	//	Items[].TargetBranch                          cannot supply     no base key on an issue-search row
+	//	Items[].HeadSHA                               cannot supply     no head key on an issue-search row
+	//	Items[].Action.Mergeable                      cannot supply     no mergeable key on an issue-search row
+	//	Items[].Action.Checks                         cannot supply     CheckUnknown: no head commit on an issue-search row, so no status read addresses it
+	//	Items[].Action.ChecksPassing .. ChecksTotal   cannot supply     zero: no fold runs on a row that carries no head commit
+	//	Items[].Action.AutoMergeArmed                 cannot supply     no auto-merge key on an issue-search row
+	//	Items[].Action.QueueState                     cannot supply     QueueNone always
+	//	Items[].Action.QueuePosition                  cannot supply     QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                   cannot supply     no merge-blocked key on an issue-search row
+	//	Items[].Partial                               cannot supply     nil: no fold runs on a row that carries no head commit, so none can stop short
+	//	Items[].Draft                                 differs in shape  draft on the pull_request object, not at the row's top level
+	//	Items[].Action.Approvals .. ChangesRequested  cannot supply     CountUnknown: an issue-search row carries no review key, and this list reads nothing per row
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	Items[].Comments                             differs in shape  comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted
-	//	Items[].AuthorKind                           cannot supply     AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Items[].SourceBranch, Items[].SourceRepo     cannot supply     no head key on an issue-search row
-	//	Items[].TargetBranch                         cannot supply     no base key on an issue-search row
-	//	Items[].HeadSHA                              cannot supply     no head key on an issue-search row
-	//	Items[].Action.Mergeable                     cannot supply     no mergeable key on an issue-search row
-	//	Items[].Action.Checks                        cannot supply     CheckUnknown: no head commit on an issue-search row, so no status read addresses it
-	//	Items[].Action.ChecksPassing .. ChecksTotal  cannot supply     zero: no fold runs on a row that carries no head commit
-	//	Items[].Action.AutoMergeArmed                cannot supply     no auto-merge key on an issue-search row
-	//	Items[].Action.QueueState                    cannot supply     QueueNone always
-	//	Items[].Action.QueuePosition                 cannot supply     QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked                  cannot supply     no merge-blocked key on an issue-search row
-	//	Items[].Partial                              cannot supply     nil: no fold runs on a row that carries no head commit, so none can stop short
-	//	Items[].Draft                                differs in shape  draft on the pull_request object, not at the row's top level
+	//	Items[].Comments                              differs in shape  comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted
+	//	Items[].AuthorKind                            cannot supply     AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Items[].SourceBranch, Items[].SourceRepo      cannot supply     no head key on an issue-search row
+	//	Items[].TargetBranch                          cannot supply     no base key on an issue-search row
+	//	Items[].HeadSHA                               cannot supply     no head key on an issue-search row
+	//	Items[].Action.Mergeable                      cannot supply     no mergeable key on an issue-search row
+	//	Items[].Action.Checks                         cannot supply     CheckUnknown: no head commit on an issue-search row, so no status read addresses it
+	//	Items[].Action.ChecksPassing .. ChecksTotal   cannot supply     zero: no fold runs on a row that carries no head commit
+	//	Items[].Action.AutoMergeArmed                 cannot supply     no auto-merge key on an issue-search row
+	//	Items[].Action.QueueState                     cannot supply     QueueNone always
+	//	Items[].Action.QueuePosition                  cannot supply     QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                   cannot supply     no merge-blocked key on an issue-search row
+	//	Items[].Partial                               cannot supply     nil: no fold runs on a row that carries no head commit, so none can stop short
+	//	Items[].Draft                                 differs in shape  draft on the pull_request object, not at the row's top level
+	//	Items[].Action.Approvals .. ChangesRequested  cannot supply     CountUnknown: an issue-search row carries no review key, and this list reads nothing per row
 	ListMyPRs(ctx context.Context, opts ...ListOption) (Page[PullRequest], error)
 
 	// ReadPR reads one pull request.
@@ -291,10 +302,10 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address, 0 to 3 requests
-	//	GitLab   the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused, 1 request; needs read_merge_state
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 2 to 4 requests
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 2 to 4 requests
+	//	GitHub   the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address; the document selects latestOpinionatedReviews(first: 20), and more than 20 reviewers answer both counts CountUnknown with pagination_cap on Partial, as does the REST record, which carries no review, 0 to 3 requests
+	//	GitLab   the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused; the document selects approvedBy.count and the review state of the first 100 reviewers, and reviewers continuing past them answer ChangesRequested CountUnknown with pagination_cap on Partial; the REST record carries neither, so that arm answers both counts CountUnknown, 1 request; needs read_merge_state
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial, 2 to 5 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial, 2 to 5 requests
 	//
 	// GitHub departs from the normalized contract:
 	//
@@ -310,6 +321,8 @@ type PullRequests interface {
 	//	Action.ChecksPassing .. ChecksTotal  cannot supply        absent: one scalar status
 	//	Action.QueueState                    cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
 	//	Action.QueuePosition                 cannot supply        no position; train index null
+	//	Action.Approvals                     differs in shape     approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review
+	//	Action.ChangesRequested              differs in shape     the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented
 	//
 	// Gitea departs from the normalized contract:
 	//
@@ -343,36 +356,40 @@ type PullRequests interface {
 	//	Action.QueueState                                    cannot supply  no merge-queue key among 46
 	//	Action.QueuePosition                                 cannot supply  no queue key, so unknown
 	//	Action.MergeBlocked                                  cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the creation lands, unknown on every creation measured
+	//	Action.Approvals .. ChangesRequested                 cannot supply  CountUnknown: the REST pull-request record a mutation answers carries no review
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Ref                                  differs in spelling  iid, sigil "!"
-	//	Labels[].Color                       cannot supply        no colour on the answer: its labels arrive as name strings
-	//	Labels[].Description                 cannot supply        no description on the answer: its labels arrive as name strings
-	//	Action.Mergeable                     cannot supply        merge_status checking and detailed_merge_status preparing on the answer, unknown until the asynchronous check settles
-	//	Action.Checks                        cannot supply        CheckUnknown: head_pipeline null on the creation answer, which the product sets after it, null here although the source branch's pipeline had already started on its head
-	//	Action.ChecksPassing .. ChecksTotal  cannot supply        zero: head_pipeline null on the answer, so no status to count
-	//	Action.QueueState                    cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
-	//	Action.QueuePosition                 cannot supply        QueuePositionUnknown: no merge-train key on the answer
-	//	Action.MergeBlocked                  cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the creation lands, preparing on every creation measured
-	//	State                                differs in spelling  state string, opened
+	//	Ref                                   differs in spelling  iid, sigil "!"
+	//	Labels[].Color                        cannot supply        no colour on the answer: its labels arrive as name strings
+	//	Labels[].Description                  cannot supply        no description on the answer: its labels arrive as name strings
+	//	Action.Mergeable                      cannot supply        merge_status checking and detailed_merge_status preparing on the answer, unknown until the asynchronous check settles
+	//	Action.Checks                         cannot supply        CheckUnknown: head_pipeline null on the creation answer, which the product sets after it, null here although the source branch's pipeline had already started on its head
+	//	Action.ChecksPassing .. ChecksTotal   cannot supply        zero: head_pipeline null on the answer, so no status to count
+	//	Action.QueueState                     cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
+	//	Action.QueuePosition                  cannot supply        QueuePositionUnknown: no merge-train key on the answer
+	//	Action.MergeBlocked                   cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the creation lands, preparing on every creation measured
+	//	State                                 differs in spelling  state string, opened
+	//	Action.Approvals .. ChangesRequested  cannot supply        CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	AuthorKind                            cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	//
 	// GitHub sends this, where a wrong default would change the request silently:
 	//
@@ -401,40 +418,44 @@ type PullRequests interface {
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Action.Mergeable      cannot supply  unknown on a mutation's own answer, whose mergeable is the asynchronous check's state as the close lands: null before the check settles, true after it
-	//	Action.QueueState     cannot supply  no merge-queue key among 46
-	//	Action.QueuePosition  cannot supply  no queue key, so unknown
-	//	Action.MergeBlocked   cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the close lands: unknown before the check settles, clean after it
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable is the asynchronous check's state as the close lands: null before the check settles, true after it
+	//	Action.QueueState                     cannot supply  no merge-queue key among 46
+	//	Action.QueuePosition                  cannot supply  no queue key, so unknown
+	//	Action.MergeBlocked                   cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the close lands: unknown before the check settles, clean after it
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the REST pull-request record a mutation answers carries no review
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Ref                                  differs in spelling  iid, sigil "!"
-	//	SourceRepo                           differs in shape     source_project_id beside target_project_id, a fork named by id alone: the addressed project where the two are equal, the zero value otherwise
-	//	Labels[].Color                       cannot supply        no colour on the answer: its labels arrive as name strings
-	//	Labels[].Description                 cannot supply        no description on the answer: its labels arrive as name strings
-	//	Action.Mergeable                     cannot supply        merge_status checking and detailed_merge_status preparing on the answer before the asynchronous check settles, can_be_merged and not_open after it, unknown on both: the REST arm reads no mergeable flag
-	//	Action.Checks                        differs in shape     head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran
-	//	Action.ChecksPassing .. ChecksTotal  cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
-	//	Action.QueueState                    cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
-	//	Action.QueuePosition                 cannot supply        QueuePositionUnknown: no merge-train key on the answer
-	//	Action.MergeBlocked                  cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the close lands: preparing before the check settles, not_open after it, checking after a reopen
+	//	Ref                                   differs in spelling  iid, sigil "!"
+	//	SourceRepo                            differs in shape     source_project_id beside target_project_id, a fork named by id alone: the addressed project where the two are equal, the zero value otherwise
+	//	Labels[].Color                        cannot supply        no colour on the answer: its labels arrive as name strings
+	//	Labels[].Description                  cannot supply        no description on the answer: its labels arrive as name strings
+	//	Action.Mergeable                      cannot supply        merge_status checking and detailed_merge_status preparing on the answer before the asynchronous check settles, can_be_merged and not_open after it, unknown on both: the REST arm reads no mergeable flag
+	//	Action.Checks                         differs in shape     head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran
+	//	Action.ChecksPassing .. ChecksTotal   cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
+	//	Action.QueueState                     cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
+	//	Action.QueuePosition                  cannot supply        QueuePositionUnknown: no merge-train key on the answer
+	//	Action.MergeBlocked                   cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the close lands: preparing before the check settles, not_open after it, checking after a reopen
+	//	Action.Approvals .. ChangesRequested  cannot supply        CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	AuthorKind                            cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	ClosePR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
 
 	// ReopenPR reopens a closed pull request and returns it.
@@ -448,41 +469,45 @@ type PullRequests interface {
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Action.Mergeable      cannot supply  unknown on a mutation's own answer, whose mergeable is the asynchronous check's state as the reopen lands, null on every reopen measured
-	//	Action.QueueState     cannot supply  no merge-queue key among 46
-	//	Action.QueuePosition  cannot supply  no queue key, so unknown
-	//	Action.MergeBlocked   cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the reopen lands, unknown on every reopen measured
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable is the asynchronous check's state as the reopen lands, null on every reopen measured
+	//	Action.QueueState                     cannot supply  no merge-queue key among 46
+	//	Action.QueuePosition                  cannot supply  no queue key, so unknown
+	//	Action.MergeBlocked                   cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the reopen lands, unknown on every reopen measured
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the REST pull-request record a mutation answers carries no review
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Ref                                  differs in spelling  iid, sigil "!"
-	//	SourceRepo                           differs in shape     source_project_id beside target_project_id, a fork named by id alone: the addressed project where the two are equal, the zero value otherwise
-	//	Labels[].Color                       cannot supply        no colour on the answer: its labels arrive as name strings
-	//	Labels[].Description                 cannot supply        no description on the answer: its labels arrive as name strings
-	//	Action.Mergeable                     cannot supply        merge_status unchecked and detailed_merge_status unchecked on the answer, unknown until the asynchronous check settles
-	//	Action.Checks                        differs in shape     head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran
-	//	Action.ChecksPassing .. ChecksTotal  cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
-	//	Action.QueueState                    cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
-	//	Action.QueuePosition                 cannot supply        QueuePositionUnknown: no merge-train key on the answer
-	//	Action.MergeBlocked                  cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the reopen lands, unchecked on every reopen measured, the status a reopen resets to
-	//	State                                differs in spelling  state string, opened, closed_at cleared
+	//	Ref                                   differs in spelling  iid, sigil "!"
+	//	SourceRepo                            differs in shape     source_project_id beside target_project_id, a fork named by id alone: the addressed project where the two are equal, the zero value otherwise
+	//	Labels[].Color                        cannot supply        no colour on the answer: its labels arrive as name strings
+	//	Labels[].Description                  cannot supply        no description on the answer: its labels arrive as name strings
+	//	Action.Mergeable                      cannot supply        merge_status unchecked and detailed_merge_status unchecked on the answer, unknown until the asynchronous check settles
+	//	Action.Checks                         differs in shape     head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran
+	//	Action.ChecksPassing .. ChecksTotal   cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
+	//	Action.QueueState                     cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
+	//	Action.QueuePosition                  cannot supply        QueuePositionUnknown: no merge-train key on the answer
+	//	Action.MergeBlocked                   cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the reopen lands, unchecked on every reopen measured, the status a reopen resets to
+	//	State                                 differs in spelling  state string, opened, closed_at cleared
+	//	Action.Approvals .. ChangesRequested  cannot supply        CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the reopen lands, true on every reopen measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the reopen lands, true on every reopen measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the reopen lands, false on one reopen measured and true on the others
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	AuthorKind                            cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the reopen lands, false on one reopen measured and true on the others
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	ReopenPR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
 
 	// RerunFailedChecks re-runs the failed CI of a pull request.

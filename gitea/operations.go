@@ -85,28 +85,13 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	}, nil
 }
 
-// ListPRs implements [forgeapi.PullRequests].
-//
-// There is no document to fold the merge state into this call, so what the list
-// carries is what the REST list carries, and a state it cannot read is reported
-// unknown rather than guessed. The folded check verdict for each row is a
-// separate read with a separate cap; see [Client.CommitStatus].
-//
-// That read is BOUNDED on this path, which is the same rule every family's list
-// follows arriving in another transport: one page of the status endpoint per row,
-// and a row whose status had a further page answers [forgeapi.CheckUnknown] with
-// [forgeapi.PartialPaginationCap] on [forgeapi.PullRequest.Partial]. A row the
-// client's per-interval cap left unread carries [forgeapi.PartialBudget] instead,
-// which is a different fact: the fold was not issued rather than truncated.
-//
-// Which rows those are is decided per LIST. The rotation this call resumes from is
-// this repository's own, so no row of it starves across intervals, and nothing here
-// schedules across repositories: a caller sweeping several through this call on one
-// connection gives the first lists the folds and the later ones none inside one
-// interval, in the order it chose. [Client.ListMyPRs] is the call whose rows span
-// repositories, and it issues no fold and spends no part of the per-interval cap,
-// because an issue-search row carries no head to address one by; the verdict for a
-// row a consumer opens is [Client.ReadPR] or [Client.CommitStatus].
+// ListPRs implements [forgeapi.PullRequests]. Each row's status fold and, under
+// [forgeapi.WithReviews], its reviews are one page each, read in rotation order under
+// the client's per-interval cap: a status with a further page answers
+// [forgeapi.CheckUnknown] with [forgeapi.PartialPaginationCap], and a row the cap
+// leaves unread carries [forgeapi.PartialBudget]. The rotation is this repository's
+// own, so no row starves across intervals, and nothing schedules across repositories.
+// [Client.ListMyPRs] folds nothing, since an issue-search row carries no head.
 func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = "ListPRs"
 	ctx = transport.Call(ctx, op)
@@ -128,7 +113,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		}
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	page, err := c.pullPage(ctx, op, addr, rows, walk)
+	page, err := c.pullPage(ctx, op, addr, rows, walk, set.Reviews)
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
@@ -237,13 +222,14 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 
 // pullPage is the per-repository list's shape: normalize each row, fold each row's
 // checks under the bounded rule, carry the continuation from the limit the page was
-// sent at, and name the successor the call's reads met.
-func (c *Client) pullPage(ctx context.Context, op string, addr *address, rows []wirePull, walk pageWalk) (forgeapi.Page[forgeapi.PullRequest], error) {
+// sent at, and name the successor the call's reads met. reviews says whether each
+// row's reviews are read beside its fold.
+func (c *Client) pullPage(ctx context.Context, op string, addr *address, rows []wirePull, walk pageWalk, reviews bool) (forgeapi.Page[forgeapi.PullRequest], error) {
 	items := make([]forgeapi.PullRequest, 0, len(rows))
 	for i := range rows {
 		items = append(items, c.normalizePull(&rows[i], addr.named))
 	}
-	if err := c.foldRows(ctx, op, addr, items); err != nil {
+	if err := c.foldRows(ctx, op, addr, items, reviews); err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	next := walk.next(len(rows))
@@ -278,7 +264,7 @@ func (c *Client) myPullPage(rows []wirePull, walk pageWalk) forgeapi.Page[forgea
 // marks that row and every unreached one with the reason the envelope assigns,
 // rate-limited or budget, and issues no further fold. Any other failure, the caller's
 // context ending included, FAILS the call, as the single read's fold does.
-func (c *Client) foldRows(ctx context.Context, op string, addr *address, items []forgeapi.PullRequest) error {
+func (c *Client) foldRows(ctx context.Context, op string, addr *address, items []forgeapi.PullRequest, reviews bool) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -286,17 +272,17 @@ func (c *Client) foldRows(ctx context.Context, op string, addr *address, items [
 	start := c.rotationStart(list, items, c.core.BudgetState().RotationCursor)
 	for n := range items {
 		at := (start + n) % len(items)
-		issued, err := c.foldOntoRow(ctx, op, addr, &items[at])
+		issued, err := c.foldOntoRow(ctx, op, addr, &items[at], reviews)
 		if issued {
 			c.rememberFoldPosition(list, at)
 		}
 		switch {
 		case err == nil:
 		case transport.IsThrottled(err):
-			c.markUnread(items, start, n, forgeapi.PartialRateLimited)
+			c.markUnread(items, start, n, forgeapi.PartialRateLimited, reviews)
 			return nil
 		case transport.OperationExpired(ctx, err):
-			c.markUnread(items, start, n, forgeapi.PartialBudget)
+			c.markUnread(items, start, n, forgeapi.PartialBudget, reviews)
 			return nil
 		default:
 			return err
@@ -307,12 +293,12 @@ func (c *Client) foldRows(ctx context.Context, op string, addr *address, items [
 
 // markUnread marks the row a fold failed on and every row this interval had not yet
 // reached with the reason that stopped the folds, so the rows carrying no verdict
-// carry the reason instead. A row with nothing to fold is left alone: it was never
+// carry the reason instead. A row with nothing to read is left alone: it was never
 // going to be issued, so the stop is not why it has no verdict.
-func (c *Client) markUnread(items []forgeapi.PullRequest, start, from int, reason forgeapi.PartialReason) {
+func (c *Client) markUnread(items []forgeapi.PullRequest, start, from int, reason forgeapi.PartialReason, reviews bool) {
 	for n := from; n < len(items); n++ {
 		at := (start + n) % len(items)
-		if items[at].HeadSHA == "" {
+		if items[at].HeadSHA == "" && !reviews {
 			continue
 		}
 		items[at].Partial = c.partial(reason, 0)
@@ -361,20 +347,14 @@ func foldKey(item *forgeapi.PullRequest) forgeapi.RotationCursor {
 	return forgeapi.RotationCursor(item.Repo.ID + ":" + strconv.Itoa(item.Ref.Number))
 }
 
-// foldOntoRow fills one list row's folded verdict under the bounded rule: one page
-// of the status endpoint, no request beyond it, and the row marked where the fold
-// stopped short or was never issued. A row with no head SHA has nothing to fold and
-// keeps the unknown verdict.
-//
-// It reports whether the fold was ISSUED, which is what the rotation advances on: a
-// row nothing was spent on has not been served, so counting it would move the
-// window past rows this interval never reached. A fold that FAILED is reported to the
-// caller rather than turned into a marker here, because which reason an upstream
-// failure earns is the list's decision and only one of them has a marker at all.
-//
-// The fold addresses the list's repository, the successor where the list moved.
-func (c *Client) foldOntoRow(ctx context.Context, op string, list *address, item *forgeapi.PullRequest) (bool, error) {
-	if item.HeadSHA == "" {
+// foldOntoRow makes one list row's admitted reads under the bounded rule: one page of
+// its status where it has a head, one page of its reviews where reviews is true, and
+// neither, with the row marked, where the interval's cap does not admit it. It
+// reports whether anything was ISSUED, which is what the rotation advances on, and
+// hands a failed read to the caller, since which marker an upstream failure earns is
+// the list's decision. It addresses the list's repository, the successor where moved.
+func (c *Client) foldOntoRow(ctx context.Context, op string, list *address, item *forgeapi.PullRequest, reviews bool) (bool, error) {
+	if item.HeadSHA == "" && !reviews {
 		return false, nil
 	}
 	if reason, ok := c.core.AdmitFold(op); !ok {
@@ -382,12 +362,31 @@ func (c *Client) foldOntoRow(ctx context.Context, op string, list *address, item
 		return false, nil
 	}
 	started := time.Now()
-	checks, err := c.foldStatus(ctx, op, list, item.HeadSHA, 1)
+	err := c.readRow(ctx, op, list, item, reviews)
 	c.core.SpendFold(time.Since(started))
 	c.core.Rotate(foldKey(item))
-	if err != nil {
-		return true, err
+	return true, err
+}
+
+// readRow is one admitted list row's reads: the status fold where the row has a
+// head, then its reviews where asked.
+func (c *Client) readRow(ctx context.Context, op string, list *address, item *forgeapi.PullRequest, reviews bool) error {
+	if item.HeadSHA != "" {
+		checks, err := c.foldStatus(ctx, op, list, item.HeadSHA, 1)
+		if err != nil {
+			return err
+		}
+		applyChecks(item, &checks)
 	}
+	if !reviews {
+		return nil
+	}
+	return c.applyReviews(ctx, op, list, item.Ref.Number, item)
+}
+
+// applyChecks puts a fold's verdict and counts on a pull request, with the fold's
+// own marker.
+func applyChecks(item *forgeapi.PullRequest, checks *forgeapi.CommitChecks) {
 	item.Action.Checks = checks.State
 	item.Action.ChecksPassing = checks.Passing
 	item.Action.ChecksFailing = checks.Failing
@@ -396,32 +395,39 @@ func (c *Client) foldOntoRow(ctx context.Context, op string, list *address, item
 	item.Action.ChecksUnknown = checks.Unknown
 	item.Action.ChecksTotal = checks.Total
 	item.Partial = checks.Partial
-	return true, nil
 }
 
-// ReadPR implements [forgeapi.PullRequests].
-//
-// It is two to four REST calls on this family, which is the cost this operation
-// publishes: the pull-request read, plus the folded commit status
-// [forgeapi.ActionState.Checks] comes from, since there is no document to fold it
-// into the first. The second request is always issued, and the fold is COMPLETE,
-// so it follows that status's pages until it is total: the low end of the range is
-// a single-page fold and the high end is [forgeapi.Budget.StatusPages]. None of it
-// is counted against the folded-status cap the client keeps per rolling interval,
-// because this read is priced per call. A fold that reaches that page bound
-// reports [forgeapi.PartialPaginationCap] in [forgeapi.PullRequest.Partial] with
-// the verdict at [forgeapi.CheckUnknown] rather than a verdict over part of the
-// evidence.
-//
-// Its absence answer is the union, [forgeapi.CodeRepoOrPRNotVisible], always. One
-// REST status carries no evidence separating a pull request that does not exist
-// from a repository the credential cannot see; the body carries a message and no
-// machine-readable cause, mapping on message text is the guess this library
-// refuses, and a third read to prove the repository exists would break that
-// published cost.
-//
-// A [forgeapi.PullRequest] carries no successor, so a repository that moved answers
-// [forgeapi.CodeRepoRefStale] carrying it, at the first read and its hop.
+// applyReviews reads one page of pull request number's reviews at the instance's
+// stated maximum and puts the counts on item. A page that came back full may continue, and a
+// count over part of the reviews would read as exact, so both counts stay unknown
+// and the row carries the pagination marker unless it already carries one.
+func (c *Client) applyReviews(ctx context.Context, op string, addr *address, number int, item *forgeapi.PullRequest) error {
+	limit, err := c.statedMaximum(ctx)
+	if err != nil {
+		return err
+	}
+	query := url.Values{keyPage: {"1"}, keyLimit: {strconv.Itoa(limit)}}
+	var rows []wireReview
+	if err := c.readAt(ctx, op, addr, "/pulls/"+strconv.Itoa(number)+"/reviews", query, &rows); err != nil {
+		return err
+	}
+	if len(rows) >= limit {
+		if item.Partial == nil {
+			item.Partial = c.partial(forgeapi.PartialPaginationCap, len(rows))
+		}
+		return nil
+	}
+	item.Action.Approvals, item.Action.ChangesRequested = reviewCounts(rows)
+	return nil
+}
+
+// ReadPR implements [forgeapi.PullRequests]: the record, its COMPLETE status fold up
+// to [forgeapi.Budget.StatusPages] pages outside the per-interval cap, since this call
+// is priced per call, and one page of its reviews. A fold that reaches the bound
+// answers [forgeapi.CheckUnknown] with [forgeapi.PartialPaginationCap]. Absence answers
+// [forgeapi.CodeRepoOrPRNotVisible] always: one REST status cannot tell a missing pull
+// request from an invisible repository, and a further read would break the price. A
+// moved repository answers [forgeapi.CodeRepoRefStale] carrying the successor.
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
 	const op = "ReadPR"
 	ctx = transport.Call(ctx, op)
@@ -434,24 +440,22 @@ func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.
 		return forgeapi.PullRequest{}, stale
 	}
 	item := c.normalizePull(record, repo)
-	if item.HeadSHA == "" {
-		return item, nil
+	if item.HeadSHA != "" {
+		checks, err := c.foldStatus(ctx, op, addr, item.HeadSHA, c.core.Budget().StatusPages)
+		if err != nil {
+			return forgeapi.PullRequest{}, err
+		}
+		applyChecks(&item, &checks)
+		if stale := c.moved(ctx, op, addr); stale != nil {
+			return forgeapi.PullRequest{}, stale
+		}
 	}
-	checks, err := c.foldStatus(ctx, op, addr, item.HeadSHA, c.core.Budget().StatusPages)
-	if err != nil {
+	if err := c.applyReviews(ctx, op, addr, pr.Number, &item); err != nil {
 		return forgeapi.PullRequest{}, err
 	}
 	if stale := c.moved(ctx, op, addr); stale != nil {
 		return forgeapi.PullRequest{}, stale
 	}
-	item.Action.Checks = checks.State
-	item.Action.ChecksPassing = checks.Passing
-	item.Action.ChecksFailing = checks.Failing
-	item.Action.ChecksPending = checks.Pending
-	item.Action.ChecksNeutral = checks.Neutral
-	item.Action.ChecksUnknown = checks.Unknown
-	item.Action.ChecksTotal = checks.Total
-	item.Partial = checks.Partial
 	return item, nil
 }
 

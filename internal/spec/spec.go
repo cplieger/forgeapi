@@ -174,12 +174,12 @@ type Entry struct {
 var Fields = map[string]int{
 	"Identity.Whoami":                5,
 	"Repos.ListRepos":                17,
-	"PullRequests.ListPRs":           31,
-	"PullRequests.ListMyPRs":         31,
-	"PullRequests.ReadPR":            28,
-	"PullRequests.CreatePR":          28,
-	"PullRequests.ClosePR":           28,
-	"PullRequests.ReopenPR":          28,
+	"PullRequests.ListPRs":           33,
+	"PullRequests.ListMyPRs":         33,
+	"PullRequests.ReadPR":            30,
+	"PullRequests.CreatePR":          30,
+	"PullRequests.ClosePR":           30,
+	"PullRequests.ReopenPR":          30,
 	"PullRequests.RerunFailedChecks": 2,
 	"Merges.MergePR":                 4,
 	"Merges.MergeStatus":             4,
@@ -355,7 +355,7 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.ListPRs",
 		Product:   GitHub,
-		Exercises: "the PRList document, asking for at most 30 rows a page whatever the page bound asks, since a page of 50 of its rows answered 502 on 8 of 15 attempts on two large repositories",
+		Exercises: "the PRList document, asking for at most 30 rows a page whatever the page bound asks, since a page of 50 of its rows answered 502 on 8 of 15 attempts on two large repositories; each row selects latestOpinionatedReviews(first: 20), one review per reviewer, and a row naming more than 20 reviewers answers both counts CountUnknown with pagination_cap on its Partial",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
@@ -379,12 +379,22 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request",
 			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ListPRs",
 		Product:   GitLab,
-		Exercises: "the PRList document, or GET /api/v4/projects/{id}/merge_requests where this connection's setup found the documents refused",
+		Exercises: "the PRList document, or GET /api/v4/projects/{id}/merge_requests where this connection's setup found the documents refused; each row selects approvedBy.count and the review state of its first 100 reviewers, and a row whose reviewers continue past them answers ChangesRequested CountUnknown with pagination_cap on its Partial; the REST route carries neither, so that arm answers both counts CountUnknown",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Needs:     "read_merge_state",
 		Support:   Supported,
@@ -439,13 +449,33 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "MergeBlockUnknown on every row: the document leaves detailedMergeStatus out of the request, and the REST route reads none on a list row",
 			},
+			{
+				Field: "Items[].Action.Approvals",
+				Kind:  DiffersInShape,
+				Says:  "approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested",
+				Kind:  DiffersInShape,
+				Says:  "the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented",
+			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves approvedBy out of the request, and the REST route reads none",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves reviewers out of the request, and the REST route reads none",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ListPRs",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
-		Requests:  Requests{Min: 1, Max: 2, PerItem: 1, Paged: true},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, then under the same per-interval admission one page of each row's reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on the row's Partial, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Requests:  Requests{Min: 1, Max: 2, PerItem: 2, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -473,13 +503,23 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "SupportUnknown on every row: the row's mergeable key is left unread",
 			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: no row's reviews are read, which spends one request per row less",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: no row's reviews are read, which spends one request per row less",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ListPRs",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
-		Requests:  Requests{Min: 1, Max: 2, PerItem: 1, Paged: true},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, then under the same per-interval admission one page of each row's reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on the row's Partial, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Requests:  Requests{Min: 1, Max: 2, PerItem: 2, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -512,12 +552,22 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "SupportUnknown on every row: the row's mergeable key is left unread",
 			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: no row's reviews are read, which spends one request per row less",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: no row's reviews are read, which spends one request per row less",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ListMyPRs",
 		Product:   GitHub,
-		Exercises: "the PRMine search document, asking for at most 15 rows a page whatever the page bound asks, since a page of 25 of its rows answered 502 on 2 of 5 attempts under an owner holding 57,746 open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user",
+		Exercises: "the PRMine search document, asking for at most 15 rows a page whatever the page bound asks, since a page of 25 of its rows answered 502 on 2 of 5 attempts under an owner holding 57,746 open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user; each row selects latestOpinionatedReviews(first: 20), one review per reviewer, and a row naming more than 20 reviewers answers both counts CountUnknown with pagination_cap on its Partial",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
@@ -550,6 +600,16 @@ var Table = []Entry{
 				Field: "Items[].Action.MergeBlocked, under WithMergeState(false)",
 				Kind:  CannotSupply,
 				Says:  "MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request",
+			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request",
 			},
 		},
 	},
@@ -620,6 +680,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "none: the group route's non_archived defaults to true",
 			},
+			{
+				Field: "Items[].Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: a REST list row carries no approval count and no reviewer review state",
+			},
 		},
 	},
 	{
@@ -698,6 +763,11 @@ var Table = []Entry{
 				Field: "Items[].Draft",
 				Kind:  DiffersInShape,
 				Says:  "draft on the pull_request object, not at the row's top level",
+			},
+			{
+				Field: "Items[].Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: an issue-search row carries no review key, and this list reads nothing per row",
 			},
 		},
 	},
@@ -783,12 +853,17 @@ var Table = []Entry{
 				Kind:  DiffersInShape,
 				Says:  "draft on the pull_request object, not at the row's top level",
 			},
+			{
+				Field: "Items[].Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: an issue-search row carries no review key, and this list reads nothing per row",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   GitHub,
-		Exercises: "the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address",
+		Exercises: "the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address; the document selects latestOpinionatedReviews(first: 20), and more than 20 reviewers answer both counts CountUnknown with pagination_cap on Partial, as does the REST record, which carries no review",
 		Requests:  Requests{Min: 0, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
@@ -807,7 +882,7 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   GitLab,
-		Exercises: "the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused",
+		Exercises: "the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused; the document selects approvedBy.count and the review state of the first 100 reviewers, and reviewers continuing past them answer ChangesRequested CountUnknown with pagination_cap on Partial; the REST record carries neither, so that arm answers both counts CountUnknown",
 		Requests:  Requests{Min: 1, Max: 1},
 		Needs:     "read_merge_state",
 		Support:   Supported,
@@ -847,13 +922,23 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "no position; train index null",
 			},
+			{
+				Field: "Action.Approvals",
+				Kind:  DiffersInShape,
+				Says:  "approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review",
+			},
+			{
+				Field: "Action.ChangesRequested",
+				Kind:  DiffersInShape,
+				Says:  "the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries",
-		Requests:  Requests{Min: 2, Max: 4},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial",
+		Requests:  Requests{Min: 2, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -881,8 +966,8 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries",
-		Requests:  Requests{Min: 2, Max: 4},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial",
+		Requests:  Requests{Min: 2, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -954,6 +1039,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the creation lands, unknown on every creation measured",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST pull-request record a mutation answers carries no review",
+			},
 		},
 		Sends: []Sent{
 			{
@@ -1021,6 +1111,11 @@ var Table = []Entry{
 				Kind:  DiffersInSpelling,
 				Says:  "state string, opened",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state",
+			},
 		},
 		Sends: []Sent{
 			{
@@ -1062,6 +1157,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
 			},
 		},
 		Sends: []Sent{
@@ -1110,6 +1210,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
+			},
 		},
 		Sends: []Sent{
 			{
@@ -1146,6 +1251,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the close lands: unknown before the check settles, clean after it",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST pull-request record a mutation answers carries no review",
 			},
 		},
 	},
@@ -1206,6 +1316,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the close lands: preparing before the check settles, not_open after it, checking after a reopen",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state",
+			},
 		},
 	},
 	{
@@ -1239,6 +1354,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
 			},
 		},
 	},
@@ -1279,6 +1399,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
+			},
 		},
 	},
 	{
@@ -1307,6 +1432,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the reopen lands, unknown on every reopen measured",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST pull-request record a mutation answers carries no review",
 			},
 		},
 	},
@@ -1372,6 +1502,11 @@ var Table = []Entry{
 				Kind:  DiffersInSpelling,
 				Says:  "state string, opened, closed_at cleared",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state",
+			},
 		},
 	},
 	{
@@ -1405,6 +1540,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
 			},
 		},
 	},
@@ -1444,6 +1584,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
 			},
 		},
 	},

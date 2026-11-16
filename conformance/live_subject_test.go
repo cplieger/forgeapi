@@ -35,6 +35,7 @@ func pullRequestInstance(t *testing.T, p spec.Product, method, repo string, numb
 		if head, ok := strings.CutSuffix(path, pull); ok {
 			path = head + "/pulls/" + strconv.Itoa(number)
 		}
+		path = strings.Replace(path, pull+"/", "/pulls/"+strconv.Itoa(number)+"/", 1)
 		f.Routes[i].Path = path
 	}
 	srv, rec := newFixtureServer(t, f)

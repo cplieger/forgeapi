@@ -400,9 +400,11 @@ func TestALiveRowCellIsHeldWhereTheAnswerHoldsTheRow(t *testing.T) {
 // lane stays green on a subject that legitimately holds them.
 func TestALiveAnswerHoldingWhatTheFamilySuppliesOnAnotherSubjectPasses(t *testing.T) {
 	ranAPipeline := forgeapi.PullRequest{Action: forgeapi.ActionState{
-		Checks:        forgeapi.CheckPending,
-		QueueState:    forgeapi.QueueNone,
-		QueuePosition: forgeapi.QueuePositionUnknown,
+		Checks:           forgeapi.CheckPending,
+		QueueState:       forgeapi.QueueNone,
+		QueuePosition:    forgeapi.QueuePositionUnknown,
+		Approvals:        forgeapi.CountUnknown,
+		ChangesRequested: forgeapi.CountUnknown,
 	}}
 	for _, test := range []struct {
 		answer  any

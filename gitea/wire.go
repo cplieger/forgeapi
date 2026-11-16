@@ -35,6 +35,19 @@ type (
 		Scopes []string `json:"scopes"`
 	}
 
+	// wireReview is one review of a pull request, a review request included.
+	wireReview struct {
+		User      *wireReviewer `json:"user"`
+		State     string        `json:"state"`
+		ID        int64         `json:"id"`
+		Dismissed bool          `json:"dismissed"`
+		Stale     bool          `json:"stale"`
+	}
+
+	wireReviewer struct {
+		ID int64 `json:"id"`
+	}
+
 	wireLabel struct {
 		Name        string `json:"name"`
 		Color       string `json:"color"`
@@ -547,14 +560,48 @@ func (c *Client) unmapped(field, value string) {
 // is unknown rather than one of the seven causes invented from the pair.
 func normalizeAction(p *wirePull) forgeapi.ActionState {
 	return forgeapi.ActionState{
-		Mergeable:      support(p.Mergeable),
-		Checks:         forgeapi.CheckUnknown,
-		AutoMergeArmed: forgeapi.SupportUnknown,
-		QueueState:     forgeapi.QueueNone,
-		QueuePosition:  forgeapi.QueuePositionUnknown,
-		MergeBlocked:   forgeapi.MergeBlockUnknown,
+		Mergeable:        support(p.Mergeable),
+		Checks:           forgeapi.CheckUnknown,
+		AutoMergeArmed:   forgeapi.SupportUnknown,
+		QueueState:       forgeapi.QueueNone,
+		QueuePosition:    forgeapi.QueuePositionUnknown,
+		MergeBlocked:     forgeapi.MergeBlockUnknown,
+		Approvals:        forgeapi.CountUnknown,
+		ChangesRequested: forgeapi.CountUnknown,
 	}
 }
+
+// reviewCounts is the reviewers whose latest opinionated review approves and those
+// whose latest requests changes. A review is opinionated where it approves or
+// requests changes and is neither dismissed nor stale, so a later comment or review
+// request changes nothing; the latest is the highest id. A review with no user names
+// no reviewer to count.
+func reviewCounts(reviews []wireReview) (approvals, changes int) {
+	latest := make(map[int64]*wireReview, len(reviews))
+	for i := range reviews {
+		r := &reviews[i]
+		if r.User == nil || r.Dismissed || r.Stale || (r.State != reviewApproved && r.State != reviewChanges) {
+			continue
+		}
+		if held, ok := latest[r.User.ID]; !ok || r.ID > held.ID {
+			latest[r.User.ID] = r
+		}
+	}
+	for _, r := range latest {
+		if r.State == reviewApproved {
+			approvals++
+		} else {
+			changes++
+		}
+	}
+	return approvals, changes
+}
+
+// The two review states both products' swagger documents declare an opinion by.
+const (
+	reviewApproved = "APPROVED"
+	reviewChanges  = "REQUEST_CHANGES"
+)
 
 // normalizeIssue is the issue normalizer. repo is the addressed repository, and a
 // cross-repository row, which addresses none, carries its own as the meta shape.

@@ -37,6 +37,7 @@ const (
 	varAfter  = "after"
 
 	varMergeState = "mergeState"
+	varReviews    = "reviews"
 )
 
 // Whoami implements [forgeapi.Identity]. This product reports the credential's
@@ -204,6 +205,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		varAfter:      nullableString(after),
 		"states":      documentStates(set.State),
 		varMergeState: set.MergeState,
+		varReviews:    set.Reviews,
 	}, &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
@@ -225,7 +227,8 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
 		item := c.rowWithFold(&rows.Nodes[i], canonical)
-		c.markListed(&item, at.refused[i], set.MergeState)
+		c.markListed(&item, at.refused[i], &set)
+		c.markReviewsCut(&item, rows.Nodes[i].Reviews, set.Reviews)
 		items = append(items, item)
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items, Next: documentNext(call, rows.PageInfo), Successor: successor}
@@ -236,13 +239,25 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 }
 
 // markListed applies a listed row's own markers: the refused check rollup, and the
-// merge state blanked when the list was asked not to read it.
-func (c *Client) markListed(item *forgeapi.PullRequest, rollupRefused, mergeState bool) {
+// merge state and review counts blanked when the list was asked not to read them.
+func (c *Client) markListed(item *forgeapi.PullRequest, rollupRefused bool, set *forgeapi.ListSettings) {
 	if rollupRefused {
 		c.refuseChecks(item)
 	}
-	if !mergeState {
+	if !set.MergeState {
 		blankMergeState(item)
+	}
+	if !set.Reviews {
+		item.Action.Approvals, item.Action.ChangesRequested = forgeapi.CountUnknown, forgeapi.CountUnknown
+	}
+}
+
+// markReviewsCut marks a row whose review list was cut, which [reviewCounts]
+// answered unknown, unless the row already carries a marker or read says the
+// reviews were not asked for.
+func (c *Client) markReviewsCut(item *forgeapi.PullRequest, reviews *docReviews, read bool) {
+	if read && reviews.cut() && item.Partial == nil {
+		item.Partial = c.partial(forgeapi.PartialPaginationCap, len(reviews.Nodes))
 	}
 }
 
@@ -336,6 +351,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	set.PageBound = min(set.PageBound, prSearchPageCeiling)
 	vars := searchVariables(query, &set, after)
 	vars[varMergeState] = set.MergeState
+	vars[varReviews] = set.Reviews
 	var payload docPayload
 	result, err := c.execute(ctx, op, prMine, vars, &payload)
 	if err != nil {
@@ -363,7 +379,8 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	items := make([]forgeapi.PullRequest, 0, len(nodes))
 	for _, node := range nodes {
 		item := c.rowWithFold(&node.docPullRequest, rowRepo(node.Repository))
-		c.markListed(&item, refused[node], set.MergeState)
+		c.markListed(&item, refused[node], &set)
+		c.markReviewsCut(&item, node.Reviews, set.Reviews)
 		items = append(items, item)
 	}
 	return c.searchPage(items, rows.PageInfo, searchWalk{call: call, served: served}, rows.IssueCount, at.unplaced()), nil
@@ -583,13 +600,14 @@ func (c *Client) readPull(ctx context.Context, op string, repo forgeapi.RepoRef,
 }
 
 // documentRead is the single-pull-request document read, with the complete fold
-// following the contexts connection's pages up to the published bound.
+// following the contexts connection's pages up to the published bound. The read
+// that follows is the one that returns reviews, so the merge-state read selects none.
 func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, follow bool) (pullRead, error) {
 	owner, name, err := ownerName(repo)
 	if err != nil {
 		return pullRead{}, err
 	}
-	vars := map[string]any{varOwner: owner, varName: name, "number": pr.Number, "checksAfter": nil}
+	vars := map[string]any{varOwner: owner, varName: name, "number": pr.Number, "checksAfter": nil, varReviews: follow}
 	var payload docPayload
 	result, execErr := c.execute(ctx, op, prRead, vars, &payload)
 	if execErr != nil {
@@ -612,6 +630,7 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	}
 	c.applyFold(&item, &folded)
 	c.markRead(&item, &at)
+	c.markReviewsCut(&item, node.Reviews, follow)
 	return pullRead{item: item, merged: supportOf(node.Merged)}, nil
 }
 

@@ -1,5 +1,5 @@
 {
-  "//": "cut from this product's own recorded responses, read 2026-09-18, and 2026-11-16 for the user-notes count keys, trimmed to the keys this family's wire types read and with the namespace, login, host, branch and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
+  "//": "cut from this product's own recorded responses, read 2026-09-18, and 2026-11-16 for the user-notes count keys and the approvedBy and reviewers keys, no approval and one change request among two reviewers, trimmed to the keys this family's wire types read and with the namespace, login, host, branch and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
   "graphql_pr_read": {
     "fullPath": "example/group/example",
     "userPermissions": {
@@ -38,6 +38,26 @@
         ]
       },
       "userNotesCount": 6,
+      "approvedBy": {
+        "count": 0
+      },
+      "reviewers": {
+        "pageInfo": {
+          "hasNextPage": false
+        },
+        "nodes": [
+          {
+            "mergeRequestInteraction": {
+              "reviewState": "UNREVIEWED"
+            }
+          },
+          {
+            "mergeRequestInteraction": {
+              "reviewState": "REQUESTED_CHANGES"
+            }
+          }
+        ]
+      },
       "headPipeline": {
         "sha": "4f30a69cef33296cfe2efac8fc480467d5fe4b43",
         "status": "SUCCESS"

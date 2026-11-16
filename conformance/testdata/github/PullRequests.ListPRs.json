@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded ListPRs response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured over the document this fixture serves: the rollup's contexts connection carries counts over the WHOLE collection, byte-identical across successive pages of a 446-context collection and summing to the total on every row, so a bounded fold is exact here and what the bound truncates is the check names; selecting one context beside those counts answered a twenty-row list at 38,737 bytes against 533,301 for a hundred contexts, at the same request cost. This product's GraphQL endpoint sends no validator and no cache-control header, while its REST pull list sends one and replaying it answers 304; the totalCommentsCount key cut from a recorded ListPRs response, read 2026-11-16, its count replaced with the canonical subject's",
+  "//": "cut from a recorded ListPRs response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured over the document this fixture serves: the rollup's contexts connection carries counts over the WHOLE collection, byte-identical across successive pages of a 446-context collection and summing to the total on every row, so a bounded fold is exact here and what the bound truncates is the check names; selecting one context beside those counts answered a twenty-row list at 38,737 bytes against 533,301 for a hundred contexts, at the same request cost. This product's GraphQL endpoint sends no validator and no cache-control header, while its REST pull list sends one and replaying it answers 304; the totalCommentsCount key cut from a recorded ListPRs response, read 2026-11-16, its count replaced with the canonical subject's; the latestOpinionatedReviews key cut from a recorded PRList response, read 2026-11-16, its states replaced with the canonical subject's two approvals and one change request",
   "routes": [
     {
       "graphql": true,
@@ -56,6 +56,20 @@
                     ]
                   },
                   "totalCommentsCount": 3,
+                  "latestOpinionatedReviews": {
+                    "totalCount": 3,
+                    "nodes": [
+                      {
+                        "state": "APPROVED"
+                      },
+                      {
+                        "state": "CHANGES_REQUESTED"
+                      },
+                      {
+                        "state": "APPROVED"
+                      }
+                    ]
+                  },
                   "headRefOid": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
                   "commits": {
                     "nodes": [

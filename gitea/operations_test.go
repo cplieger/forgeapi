@@ -31,6 +31,14 @@ const repoRow = `{"full_name":"example/example","name":"example","owner":{"login
 // statusPath is the route a folded status arrives at for the canonical head.
 const statusPath = "GET /api/v1/repos/example/example/commits/" + testHeadSHA + "/status"
 
+// reviewsPath is the route pull request number's reviews arrive at in the
+// repository selector names; noReviews is a pull request nobody reviewed.
+func reviewsPath(selector string, number int) string {
+	return "GET /api/v1/repos/" + selector + "/pulls/" + strconv.Itoa(number) + "/reviews"
+}
+
+const noReviews = "[]"
+
 // The API document detection reads, trimmed to the two fields it looks at: the title,
 // which is the product mark, and the paths, which settle the one capability nothing
 // cheaper answers. The titles are the ones both public instances of the family serve,
@@ -482,7 +490,8 @@ func TestTheCrossRepositoryRowsDraftFlagIsReadWhereTheRouteCarriesIt(t *testing.
 func TestThePullRouteRowsDraftFlagIsReadAtItsTopLevel(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		"GET /api/v1/repos/example/example/pulls": "[" + draftPullRow(1, true) + "]",
-		statusPath: statusOK,
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
 	})
 	page, err := h.client.ListPRs(t.Context(), testRef())
 	if err != nil {
@@ -1144,7 +1153,8 @@ func TestTheFoldIsComputedOverTheRowsRatherThanTakenFromTheEndpoint(t *testing.T
 func TestAFullStatusPageOnAListAnswersUnknownWithThePaginationCap(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		"GET /api/v1/repos/example/example/pulls": "[" + pullRow(1) + "]",
-		statusPath: fullStatusPage(),
+		statusPath:                   fullStatusPage(),
+		reviewsPath(testSelector, 1): noReviews,
 	})
 	page, err := h.client.ListPRs(t.Context(), testRef())
 	if err != nil {
@@ -1161,8 +1171,8 @@ func TestAFullStatusPageOnAListAnswersUnknownWithThePaginationCap(t *testing.T) 
 	if row.Partial == nil || row.Partial.Reason != forgeapi.PartialPaginationCap {
 		t.Fatalf("the row's partial marker = %v, want the pagination cap: an unknown with no reason cannot be told from a pull request with no checks", row.Partial)
 	}
-	if got, want := h.instance.count(), 2; got != want {
-		t.Errorf("ListPRs sent %d request(s), want %d: the list plus one page of one fold, and no request beyond that page", got, want)
+	if got, want := h.instance.count(), 3; got != want {
+		t.Errorf("ListPRs sent %d request(s), want %d: the list, one page of one fold and one page of reviews, and no request beyond that page", got, want)
 	}
 }
 
@@ -1178,7 +1188,9 @@ func TestTheRotationResumesAfterTheRowItLastServed(t *testing.T) {
 	clock := newStepClock()
 	h := newClockedHarness(t, clock.now, map[string]string{
 		"GET /api/v1/repos/example/example/pulls": "[" + pullRow(1) + "," + pullRow(2) + "]",
-		statusPath: statusOK,
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
+		reviewsPath(testSelector, 2): noReviews,
 	},
 		forgeapi.WithStatusReadsPerInterval(1),
 		forgeapi.WithStatusTimePerInterval(interval),
@@ -1216,8 +1228,11 @@ func TestTheRotationAdvancesWhenTheRowItLastServedHasLeftTheList(t *testing.T) {
 	const route = "GET /api/v1/repos/example/example/pulls"
 	clock := newStepClock()
 	h := newClockedHarness(t, clock.now, map[string]string{
-		route:      "[" + pullRow(1) + "," + pullRow(2) + "]",
-		statusPath: statusOK,
+		route:                        "[" + pullRow(1) + "," + pullRow(2) + "]",
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
+		reviewsPath(testSelector, 2): noReviews,
+		reviewsPath(testSelector, 3): noReviews,
 	},
 		forgeapi.WithStatusReadsPerInterval(1),
 		forgeapi.WithStatusTimePerInterval(interval),
@@ -1266,6 +1281,7 @@ func TestTheRotationServesEveryRowOfEveryListAPollerPresents(t *testing.T) {
 		bodies := make([]string, 0, len(numbers))
 		for _, number := range numbers {
 			bodies = append(bodies, pullRow(number))
+			routes[reviewsPath(selector, number)] = noReviews
 		}
 		routes["GET /api/v1/repos/"+selector+"/pulls"] = "[" + strings.Join(bodies, ",") + "]"
 	}
@@ -1374,7 +1390,9 @@ func TestBothPerIntervalCapsAreEnforced(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			h := newHarness(t, map[string]string{
 				"GET /api/v1/repos/example/example/pulls": rows,
-				statusPath: statusOK,
+				statusPath:                   statusOK,
+				reviewsPath(testSelector, 1): noReviews,
+				reviewsPath(testSelector, 2): noReviews,
 			}, test.opts...)
 			page, err := h.client.ListPRs(t.Context(), testRef())
 			if err != nil {
@@ -1465,19 +1483,21 @@ func TestTheSwaggerDocumentIsFetchedOncePerConnection(t *testing.T) {
 }
 
 // TestTheBudgetReportsTheCostOfTheCallRatherThanOfOneRequest holds the figure a
-// consumer renders. On this family a list costs one request plus one per row, so a
+// consumer renders. On this family a list costs one request plus two per row, so a
 // constant of one would be wrong by an order of magnitude on exactly the call a
 // poller runs most.
 func TestTheBudgetReportsTheCostOfTheCallRatherThanOfOneRequest(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		"GET /api/v1/repos/example/example/pulls": "[" + pullRow(1) + "," + pullRow(2) + "]",
-		statusPath: statusOK,
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
+		reviewsPath(testSelector, 2): noReviews,
 	})
 	if _, err := h.client.ListPRs(t.Context(), testRef()); err != nil {
 		t.Fatalf("ListPRs = %v, want nil", err)
 	}
 	if got, want := h.client.BudgetState().LastCost, h.instance.count(); got != want {
-		t.Errorf("BudgetState().LastCost = %d, want %d: the last cost is a CALL's price, and this call spent the list plus one fold per row", got, want)
+		t.Errorf("BudgetState().LastCost = %d, want %d: the last cost is a CALL's price, and this call spent the list plus one fold and one review read per row", got, want)
 	}
 }
 

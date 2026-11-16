@@ -263,7 +263,7 @@ var operations = []operation{
 		method:    "PullRequests.ListPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
 		rowArms:   []string{rowAuthorKind},
-		errorArms: []string{rowChecksUnderFineGrained, rowMergeableUnderOption, rowMergeBlockedUnderOption},
+		errorArms: []string{rowChecksUnderFineGrained, rowMergeableUnderOption, rowMergeBlockedUnderOption, rowApprovalsUnderOption, rowChangesUnderOption},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -285,7 +285,7 @@ var operations = []operation{
 		method:    "PullRequests.ListMyPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
 		rowArms:   []string{rowAuthorKind},
-		errorArms: []string{rowChecksUnderFineGrained, ownerUnresolved, scopeInsufficient, archivedRowsForOwner, rowMergeableUnderOption, rowMergeBlockedUnderOption},
+		errorArms: []string{rowChecksUnderFineGrained, ownerUnresolved, scopeInsufficient, archivedRowsForOwner, rowMergeableUnderOption, rowMergeBlockedUnderOption, rowApprovalsUnderOption, rowChangesUnderOption},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -783,6 +783,8 @@ func pullRequestChecks(prefix string, p spec.Product, g forgeapi.PullRequest, st
 		// value the contract states rather than that integer's zero.
 		absent(prefix+"Action.QueuePosition", a.QueuePosition, forgeapi.QueuePositionUnknown, forgeapi.QueuePositionUnknown),
 		eq(prefix+"Action.MergeBlocked", a.MergeBlocked, forgeapi.MergeBlockNone),
+		absent(prefix+"Action.Approvals", a.Approvals, approvalCount, forgeapi.CountUnknown),
+		absent(prefix+"Action.ChangesRequested", a.ChangesRequested, changesCount, forgeapi.CountUnknown),
 		eq(prefix+"Partial", g.Partial, (*forgeapi.Partial)(nil)),
 	}
 }

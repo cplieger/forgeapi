@@ -83,16 +83,13 @@ func rollupSelection(pageSize int, after string) string {
             }`
 }
 
-// pullRequestFields is the node selection every pull-request document shares, which
-// is the whole of what a normalized pull request needs from this product.
-//
-// Five choices in it are load-bearing. `headRefOid` is the head a merge and a re-run
-// pin to, not the rollup commit's oid. `mergeable` and `mergeStateStatus` answer
-// different questions, measured MERGEABLE beside BLOCKED on one pull request.
-// `autoMergeRequest` is a nullable object whose presence is the armed answer.
-// `mergeQueueEntry` carries the five-member queue state and the position. And
-// `labels(first: 100)` is this product's limit on one row's labels, so the page is
-// the whole set rather than a cut nothing marks.
+// pullRequestFields is the node selection every pull-request document shares. Its
+// load-bearing choices: `headRefOid` is the head a merge and a re-run pin to, not the
+// rollup commit's; `mergeable` and `mergeStateStatus` answer different questions,
+// measured MERGEABLE beside BLOCKED; `autoMergeRequest`'s presence is the armed
+// answer; `labels(first: 100)` is this product's per-row label limit, so the page is
+// the whole set; `latestOpinionatedReviews` is already the latest opinionated review
+// per reviewer.
 func pullRequestFields(foldPage int, foldAfter string) string {
 	return `
         number
@@ -115,6 +112,7 @@ func pullRequestFields(foldPage int, foldAfter string) string {
         mergeQueueEntry { state position }
         labels(first: 100) { totalCount nodes { name color description } }
         totalCommentsCount
+        latestOpinionatedReviews(first: 20) @include(if: $reviews) { totalCount nodes { state } }
         commits(last: 1) {
           nodes {
             commit {
@@ -144,7 +142,7 @@ type document struct {
 // reach them.
 var prList = document{
 	name: "PRList",
-	text: `query PRList($owner: String!, $name: String!, $first: Int!, $after: String, $states: [PullRequestState!], $mergeState: Boolean!) {` + rateLimitSelection + `
+	text: `query PRList($owner: String!, $name: String!, $first: Int!, $after: String, $states: [PullRequestState!], $mergeState: Boolean!, $reviews: Boolean!) {` + rateLimitSelection + `
   repository(owner: $owner, name: $name) {
     nameWithOwner
     viewerPermission
@@ -176,7 +174,7 @@ const prListPageCeiling = 30
 // [forgeapi.Budget.StatusPages].
 var prRead = document{
 	name: "PRRead",
-	text: `query PRRead($owner: String!, $name: String!, $number: Int!, $checksAfter: String, $mergeState: Boolean = true) {` + rateLimitSelection + `
+	text: `query PRRead($owner: String!, $name: String!, $number: Int!, $checksAfter: String, $mergeState: Boolean = true, $reviews: Boolean = true) {` + rateLimitSelection + `
   repository(owner: $owner, name: $name) {
     nameWithOwner
     viewerPermission
@@ -197,7 +195,7 @@ var prRead = document{
 // the whole property this operation exists for.
 var prMine = document{
 	name: "PRMine",
-	text: `query PRMine($q: String!, $first: Int!, $after: String, $mergeState: Boolean!) {` + rateLimitSelection + `
+	text: `query PRMine($q: String!, $first: Int!, $after: String, $mergeState: Boolean!, $reviews: Boolean!) {` + rateLimitSelection + `
   search(query: $q, type: ISSUE, first: $first, after: $after) {
     issueCount
     pageInfo { hasNextPage endCursor }

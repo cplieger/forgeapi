@@ -266,6 +266,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		"first":      set.PageBound,
 		"after":      nullableString(after),
 		"mergeState": set.MergeState,
+		"reviews":    set.Reviews,
 	}, &payload)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
@@ -286,9 +287,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
 		item := c.normalizeDocPull(&rows.Nodes[i], documentRepo(payload.Project, repo))
-		if !set.MergeState {
-			blankMergeState(&item)
-		}
+		blankUnread(&item, &set)
 		items = append(items, item)
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items}
@@ -299,6 +298,17 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		page.Partial = c.partial(forgeapi.PartialGraphQLPartial, len(items))
 	}
 	return page, nil
+}
+
+// blankUnread answers unknown what a listed row was asked not to read: its merge
+// state, and its review counts.
+func blankUnread(item *forgeapi.PullRequest, set *forgeapi.ListSettings) {
+	if !set.MergeState {
+		blankMergeState(item)
+	}
+	if !set.Reviews {
+		item.Action.Approvals, item.Action.ChangesRequested = forgeapi.CountUnknown, forgeapi.CountUnknown
+	}
 }
 
 // nullableString is a cursor variable a document takes as null rather than as an

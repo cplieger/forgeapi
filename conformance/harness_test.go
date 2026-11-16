@@ -41,6 +41,8 @@ const (
 	labelName     = "example-label"
 	labelDesc     = "Example label."
 	commentCount  = 3
+	approvalCount = 2
+	changesCount  = 1
 	repoDesc      = "Example repository."
 	repoWebURL    = "https://forge.example/example/example"
 	repoCloneURL  = "https://forge.example/example/example.git"
@@ -432,13 +434,14 @@ func departureFor(e *spec.Entry, path string) (spec.Departure, bool) {
 	return spec.Departure{}, false
 }
 
-// checkRuns are the two ordered runs of count fields a collapsed departure row can
+// checkRuns are the ordered runs of count fields a collapsed departure row can
 // name, in the order the exported surface declares them: a row reading
 // "ChecksPassing .. ChecksTotal" covers every member between its two endpoints, so
 // the expansion has to know the order rather than guess it.
 var checkRuns = [][]string{
 	{"ChecksPassing", "ChecksFailing", "ChecksPending", "ChecksNeutral", "ChecksUnknown", "ChecksTotal"},
 	{"Passing", "Failing", "Pending", "Neutral", "Unknown", "Total"},
+	{"Approvals", "ChangesRequested"},
 }
 
 // coveredPaths returns every field path one departure row covers: itself, or the run

@@ -27,7 +27,8 @@ func TestThePullListAnswersUnknownMergeStateUnderTheOption(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			h := newHarness(t, map[string]string{
 				"GET /api/v1/repos/example/example/pulls": "[" + row + "]",
-				statusPath: statusOK,
+				statusPath:                   statusOK,
+				reviewsPath(testSelector, 1): noReviews,
 			})
 			page, err := h.client.ListPRs(t.Context(), testRef(), test.opts...)
 			if err != nil {

@@ -67,26 +67,48 @@ type (
 	}
 
 	docMergeRequest struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the response it decodes
-		IID                 string       `json:"iid"`
-		Title               string       `json:"title"`
-		Description         string       `json:"description"`
-		Author              *docAuthor   `json:"author"`
-		SourceBranch        string       `json:"sourceBranch"`
-		SourceProject       *docProject  `json:"sourceProject"`
-		TargetBranch        string       `json:"targetBranch"`
-		WebURL              string       `json:"webUrl"`
-		DiffHeadSHA         string       `json:"diffHeadSha"`
-		CreatedAt           time.Time    `json:"createdAt"`
-		UpdatedAt           time.Time    `json:"updatedAt"`
-		State               string       `json:"state"`
-		Draft               bool         `json:"draft"`
-		MergedAt            *time.Time   `json:"mergedAt"`
-		Mergeable           *bool        `json:"mergeable"`
-		DetailedMergeStatus string       `json:"detailedMergeStatus"`
-		AutoMergeEnabled    *bool        `json:"autoMergeEnabled"`
-		Labels              *docLabels   `json:"labels"`
-		UserNotesCount      *int         `json:"userNotesCount"`
-		HeadPipeline        *docPipeline `json:"headPipeline"`
+		IID                 string        `json:"iid"`
+		Title               string        `json:"title"`
+		Description         string        `json:"description"`
+		Author              *docAuthor    `json:"author"`
+		SourceBranch        string        `json:"sourceBranch"`
+		SourceProject       *docProject   `json:"sourceProject"`
+		TargetBranch        string        `json:"targetBranch"`
+		WebURL              string        `json:"webUrl"`
+		DiffHeadSHA         string        `json:"diffHeadSha"`
+		CreatedAt           time.Time     `json:"createdAt"`
+		UpdatedAt           time.Time     `json:"updatedAt"`
+		State               string        `json:"state"`
+		Draft               bool          `json:"draft"`
+		MergedAt            *time.Time    `json:"mergedAt"`
+		Mergeable           *bool         `json:"mergeable"`
+		DetailedMergeStatus string        `json:"detailedMergeStatus"`
+		AutoMergeEnabled    *bool         `json:"autoMergeEnabled"`
+		Labels              *docLabels    `json:"labels"`
+		UserNotesCount      *int          `json:"userNotesCount"`
+		ApprovedBy          *docCount     `json:"approvedBy"`
+		Reviewers           *docReviewers `json:"reviewers"`
+		HeadPipeline        *docPipeline  `json:"headPipeline"`
+	}
+
+	// docCount is a connection selected for its count alone.
+	docCount struct {
+		Count int `json:"count"`
+	}
+
+	// docReviewers is one page of the users a review was requested from, each with
+	// the state of their review.
+	docReviewers struct {
+		Nodes    []docReviewer `json:"nodes"`
+		PageInfo docPageInfo   `json:"pageInfo"`
+	}
+
+	docReviewer struct {
+		Interaction *docInteraction `json:"mergeRequestInteraction"`
+	}
+
+	docInteraction struct {
+		ReviewState string `json:"reviewState"`
 	}
 
 	docAuthor struct {
@@ -636,6 +658,11 @@ func (c *Client) normalizeDocPull(n *docMergeRequest, repo forgeapi.RepoRef) for
 	if n.HeadPipeline != nil {
 		checks = c.checkState("pipeline status (document)", n.HeadPipeline.Status)
 	}
+	approvals, changes := approvalCount(n.ApprovedBy), changesRequested(n.Reviewers)
+	partial := c.labelCut(n.Labels)
+	if partial == nil && n.Reviewers != nil && n.Reviewers.PageInfo.HasNextPage {
+		partial = c.partial(forgeapi.PartialPaginationCap, len(n.Reviewers.Nodes))
+	}
 	return forgeapi.PullRequest{
 		Ref:          forgeapi.PRRef{Number: number, Sigil: sigil},
 		Repo:         repo,
@@ -652,18 +679,45 @@ func (c *Client) normalizeDocPull(n *docMergeRequest, repo forgeapi.RepoRef) for
 		Comments:     commentCount(n.UserNotesCount),
 		CreatedAt:    n.CreatedAt,
 		UpdatedAt:    n.UpdatedAt,
-		Partial:      c.labelCut(n.Labels),
+		Partial:      partial,
 		State:        c.pullState("merge request state (document)", n.State),
 		Draft:        n.Draft,
 		Action: forgeapi.ActionState{
-			Mergeable:      supportOfPointer(n.Mergeable),
-			Checks:         checks,
-			AutoMergeArmed: supportOfPointer(n.AutoMergeEnabled),
-			QueueState:     forgeapi.QueueNone,
-			QueuePosition:  forgeapi.QueuePositionUnknown,
-			MergeBlocked:   c.blockReason("detailed merge status (document)", n.DetailedMergeStatus, ""),
+			Mergeable:        supportOfPointer(n.Mergeable),
+			Checks:           checks,
+			AutoMergeArmed:   supportOfPointer(n.AutoMergeEnabled),
+			QueueState:       forgeapi.QueueNone,
+			QueuePosition:    forgeapi.QueuePositionUnknown,
+			MergeBlocked:     c.blockReason("detailed merge status (document)", n.DetailedMergeStatus, ""),
+			Approvals:        approvals,
+			ChangesRequested: changes,
 		},
 	}
+}
+
+// approvalCount is the number of users who approved, [forgeapi.CountUnknown] where
+// the row carries no approvals.
+func approvalCount(in *docCount) int {
+	if in == nil {
+		return forgeapi.CountUnknown
+	}
+	return in.Count
+}
+
+// changesRequested is the number of reviewers whose review requests changes,
+// [forgeapi.CountUnknown] where the row carries no reviewers or a further page of
+// them, since a count over a cut list would read as exact.
+func changesRequested(in *docReviewers) int {
+	if in == nil || in.PageInfo.HasNextPage {
+		return forgeapi.CountUnknown
+	}
+	n := 0
+	for _, r := range in.Nodes {
+		if r.Interaction != nil && r.Interaction.ReviewState == "REQUESTED_CHANGES" {
+			n++
+		}
+	}
+	return n
 }
 
 // blankMergeState answers a row's merge state unknown.
@@ -714,12 +768,14 @@ func (c *Client) normalizeRESTPull(r *restMergeRequest, repo forgeapi.RepoRef, p
 	// tables do not carry.
 	_ = c.blockReason("detailed merge status (rest)", r.DetailedMergeStatus, r.MergeStatus)
 	action := forgeapi.ActionState{
-		Checks:         checks,
-		Mergeable:      forgeapi.SupportUnknown,
-		AutoMergeArmed: supportOfPointer(r.MergeWhenPipelineSucceeds),
-		QueueState:     forgeapi.QueueNone,
-		QueuePosition:  forgeapi.QueuePositionUnknown,
-		MergeBlocked:   forgeapi.MergeBlockUnknown,
+		Checks:           checks,
+		Mergeable:        forgeapi.SupportUnknown,
+		AutoMergeArmed:   supportOfPointer(r.MergeWhenPipelineSucceeds),
+		QueueState:       forgeapi.QueueNone,
+		QueuePosition:    forgeapi.QueuePositionUnknown,
+		MergeBlocked:     forgeapi.MergeBlockUnknown,
+		Approvals:        forgeapi.CountUnknown,
+		ChangesRequested: forgeapi.CountUnknown,
 	}
 	if path == restDegraded {
 		action.AutoMergeArmed = forgeapi.SupportUnknown

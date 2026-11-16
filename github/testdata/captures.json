@@ -1,5 +1,5 @@
 {
-  "//": "cut from this product's own recorded responses, read 2026-09-18, 2026-10-01 for the run listing's rows and the issue search row, and 2026-10-20 for the run listing's path key, and 2026-11-16 for the comment count keys, cut from a pull request whose document answered totalCommentsCount 8 where its REST record answered comments 3 and review_comments 2 and from an issue search row and an issue record answering 2, trimmed to the keys this family's wire types read and with the owner, repository, login, ids, branches, URLs and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
+  "//": "cut from this product's own recorded responses, read 2026-09-18, 2026-10-01 for the run listing's rows and the issue search row, and 2026-10-20 for the run listing's path key, and 2026-11-16 for the comment count keys and the latestOpinionatedReviews key, one change request on the read and two approvals on the search row, cut from a pull request whose document answered totalCommentsCount 8 where its REST record answered comments 3 and review_comments 2 and from an issue search row and an issue record answering 2, trimmed to the keys this family's wire types read and with the owner, repository, login, ids, branches, URLs and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
   "graphql_pr_read": {
     "nameWithOwner": "example/example",
     "viewerPermission": null,
@@ -37,6 +37,14 @@
         ]
       },
       "totalCommentsCount": 8,
+      "latestOpinionatedReviews": {
+        "totalCount": 1,
+        "nodes": [
+          {
+            "state": "CHANGES_REQUESTED"
+          }
+        ]
+      },
       "commits": {
         "nodes": [
           {
@@ -103,6 +111,17 @@
       "nodes": []
     },
     "totalCommentsCount": 8,
+    "latestOpinionatedReviews": {
+      "totalCount": 2,
+      "nodes": [
+        {
+          "state": "APPROVED"
+        },
+        {
+          "state": "APPROVED"
+        }
+      ]
+    },
     "commits": {
       "nodes": [
         {

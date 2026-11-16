@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -106,6 +107,16 @@ func (pi *pagedInstance) restate(serves int) {
 	pi.settingsBody = settingsAnswer(serves)
 }
 
+// rowReviews is a pull request's review route, whose number a paged instance's
+// renumbered rows vary.
+var rowReviews = regexp.MustCompile(`/pulls/[0-9]+/reviews$`)
+
+// recordedRow is a per-row route's path as the fixture records it, for the one
+// pull request the fixture holds, so every renumbered row reads its answer.
+func recordedRow(path string) string {
+	return rowReviews.ReplaceAllString(path, "/pulls/"+strconv.Itoa(prNumber)+"/reviews")
+}
+
 // elsewhere is one route's path addressed to the other repository.
 func elsewhere(path string) string {
 	path = strings.ReplaceAll(path, "/"+owner+"/"+repository+"/", "/"+owner+"/"+otherRepository+"/")
@@ -186,7 +197,7 @@ func (pi *pagedInstance) handler(t *testing.T) http.Handler {
 			return
 		}
 		for _, x := range pi.extras {
-			if !x.GraphQL && x.Method == r.Method && x.Path == path {
+			if !x.GraphQL && x.Method == r.Method && x.Path == recordedRow(path) {
 				for k, v := range x.Headers {
 					w.Header().Set(k, v)
 				}

@@ -164,8 +164,20 @@ type (
 		MergeQueueEntry  *docQueueEntry `json:"mergeQueueEntry"`
 		Labels           *docLabels     `json:"labels"`
 		Comments         *int           `json:"totalCommentsCount"`
+		Reviews          *docReviews    `json:"latestOpinionatedReviews"`
 		Commits          *docCommits    `json:"commits"`
 		Repository       *docRepoRef    `json:"repository"`
+	}
+
+	// docReviews is a pull request's latest opinionated review per reviewer, absent
+	// where the document was asked not to select it.
+	docReviews struct {
+		Nodes      []docReview `json:"nodes"`
+		TotalCount int         `json:"totalCount"`
+	}
+
+	docReview struct {
+		State string `json:"state"`
 	}
 
 	// docRepoRef is the per-row repository the cross-repository document selects,
@@ -1058,6 +1070,7 @@ func (c *Client) normalizeDocPull(n *docPullRequest, repo forgeapi.RepoRef) forg
 		QueuePosition:  forgeapi.QueuePositionUnknown,
 		MergeBlocked:   c.blockReason("merge state status (document)", n.MergeStateStatus),
 	}
+	action.Approvals, action.ChangesRequested = reviewCounts(n.Reviews)
 	if n.MergeQueueEntry != nil {
 		action.QueueState = c.queueState("merge queue entry state (document)", n.MergeQueueEntry.State)
 		if n.MergeQueueEntry.Position != nil {
@@ -1142,12 +1155,14 @@ func (c *Client) normalizeRESTPull(r *restPull, repo forgeapi.RepoRef) forgeapi.
 		State:        c.pullState("pull request state (rest)", r.State, r.Merged),
 		Draft:        r.Draft,
 		Action: forgeapi.ActionState{
-			Mergeable:      supportOfPointer(r.Mergeable),
-			Checks:         forgeapi.CheckUnknown,
-			AutoMergeArmed: supportOf(r.AutoMerge != nil),
-			QueueState:     forgeapi.QueueNone,
-			QueuePosition:  forgeapi.QueuePositionUnknown,
-			MergeBlocked:   c.blockReason("mergeable state (rest)", r.MergeableState),
+			Mergeable:        supportOfPointer(r.Mergeable),
+			Checks:           forgeapi.CheckUnknown,
+			AutoMergeArmed:   supportOf(r.AutoMerge != nil),
+			QueueState:       forgeapi.QueueNone,
+			QueuePosition:    forgeapi.QueuePositionUnknown,
+			MergeBlocked:     c.blockReason("mergeable state (rest)", r.MergeableState),
+			Approvals:        forgeapi.CountUnknown,
+			ChangesRequested: forgeapi.CountUnknown,
 		},
 	}
 }
@@ -1207,6 +1222,28 @@ func (c *Client) normalizeDocIssue(n *docIssue) forgeapi.Issue {
 		State:      c.issueState("issue state (document)", n.State),
 	}
 }
+
+// reviewCounts is the approving and change-requesting reviewers among a pull
+// request's latest opinionated reviews, both [forgeapi.CountUnknown] where the
+// row carries no reviews or carries fewer than its total, since a count over a
+// cut list would read as exact.
+func reviewCounts(r *docReviews) (approvals, changes int) {
+	if r == nil || r.TotalCount > len(r.Nodes) {
+		return forgeapi.CountUnknown, forgeapi.CountUnknown
+	}
+	for _, n := range r.Nodes {
+		switch n.State {
+		case "APPROVED":
+			approvals++
+		case "CHANGES_REQUESTED":
+			changes++
+		}
+	}
+	return approvals, changes
+}
+
+// cut reports that a row's review list is shorter than its total.
+func (r *docReviews) cut() bool { return r != nil && r.TotalCount > len(r.Nodes) }
 
 // commentCount is the sum of the count keys a record carries, and
 // [forgeapi.CountUnknown] where it lacks any of them.
