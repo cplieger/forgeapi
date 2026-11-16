@@ -321,6 +321,13 @@ type (
 	restMetadata struct {
 		Version string `json:"version"`
 	}
+
+	// restCancelStatus is the deprecated auto-merge cancel's answer, which carries
+	// no merge request: status success where it disarmed one, error where none
+	// was armed.
+	restCancelStatus struct {
+		Status string `json:"status"`
+	}
 )
 
 // pipelineSources maps a pipeline's source onto the trigger, totally over

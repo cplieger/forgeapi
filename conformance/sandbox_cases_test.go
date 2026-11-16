@@ -164,6 +164,9 @@ var liveMutations = map[string]liveMutation{
 			return map[string]any{"State": answer.State, "Code": answer.Code}
 		},
 	},
+	"Merges.CancelAutoMerge": {
+		prepare: func(t *testing.T, l *lane, s *subject) { openPullRequest(t, l, s, "cancel-auto-merge") },
+	},
 	"Releases.CreateRelease": {
 		prepare: func(t *testing.T, l *lane, s *subject) {
 			titled(s)

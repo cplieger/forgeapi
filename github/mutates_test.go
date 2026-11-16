@@ -161,3 +161,16 @@ func TestALabelRemovalMarksOneWritePerName(t *testing.T) {
 		t.Errorf("the attempts of RemoveLabels of two names = %v, want %v", got, want)
 	}
 }
+
+// A cancel of an armed merge reads the pull request's record and then sends the
+// disarm document, and only the document changes the pull request.
+func TestACancelMarksTheDisarmAndNotItsRead(t *testing.T) {
+	seen := &attempts{}
+	h := newHarness(t, map[string]string{pullsRoute: armedPull, documentRoute: disarmed}, forgeapi.WithAttemptObserver(seen.observe))
+	if err := h.client.CancelAutoMerge(t.Context(), testRef(), testPR()); err != nil {
+		t.Fatalf("CancelAutoMerge = %v, want nil", err)
+	}
+	if got, want := seen.all(), []attempt{{route: pullsRoute}, {route: documentRoute, mutates: true}}; !slices.Equal(got, want) {
+		t.Errorf("the attempts of CancelAutoMerge of an armed merge = %v, want %v", got, want)
+	}
+}

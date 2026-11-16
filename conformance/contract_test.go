@@ -451,6 +451,20 @@ var operations = []operation{
 		},
 	},
 	{
+		method:    "Merges.CancelAutoMerge",
+		zero:      nil,
+		mutation:  true,
+		errorArms: []string{cancelPermissionRefused},
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Merges)
+			if !ok {
+				return nil, roleAbsent("Merges")
+			}
+			return nil, r.CancelAutoMerge(ctx, s.repo, s.pr)
+		},
+		expect: func(spec.Product, any) []check { return nil },
+	},
+	{
 		method:    "Checks.CommitStatus",
 		zero:      forgeapi.CommitChecks{},
 		errorArms: []string{commitStateUnderFineGrained},

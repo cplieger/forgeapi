@@ -23,6 +23,7 @@ Where a product departs from the normalized contract, the operation's own godoc 
 | `PullRequests.RerunFailedChecks` | supported | supported | supported | unsupported |
 | `Merges.MergePR` | supported | supported | supported | supported |
 | `Merges.MergeStatus` | supported | supported | supported | supported |
+| `Merges.CancelAutoMerge` | supported | supported | supported | supported |
 | `Checks.CommitStatus` | supported | supported | supported | supported |
 | `Checks.ListRuns` | supported | supported | supported | supported |
 | `Issues.ListIssues` | supported | supported | supported | supported |

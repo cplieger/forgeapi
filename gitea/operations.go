@@ -845,6 +845,39 @@ func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forg
 	}, nil
 }
 
+// CancelAutoMerge implements [forgeapi.Merges].
+//
+// The cancel route answers 404 for a pull request with nothing scheduled and for a
+// missing one alike (routers/api/v1/repo/pull.go CancelScheduledAutoMerge on each
+// product), so a 404 is followed by the pull-request read: finding the pull request
+// means nothing was scheduled, and the read's own refusal answers otherwise.
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error {
+	const op = "CancelAutoMerge"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
+	}
+	addr := &address{named: repo}
+	resp, err := c.core.Do(ctx, &transport.Request{
+		Op: op, Method: http.MethodDelete, Path: addr.route("/pulls/" + strconv.Itoa(pr.Number) + "/merge"),
+		Answers: []int{http.StatusNotFound},
+	})
+	if err != nil {
+		c.nameRefusedSuccessor(addr, resp, err)
+		return err
+	}
+	if resp.Status != http.StatusNotFound {
+		return nil
+	}
+	if _, err := c.readPull(ctx, op, addr, pr); err != nil {
+		return err
+	}
+	return c.moved(ctx, op, addr)
+}
+
 // CommitStatus implements [forgeapi.Checks].
 //
 // This is the family whose folded status costs one request per pull request, plus

@@ -57,7 +57,7 @@ The `github`, `gitlab` and `gitea` packages each hold one client, and `gitea` se
 
 - `Core` is what every client satisfies. It joins nine interfaces, `Identity`, `Repos`, `PullRequests`, `Merges`, `Checks`, `Issues`, `Capabilities`, `Governor` and `Labels`, plus `Close`. Declare the narrowest one your code uses.
 - `Releases` sits outside `Core`, and all three clients implement it. Reach it from a `Core` with a type assertion such as `rel, ok := client.(forgeapi.Releases)`.
-- The writes are `CreatePR`, `ClosePR`, `ReopenPR`, `MergePR`, `RerunFailedChecks`, `CreateIssue`, `CloseIssue`, `ReopenIssue`, `AddLabels`, `RemoveLabels` and `CreateRelease`. Every other operation reads.
+- The writes are `CreatePR`, `ClosePR`, `ReopenPR`, `MergePR`, `CancelAutoMerge`, `RerunFailedChecks`, `CreateIssue`, `CloseIssue`, `ReopenIssue`, `AddLabels`, `RemoveLabels` and `CreateRelease`. Every other operation reads.
 - `Checks.CommitStatus` returns a commit's combined check verdict. `Checks.ListRuns` lists GitHub Actions runs, GitLab pipelines, and Gitea and Forgejo Actions runs.
 - `Connection` describes an instance, `RepoRef` and `PRRef` address a repository and a pull request, and `Option` and `ListOption` configure a client and a list call.
 - Every list answers a `Page` with a `Next` cursor, and [Pages and continuations](docs/pagination.md) covers short pages and resuming.

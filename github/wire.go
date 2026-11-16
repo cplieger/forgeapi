@@ -138,6 +138,16 @@ type (
 		} `json:"enablePullRequestAutoMerge"`
 	}
 
+	// disarmData is the disarm document's payload: null where the disarm was
+	// refused, and the pull request's auto-merge request, null once disarmed.
+	disarmData struct {
+		Disable *struct {
+			PullRequest *struct {
+				AutoMergeRequest *docAutoMerge `json:"autoMergeRequest"`
+			} `json:"pullRequest"`
+		} `json:"disablePullRequestAutoMerge"`
+	}
+
 	docQueueEntry struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
 		State    string `json:"state"`
 		Position *int   `json:"position"`
@@ -333,6 +343,11 @@ func (p *docIssuePayload) cost() int {
 // cost is zero for the arm: a mutation selects no budget object, so the endpoint names
 // no charge in the payload.
 func (*armData) cost() int {
+	return 0
+}
+
+// cost is zero for the disarm, a mutation, for the reason [armData.cost] gives.
+func (*disarmData) cost() int {
 	return 0
 }
 

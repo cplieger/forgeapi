@@ -2,9 +2,11 @@ package gitea
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/forgeapi/v3"
 )
@@ -48,5 +50,42 @@ func TestAnAutoMergeThatSchedulesMarksBothItsSends(t *testing.T) {
 	}
 	if got := seen.all(); !slices.Equal(got, []bool{true, true}) {
 		t.Errorf("Mutates over the attempts of a scheduled auto-merge = %v, want [true true]", got)
+	}
+}
+
+// A cancel with nothing scheduled meets the route's 404 and reads the pull request,
+// and only the DELETE is a write.
+func TestACancelMarksItsDeleteAndNotTheReadAfterIt(t *testing.T) {
+	const cancel, read = "DELETE /api/v1/repos/example/example/pulls/1/merge", "GET /api/v1/repos/example/example/pulls/1"
+	in := newInstance()
+	in.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Method + " " + r.URL.EscapedPath()
+		in.mu.Lock()
+		in.requests = append(in.requests, key)
+		in.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		answer := `{"number":1,"state":"open"}`
+		switch {
+		case key == cancel:
+			w.WriteHeader(http.StatusNotFound)
+			answer = `{"message":"The target couldn't be found."}`
+		case key != read:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		if _, err := w.Write([]byte(answer)); err != nil {
+			t.Errorf("Setup: writing the answer for %s: %v", key, err)
+		}
+	}))
+	t.Cleanup(in.server.Close)
+	seen := &marked{}
+	h := newHarnessOver(t, in, time.Now, forgeapi.WithAttemptObserver(seen.observe))
+	if err := h.client.CancelAutoMerge(t.Context(), testRef(), testPR()); err != nil {
+		t.Fatalf("CancelAutoMerge with nothing scheduled = %v, want nil", err)
+	}
+	if got, want := in.arrived(), []string{cancel, read}; !slices.Equal(got, want) {
+		t.Errorf("CancelAutoMerge with nothing scheduled sent %v, want %v", got, want)
+	}
+	if got := seen.all(); !slices.Equal(got, []bool{true, false}) {
+		t.Errorf("Mutates over the attempts of a cancel with nothing scheduled = %v, want [true false]", got)
 	}
 }

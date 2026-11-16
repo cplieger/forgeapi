@@ -920,6 +920,48 @@ func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forg
 	}, nil
 }
 
+// CancelAutoMerge implements [forgeapi.Merges].
+//
+// The route is the one the version setup read serves ([Client.cancelsAutoMerge]),
+// so choosing it costs no request. Each route has its own "nothing armed" answer,
+// both nil here: the current route's 409, and the deprecated route's 201 whose status
+// is error. A deprecated answer whose status is neither success nor error says
+// nothing about the auto-merge, so it stays upstream.
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error {
+	const op = "CancelAutoMerge"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
+	}
+	route := projectRoute(repo, "/merge_requests/"+strconv.Itoa(pr.Number))
+	if c.cancelsAutoMerge() {
+		_, err := c.do(ctx, &transport.Request{
+			Op: op, Method: http.MethodPost, EscapedPath: route + "/cancel_auto_merge",
+			Answers: []int{http.StatusConflict},
+		})
+		return err
+	}
+	resp, err := c.do(ctx, &transport.Request{
+		Op: op, Method: http.MethodPost, EscapedPath: route + "/cancel_merge_when_pipeline_succeeds",
+	})
+	if err != nil {
+		return err
+	}
+	var answer restCancelStatus
+	if err := transport.Decode(resp.Body, &answer); err != nil {
+		return c.core.FailDecode(ctx, op, transport.REST(http.MethodPost), resp, err)
+	}
+	switch answer.Status {
+	case "success", "error":
+		return nil
+	}
+	return c.core.Fail(ctx, op, transport.REST(http.MethodPost), "", forgeapi.KindUpstream, resp.Status,
+		"the cancel answered status "+strconv.Quote(resp.Quote(answer.Status))+", which says neither that it disarmed the auto-merge nor that none was armed")
+}
+
 // CommitStatus implements [forgeapi.Checks].
 //
 // This read addresses one commit, so its fold is COMPLETE and bounded by

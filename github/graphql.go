@@ -299,6 +299,20 @@ var enableAutoMerge = document{
 	mutation: true,
 }
 
+// disableAutoMerge is the disarm document, whose caller is [Client.CancelAutoMerge]
+// on a pull request whose record names an armed auto-merge. It selects no budget
+// object for the reason [enableAutoMerge] gives.
+var disableAutoMerge = document{
+	name: "DisableAutoMerge",
+	text: `mutation DisableAutoMerge($pullRequestId: ID!) {
+  disablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId}) {
+    pullRequest { number autoMergeRequest { enabledAt } }
+  }
+}
+`,
+	mutation: true,
+}
+
 // repoOwned is one owner's repositories, whose caller is [Client.ListRepos] under an
 // owner scope. repositoryOwner resolves a user and an organization alike, and
 // ownerAffiliations is sent because the schema defaults it to [OWNER, COLLABORATOR].

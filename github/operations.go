@@ -1284,6 +1284,51 @@ func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forg
 	}, nil
 }
 
+// CancelAutoMerge implements [forgeapi.Merges].
+//
+// The pull request's REST record is read first: its auto_merge is null where nothing
+// is armed, and the call ends there, since this product's description says nothing of
+// what the disarm document answers on a pull request with nothing armed. Otherwise the
+// disarm is addressed by the record's node id, as the arm is. A disarm the forge
+// refuses stays upstream with its message quoted: no capture witnesses its body.
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error {
+	const op = "CancelAutoMerge"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
+	}
+	var record restPull
+	if err := c.readRepoJSON(ctx, op, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
+		return err
+	}
+	if record.AutoMerge == nil {
+		return nil
+	}
+	var answer disarmData
+	result, err := c.execute(ctx, op, disableAutoMerge, map[string]any{"pullRequestId": record.NodeID}, &answer)
+	if err != nil {
+		return err
+	}
+	switch {
+	case answer.Disable == nil:
+		reason := result.Refusal
+		if reason == "" {
+			reason = "a null payload beside no error"
+		}
+		return c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream, result.Status,
+			"the forge refused to cancel the auto-merge: "+reason)
+	case answer.Disable.PullRequest == nil:
+		c.unmapped("auto-merge disarm answer (document)", "no pull request on the disarm's payload")
+	case answer.Disable.PullRequest.AutoMergeRequest != nil:
+		return c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream, result.Status,
+			"the forge answered the cancel with the auto-merge still armed")
+	}
+	return nil
+}
+
 // CommitStatus implements [forgeapi.Checks].
 //
 // The fold is computed here rather than taken from this product's rollup

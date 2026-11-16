@@ -321,7 +321,7 @@ func TestAGiteaFamilyRedirectToTheSameRepositoryIsNoRename(t *testing.T) {
 // one request the write sent.
 func TestAWriteToARenamedGiteaFamilyRepositoryRefusesWithItsSuccessor(t *testing.T) {
 	for _, p := range giteaFamilyProducts {
-		for _, method := range []string{"Issues.CloseIssue", "Issues.ReopenIssue", "PullRequests.ClosePR"} {
+		for _, method := range []string{"Issues.CloseIssue", "Issues.ReopenIssue", "PullRequests.ClosePR", "Merges.CancelAutoMerge"} {
 			e := requireEntry(t, p, method)
 			t.Run(caseName(e), func(t *testing.T) {
 				f, err := loadFixture(p, method)
@@ -373,27 +373,32 @@ func TestAWriteThatReadsFirstOnARenamedGiteaFamilyRepositoryWritesNothing(t *tes
 	}
 }
 
-// GitHub's label addition reads the repository's labels first, and on a moved
-// repository that read costs its hop and the resolving read, after which the
-// addition refuses with the successor and writes nothing.
-func TestAGitHubLabelAdditionOnARenamedRepositoryWritesNothing(t *testing.T) {
-	e := requireEntry(t, spec.GitHub, "Labels.AddLabels")
-	f, err := loadFixture(spec.GitHub, e.Method)
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
-	srv, rec := movedInstance(t, f, "/repos/"+selector, githubRepositoryID, movedRecord(t, f))
+// GitHub's label addition and auto-merge cancel read first, the repository's labels
+// and the pull request's record, and on a moved repository that read costs its hop
+// and the resolving read, after which the call refuses with the successor and writes
+// nothing.
+func TestAGitHubWriteThatReadsFirstOnARenamedRepositoryWritesNothing(t *testing.T) {
+	for _, method := range []string{"Labels.AddLabels", "Merges.CancelAutoMerge"} {
+		e := requireEntry(t, spec.GitHub, method)
+		t.Run(caseName(e), func(t *testing.T) {
+			f, err := loadFixture(spec.GitHub, e.Method)
+			if err != nil {
+				t.Fatalf("Setup: %v", err)
+			}
+			srv, rec := movedInstance(t, f, "/repos/"+selector, githubRepositoryID, movedRecord(t, f))
 
-	call := callOn(t, e, srv, rec)
-	if fe := staleCode(t, "AddLabels on GitHub on a moved repository", call.err); fe != nil {
-		checkSuccessor(t, "AddLabels on GitHub's refusal", spec.GitHub, fe.Successor)
+			call := callOn(t, e, srv, rec)
+			if fe := staleCode(t, method+" on GitHub on a moved repository", call.err); fe != nil {
+				checkSuccessor(t, method+" on GitHub's refusal", spec.GitHub, fe.Successor)
+			}
+			for _, req := range call.sent {
+				if req.method != http.MethodGet {
+					t.Errorf("%s on GitHub on a moved repository sent %s, want no write", method, req)
+				}
+			}
+			checkPricedArm(t, e, call, 3)
+		})
 	}
-	for _, req := range call.sent {
-		if req.method != http.MethodGet {
-			t.Errorf("AddLabels on GitHub on a moved repository sent %s, want no write", req)
-		}
-	}
-	checkPricedArm(t, e, call, 3)
 }
 
 // githubRESTCarriers are GitHub's repository-addressed reads the conformance

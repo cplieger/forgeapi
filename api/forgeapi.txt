@@ -394,6 +394,7 @@ type MergeStatus struct {
 type Merges interface {
 	MergePR(ctx context.Context, repo RepoRef, pr PRRef, req MergeRequest) (MergeOutcome, error)
 	MergeStatus(ctx context.Context, repo RepoRef, pr PRRef) (MergeStatus, error)
+	CancelAutoMerge(ctx context.Context, repo RepoRef, pr PRRef) error
 }
 func Mutates(r *http.Request) bool
 type NewIssue struct {
@@ -768,6 +769,7 @@ type Client struct {
 }
 func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) BudgetState() forgeapi.BudgetState
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error
 func (c *Client) Close()
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ClosePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
@@ -806,6 +808,7 @@ type Client struct {
 }
 func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) BudgetState() forgeapi.BudgetState
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error
 func (c *Client) Close()
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ClosePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
@@ -842,6 +845,7 @@ type Client struct {
 }
 func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) BudgetState() forgeapi.BudgetState
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error
 func (c *Client) Close()
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ClosePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)

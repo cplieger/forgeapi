@@ -675,6 +675,27 @@ type Merges interface {
 	//
 	//	Queue  cannot supply  QueueNone always
 	MergeStatus(ctx context.Context, repo RepoRef, pr PRRef) (MergeStatus, error)
+
+	// CancelAutoMerge disarms a merge armed to complete once its requirements
+	// pass, as [MergeRequest.AutoMerge] arms one. A pull request with nothing
+	// armed answers nil, so a cancel sent twice, or after the forge merged and
+	// disarmed it, is no refusal. A pull request that does not exist answers
+	// [KindNotFound] with [CodeRepoOrPRNotVisible]. Where the answer shows the
+	// repository moved, the call cancels nothing and answers [CodeRepoRefStale],
+	// carrying the successor where the product names one.
+	//
+	// Per forge:
+	//
+	//	GitHub   GET /repos/{owner}/{repo}/pulls/{number}, whose auto_merge null says nothing is armed and ends the call, then the DisableAutoMerge document addressed by the node id that record names; where the repository moved, the read's hop and one read against the id-addressed location resolve the successor the stale refusal carries, and nothing is cancelled, 1 to 3 requests
+	//	GitLab   POST /api/v4/projects/{id}/merge_requests/{iid}/cancel_auto_merge where this connection's setup read a version at or past 19.5, whose 409 says nothing is armed, and otherwise POST /api/v4/projects/{id}/merge_requests/{iid}/cancel_merge_when_pipeline_succeeds, the route every version serves, whose 201 carrying status error says the same, 1 request
+	//	Gitea    DELETE /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, whose 404 answers a pull request with nothing scheduled and a missing one alike, so a 404 is followed by GET /api/v1/repos/{owner}/{repo}/pulls/{number}, which finding the pull request makes the answer nil; where the repository moved, the redirect the DELETE is refused names the successor the stale refusal carries, and so does the one 301 the read answers where the move came between the two, 1 to 3 requests
+	//	Forgejo  DELETE /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, whose 404 answers a pull request with nothing scheduled and a missing one alike, so a 404 is followed by GET /api/v1/repos/{owner}/{repo}/pulls/{number}, which finding the pull request makes the answer nil; where the repository moved, the redirect the DELETE is refused names the successor the stale refusal carries, and so does the one 301 the read answers where the move came between the two, 1 to 3 requests
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	merge train                                                        not measured      a merge request on a merge train is also removed from the train, as both routes document; unmeasured, needs a sandbox project that merges through a train
+	//	error, permission refused, on cancel_merge_when_pipeline_succeeds  differs in shape  KindUnauthorized: this route answers 401 to a caller who may not cancel, a status no member separates from a credential the instance rejects; it is the route sent before 19.5 and where setup read no version
+	CancelAutoMerge(ctx context.Context, repo RepoRef, pr PRRef) error
 }
 
 // Checks reads the CI verdict for a commit.

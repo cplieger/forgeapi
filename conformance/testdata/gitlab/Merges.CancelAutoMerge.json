@@ -1,0 +1,16 @@
+{
+  "//": "cut from this product's API description, read 2026-11-16, whose deprecated cancel-merge-when-pipeline-succeeds section gives the answer to a cancelled auto-merge as 201 carrying status success and no merge request; no sandbox capture exists for this mutation on this product, and with no connection setup run the call holds no version and sends the route every version serves",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v4/projects/example%2Fexample/merge_requests/1/cancel_merge_when_pipeline_succeeds",
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "status": "success"
+      }
+    }
+  ]
+}

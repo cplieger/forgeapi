@@ -558,11 +558,9 @@ func checkRoute(t *testing.T, e spec.Entry, f fixture, arrived []sent) {
 		return
 	}
 	first := arrived[0]
-	for _, w := range f.Routes {
-		if w.GraphQL {
-			checkDocument(t, e, first)
-			return
-		}
+	if first.method == http.MethodPost && isGraphQL(first.body) {
+		checkDocument(t, e, first)
+		return
 	}
 	named := tablePaths(&e)
 	if len(named) == 0 {
