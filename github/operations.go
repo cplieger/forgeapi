@@ -1840,6 +1840,9 @@ func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target
 		})
 		switch {
 		case err != nil:
+			if resp != nil && resp.Status < http.StatusMultipleChoices {
+				removed = append(removed, name)
+			}
 			return transport.AfterRemovals(err, removed)
 		case resp.Status != http.StatusNotFound:
 			removed = append(removed, name)

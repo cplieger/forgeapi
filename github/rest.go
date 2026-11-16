@@ -273,8 +273,9 @@ func (c *Client) sendJSON(ctx context.Context, op, method, path string, body, ou
 
 // exchange issues one REST mutation with this connection's REST headers and answers
 // its response, a redirect the write was refused on answered as the stale reference.
-// It marks its call a write, so the successor read that refusal makes is part of the
-// write and never revalidated.
+// That refusal comes with the response of the followed hop beside it, whose status
+// says whether the write landed at the successor. It marks its call a write, so the
+// successor read that refusal makes is part of the write and never revalidated.
 func (c *Client) exchange(ctx context.Context, req *transport.Request) (*transport.Response, error) {
 	ctx = transport.CallWrite(ctx, req.Op)
 	req.Headers = c.restHeaders()
@@ -284,7 +285,7 @@ func (c *Client) exchange(ctx context.Context, req *transport.Request) (*transpo
 		return nil, err
 	}
 	if resp.Redirected {
-		return nil, c.stale(ctx, req.Op, req.Method, resp.Status, c.successorOf(ctx, req.Op, resp.Ended))
+		return resp, c.stale(ctx, req.Op, req.Method, resp.Status, c.successorOf(ctx, req.Op, resp.Ended))
 	}
 	return resp, nil
 }

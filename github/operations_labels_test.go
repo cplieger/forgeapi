@@ -1,7 +1,9 @@
 package github
 
 import (
+	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/forgeapi/v3"
@@ -56,6 +58,37 @@ func TestALabelRemovalSendsNoEmptyName(t *testing.T) {
 			}
 			if got := h.instance.arrived(); !slices.Equal(got, tc.want) {
 				t.Errorf("RemoveLabels(%q) sent %v, want %v", tc.names, got, tc.want)
+			}
+		})
+	}
+}
+
+// On a renamed repository the removal follows the method-preserving hop and lands at
+// the successor before the call is refused as stale, so the refusal names that label
+// among the removed; a hop answered 404 removed nothing.
+func TestARemovalOnARenamedRepositoryNamesTheLabelItsHopRemoved(t *testing.T) {
+	const moved = "DELETE /api/v3/repositories/7691631/issues/1/labels/bug"
+	for _, test := range []struct {
+		name    string
+		status  int
+		removed bool
+	}{
+		{name: "the_hop_removed_the_label", status: http.StatusOK, removed: true},
+		{name: "the_hop_found_no_such_label", status: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := renamedInstance(t, map[string]string{moved: `[]`}, true, http.StatusTemporaryRedirect)
+			h.instance.status(moved, test.status)
+			err := h.client.RemoveLabels(t.Context(), testRef(), forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{"bug", "other"})
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeRepoRefStale {
+				t.Fatalf("RemoveLabels on a renamed repository = %v, want code %q", err, forgeapi.CodeRepoRefStale)
+			}
+			if got := strings.Contains(fe.Message, "removed before this refusal: bug"); got != test.removed {
+				t.Errorf("RemoveLabels on a renamed repository = message %q, naming bug removed %v, want %v", fe.Message, got, test.removed)
+			}
+			if slices.ContainsFunc(h.instance.arrived(), func(r string) bool { return strings.HasSuffix(r, "/labels/other") }) {
+				t.Errorf("RemoveLabels sent %v, want nothing after the stale refusal", h.instance.arrived())
 			}
 		})
 	}
