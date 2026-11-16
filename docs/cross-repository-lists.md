@@ -6,7 +6,7 @@ This page covers `ListMyPRs` and `ListMyIssues`, the two lists that read across 
 
 Listing open pull requests one repository at a time costs one request per repository on every poll, so the cost grows with how many repositories the user has. On a workspace of 62 repositories, one such poller used about 3,700 of a per-user quota of 5,000 requests an hour, which starved every other application on the same account. `ListMyPRs` answers the same question with one request per page. A poll is then `Identity.Whoami` plus this call, two requests as its base on every product, and no product adds a request per repository.
 
-No product adds a request per row either. Gitea and Forgejo rows carry neither a check state nor a head commit, and a folded status is read by head commit, so their rows answer `CheckUnknown` with a zero total. `ListPRs` stays for the view of one repository. `ListPRs`, `ReadPR` and `Checks.CommitStatus` are the calls that answer a check verdict.
+No product reads a row's checks or reviews with a request of its own. GitLab reads only the forks its rows name, one request per distinct fork. Gitea and Forgejo rows carry neither a check state nor a head commit, and a folded status is read by head commit, so their rows answer `CheckUnknown` with a zero total. Their rows carry no review either, so both review counts answer `CountUnknown`, as they do on GitLab. `ListPRs` stays for the view of one repository. `ListPRs`, `ReadPR` and `Checks.CommitStatus` are the calls that answer a check verdict.
 
 ## Scopes
 
@@ -17,6 +17,8 @@ The state is open by construction, so `WithState` is refused with `CodeListState
 ## Rows
 
 Neither call names a repository. So `ValidateSelector` has nothing to check, and neither `CodeRepoRefInvalid` nor `CodeRepoRefStale` can come from the call itself. Each row carries its own repository, `PullRequest.Repo` or `Issue.Repo`, which is what you act on. `Page.Successor` is never set, as on `ListRepos`, because neither call addresses a repository that could have moved. A rename shows up as a row whose repository differs from the one you held.
+
+On GitHub both calls read a search index, so every page they answer carries `Page.Indexed`. The index can lag a change to a record, so an item can be missing from a page while it is still open. Before you drop an item because a page no longer lists it, read it with `ReadPR` or `ReadIssue`. No other product's list sets `Indexed`.
 
 Rows from archived repositories are listed, except where the operation's `Per forge:` block says otherwise. A close or merge of such a row is refused with `CodeRepoArchived`. A pull request row carries no affordance object. To read a row's merge strategies, call `Capabilities.RepoAffordances` for its repository, which costs one read per distinct repository with open pull requests.
 

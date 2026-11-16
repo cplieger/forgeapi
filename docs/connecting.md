@@ -51,11 +51,14 @@ A `RepoRef` comes from what the forge answered and is never built by hand. It is
 - `WithOwner` scopes the cross-repository lists, `ListMyPRs` and `ListMyIssues`, to every open item under one owner, in place of what the credential authored. On `ListRepos` it lists the repositories that owner owns. The owner is a user or an organization, or a group on GitLab. An owner is one or more segments of ASCII letters, digits, `-`, `_` and `.`, joined by `/` on GitLab alone. The library checks this form rather than escaping it, because the owner can reach a search string. `ValidateOwner` checks an owner against a family's rule before any request.
 - `WithSince` bounds `ListRuns` to the runs created at or after a time, read at whole seconds, and every other list refuses it.
 - `WithMergeState(false)` leaves merge state unread on `ListPRs` and `ListMyPRs`, so every row answers `Mergeable` and `MergeBlocked` as unknown. GitHub works out merge state for each row as it answers, so leaving it out shortens a list request. The default is `true`, and every other list refuses the option at either value.
+- `WithReviews(false)` leaves reviews unread on `ListPRs` and `ListMyPRs`, so every row answers `Approvals` and `ChangesRequested` as `CountUnknown`. On Gitea and Forgejo it saves the review read `ListPRs` makes per row. The default is `true`, and every other list refuses the option at either value.
 - `WithWireTransport` replaces the wire under a client's own HTTP stack, which is what a test uses to answer requests without a network. It bypasses the address policy, the trust anchor, the redirect policy and the proxy, because those live in the transport it replaces.
 
 ## Capabilities
 
 `ConnectionCaps`, `GrantCaps`, `RepoAffordances` and `ActionState` are four separate scopes. A capability can be disabled for one repository, refused to one credential, or unknown because no safe probe exists, and each scope answers one of those questions.
+
+`CapRerunChecks` says whether the instance serves a route that re-runs failed CI jobs, which `RerunFailedChecks` and `RerunFailedRun` need. Forgejo 17 and later answer yes, through a route that re-runs the whole finished run, passed jobs included. So word a re-run control on Forgejo as re-running the whole run. Earlier Forgejo releases answer no.
 
 `ConnectionCaps.Product` names the product the instance runs, so a consumer can tell Gitea from Forgejo, which one family serves.
 

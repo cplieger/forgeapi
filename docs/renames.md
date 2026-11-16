@@ -7,8 +7,10 @@ This page covers what a call answers when the repository it addresses has a new 
 GitHub's REST API, Gitea and Forgejo answer the old address of a renamed or transferred repository with a redirect. The library reads that redirect as the move rather than following it silently.
 
 - A list, a commit status or a merge-state read answers from the repository it moved to, and names that repository in the answer's `Successor`.
-- `ReadPR` and `RepoAffordances` have no such field in their answers. They refuse with `CodeRepoRefStale` and name the new repository in `Error.Successor`.
+- `ReadPR`, `ReadIssue` and `RepoAffordances` have no such field in their answers. They refuse with `CodeRepoRefStale` and name the new repository in `Error.Successor`.
 - A write that the old address answers with a 301 is refused the same way, and the library does not resend it.
+- A write that the old address answers with a 307 or 308 on the same origin is sent on to the new address. The write lands on the repository it moved to, and the call still refuses with `CodeRepoRefStale` and names that repository. Do not send the write again.
+- On GitHub, `ReadIssue` of an issue transferred to another repository answers the issue from its new repository.
 - Any read whose redirect leads to a refusal is refused the same way too.
 
 Where a product's answer names no successor at all, the operation's `Per forge:` rows say so.

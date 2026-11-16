@@ -196,6 +196,10 @@ jobs:
             product: gitea
             cli: gitea
             image: gitea/gitea:28.0.0@sha256:a9dc25679ebdd33356242d2e0667cc220043745e8339922879f187c20329a42e
+          - name: Forgejo 17.0.1
+            product: forgejo
+            cli: forgejo
+            image: codeberg.org/forgejo/forgejo:17.0.1@sha256:fcd19ff4ebc85fb098a67e8e1d0d5a84d07dd6e8a23edcfdfd5b71a6178953be
           - name: Forgejo 16.0.5
             product: forgejo
             cli: forgejo
