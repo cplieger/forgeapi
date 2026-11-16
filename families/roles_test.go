@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/families"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/families"
 )
 
 // Open's signature is pinned here rather than only reviewed, because its return

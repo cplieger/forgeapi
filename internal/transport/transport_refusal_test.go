@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 func statedMapper(_ string, status int, _ http.Header, bodyError string) (forgeapi.ErrorKind, string) {

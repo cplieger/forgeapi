@@ -1,10 +1,10 @@
 # forgeapi
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/forgeapi/v2.svg)](https://pkg.go.dev/github.com/cplieger/forgeapi/v2) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/forgeapi)](https://github.com/cplieger/forgeapi/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/forgeapi/badges/mutation.json)](https://github.com/cplieger/forgeapi/issues?q=label%3Agremlins-tracker)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/forgeapi/v3.svg)](https://pkg.go.dev/github.com/cplieger/forgeapi/v3) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/forgeapi)](https://github.com/cplieger/forgeapi/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/forgeapi/badges/mutation.json)](https://github.com/cplieger/forgeapi/issues?q=label%3Agremlins-tracker)
 
 forgeapi lets your Go code read and write pull requests, issues, merges, checks, releases and labels on GitHub, GitLab, Gitea and Forgejo through one set of types.
 
-It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It has no operations for comments, reviews or file contents. It is at v2 and is licensed under Apache-2.0. It depends only on filesafe, httpcache, httpclient, jsonx, textsafe, ssrf and urlform, seven modules by the same author.
+It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It has no operations for comments, reviews or file contents. It is at v3 and is licensed under Apache-2.0. It depends only on filesafe, httpcache, httpclient, jsonx, textsafe, ssrf and urlform, seven modules by the same author.
 
 ## Why use it
 
@@ -21,7 +21,7 @@ Consider [go-github](https://github.com/google/go-github) if you target GitHub a
 ## Install
 
 ```sh
-go get github.com/cplieger/forgeapi/v2@latest
+go get github.com/cplieger/forgeapi/v3@latest
 ```
 
 ## Usage
@@ -63,7 +63,7 @@ The `github`, `gitlab` and `gitea` packages each hold one client, and `gitea` se
 - Every list answers a `Page` with a `Next` cursor, and [Pages and continuations](docs/pagination.md) covers short pages and resuming.
 - `creds` holds the device flow, `StoredSource` over the file store, and `AppKey` and `AppSource` for GitHub App credentials. `gitcred` holds the git credential helper.
 
-Per-symbol detail is on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v2).
+Per-symbol detail is on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v3).
 
 ## Every call answers nil, an Error or a context error
 

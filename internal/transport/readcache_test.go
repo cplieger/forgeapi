@@ -17,7 +17,7 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // The tests in this file are written from RFC 9110 section 13.1 (the two

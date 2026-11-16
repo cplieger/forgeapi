@@ -3,7 +3,7 @@ package gitcred_test
 import (
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // A record's web base is an origin and a path, the form a connection is refused

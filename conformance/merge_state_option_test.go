@@ -3,8 +3,8 @@ package conformance
 import (
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // The table's fields for what the pull request lists answer under

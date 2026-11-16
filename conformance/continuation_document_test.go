@@ -9,8 +9,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // documentProducts are the products whose repository pull-request list reads a

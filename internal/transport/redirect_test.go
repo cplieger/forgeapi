@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // The two origins a containment case needs. They share one PORT and differ in host,

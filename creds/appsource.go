@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/githubroot"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/githubroot"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // The waits an App source keeps between requests to GitHub.

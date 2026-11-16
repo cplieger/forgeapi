@@ -15,12 +15,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/families"
-	"github.com/cplieger/forgeapi/v2/gitea"
-	"github.com/cplieger/forgeapi/v2/github"
-	"github.com/cplieger/forgeapi/v2/gitlab"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/families"
+	"github.com/cplieger/forgeapi/v3/gitea"
+	"github.com/cplieger/forgeapi/v3/github"
+	"github.com/cplieger/forgeapi/v3/gitlab"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // maxFixtureBody bounds what the fixture server reads from one request, so a

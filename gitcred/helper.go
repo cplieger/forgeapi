@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
 )
 
 // The decline reasons [forgeapi.Counters.HelperDecline] reports, a closed set.

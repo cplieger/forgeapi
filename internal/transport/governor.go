@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // governor is one connection's cost-aware pacing.

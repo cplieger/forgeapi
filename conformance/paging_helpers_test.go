@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // settingsRoute is the Gitea family's statement of the most rows one page of a list

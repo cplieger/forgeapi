@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // Usability is what a refresh learned about a record's stored pair that the

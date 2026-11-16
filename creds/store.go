@@ -9,8 +9,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/credfile"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/credfile"
 )
 
 // fileName is the one file a [FileStore] keeps its records in.

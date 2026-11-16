@@ -1,6 +1,6 @@
 package github
 
-import "github.com/cplieger/forgeapi/v2"
+import "github.com/cplieger/forgeapi/v3"
 
 // The roles this family claims, asserted at compile time beside the type that
 // claims them. This is where a method added to a published role stops compiling,

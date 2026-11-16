@@ -9,8 +9,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // prListCeiling is the most rows a page of GitHub's repository pull-request list

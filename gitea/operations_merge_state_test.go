@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // TestThePullListAnswersUnknownMergeStateUnderTheOption holds ListPRs to the option:

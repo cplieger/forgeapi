@@ -19,8 +19,8 @@ import (
 	"testing"
 	"testing/synctest"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
 )
 
 // jwtParts splits a compact JWT into its decoded header and claims and its raw

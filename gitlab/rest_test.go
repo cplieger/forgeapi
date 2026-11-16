@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 const labelRows = `[{"name": "example-label", "color": "#ededed", "description": "Example label."}]`
