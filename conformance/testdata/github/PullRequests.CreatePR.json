@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded CreatePR response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the second route is this row's second arm, measured on the creation's own response: that response carried an empty label array whatever the request named, because this product's pull-request creation declares no labels parameter, so the labels are applied through the route below, which answers the label rows the object then holds",
+  "//": "cut from a recorded CreatePR response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the second route is this row's second arm, measured on the creation's own response: that response carried an empty label array whatever the request named, because this product's pull-request creation declares no labels parameter, so the labels are applied through the route below, which answers the label rows the object then holds; the comments and review_comments keys cut from a recorded single pull-request REST read response, read 2026-11-16, their counts replaced with the canonical subject's, a record the API description gives as the mutation's response schema too",
   "routes": [
     {
       "method": "POST",
@@ -21,6 +21,8 @@
         "updated_at": "2026-01-02T00:00:00Z",
         "draft": false,
         "labels": [],
+        "comments": 2,
+        "review_comments": 1,
         "head": {
           "ref": "example-feature",
           "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",

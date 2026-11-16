@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded read-pr response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "//": "cut from a recorded read-pr response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the userNotesCount key cut from a recorded ReadPR response, read 2026-11-16, its count replaced with the canonical subject's",
   "routes": [
     {
       "graphql": true,
@@ -50,6 +50,7 @@
                   }
                 ]
               },
+              "userNotesCount": 3,
               "headPipeline": {
                 "status": "SUCCESS",
                 "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d"

@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded list-my-issues-scope-viewer-bot response beside a recorded list-my-issues-scope-owner-group-labels response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; both arms measured on 2026-10-01, the viewer arm as a bot account with a credential: the group route answers label names unless the label detail parameter is sent, and a user's own namespace answers 404 as an absent owner does, so the route the fixture serves second is the owner arm's",
+  "//": "cut from a recorded list-my-issues-scope-viewer-bot response beside a recorded list-my-issues-scope-owner-group-labels response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; both arms measured on 2026-10-01, the viewer arm as a bot account with a credential: the group route answers label names unless the label detail parameter is sent, and a user's own namespace answers 404 as an absent owner does, so the route the fixture serves second is the owner arm's; the user_notes_count key cut from a recorded project issue list response, read anonymously 2026-11-16, whose rows the API description gives the schema this route's rows have, its count replaced with the canonical subject's",
   "routes": [
     {
       "method": "GET",
@@ -27,6 +27,7 @@
               "description": "Example label."
             }
           ],
+          "user_notes_count": 3,
           "project_id": 1,
           "references": {
             "full": "example/example#1"

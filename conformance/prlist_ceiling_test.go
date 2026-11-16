@@ -14,8 +14,9 @@ import (
 )
 
 // prListCeiling is the most rows a page of GitHub's repository pull-request list
-// asks for: 50 answered on every attempt on kubernetes/kubernetes and 75 on none.
-const prListCeiling = 50
+// asks for: 30 answered on every attempt on kubernetes/kubernetes and
+// microsoft/vscode, measured 2026-11-16, and 50 answered 502 on 8 of 15.
+const prListCeiling = 30
 
 // prListEndCursor is the end cursor every page the document server below answers
 // names.
@@ -135,7 +136,7 @@ func TestTheRepositoryPullRequestListAsksForAtMostItsMeasuredPage(t *testing.T) 
 	}{
 		"default_bound":    {want: prListCeiling},
 		"bound_100":        {opts: []forgeapi.ListOption{forgeapi.WithPageBound(100)}, want: prListCeiling},
-		"bound_51":         {opts: []forgeapi.ListOption{forgeapi.WithPageBound(51)}, want: prListCeiling},
+		"bound_31":         {opts: []forgeapi.ListOption{forgeapi.WithPageBound(prListCeiling + 1)}, want: prListCeiling},
 		"bound_at_ceiling": {opts: []forgeapi.ListOption{forgeapi.WithPageBound(prListCeiling)}, want: prListCeiling},
 		"bound_below":      {opts: []forgeapi.ListOption{forgeapi.WithPageBound(20)}, want: 20},
 	}

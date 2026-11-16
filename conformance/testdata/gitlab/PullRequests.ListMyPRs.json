@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded list-my-prs-scope-viewer-bot response beside a recorded list-my-prs-scope-owner-group response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; read as a bot account with a credential on 2026-10-01: a list row carries no head_pipeline, mergeable or auto_merge_enabled key under either scope, its auto-merge flag arrives as merge_when_pipeline_succeeds, and its labels arrive as objects where the label detail parameter is sent",
+  "//": "cut from a recorded list-my-prs-scope-viewer-bot response beside a recorded list-my-prs-scope-owner-group response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; read as a bot account with a credential on 2026-10-01: a list row carries no head_pipeline, mergeable or auto_merge_enabled key under either scope, its auto-merge flag arrives as merge_when_pipeline_succeeds, and its labels arrive as objects where the label detail parameter is sent; the user_notes_count key cut from a recorded project merge-request list response, read anonymously 2026-11-16, whose rows the API description gives the schema this route's rows have, its count replaced with the canonical subject's",
   "routes": [
     {
       "method": "GET",
@@ -31,6 +31,7 @@
               "description": "Example label."
             }
           ],
+          "user_notes_count": 3,
           "source_branch": "example-feature",
           "target_branch": "main",
           "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",

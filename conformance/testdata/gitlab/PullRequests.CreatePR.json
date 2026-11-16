@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded mutations-sandbox-bot response, read 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the mutation's own answer, captured on 2026-10-02 on the GitLab sandbox as a bot account: the create answers head_pipeline null, merge_status checking, detailed_merge_status preparing, merge_when_pipeline_succeeds false and its labels as name strings, which this body serves",
+  "//": "cut from a recorded mutations-sandbox-bot response, read 2026-10-02; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the mutation's own answer, captured on 2026-10-02 on the GitLab sandbox as a bot account: the create answers head_pipeline null, merge_status checking, detailed_merge_status preparing, merge_when_pipeline_succeeds false and its labels as name strings, which this body serves; the user_notes_count key cut from a recorded single merge-request REST read response, read 2026-11-16, its count replaced with the canonical subject's, a record the API description gives as the mutation's response schema too",
   "routes": [
     {
       "method": "POST",
@@ -26,6 +26,7 @@
         "labels": [
           "example-label"
         ],
+        "user_notes_count": 3,
         "source_branch": "example-feature",
         "target_branch": "main",
         "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",

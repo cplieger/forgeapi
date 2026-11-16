@@ -114,6 +114,7 @@ func pullRequestFields(foldPage int, foldAfter string) string {
         autoMergeRequest { enabledAt mergeMethod }
         mergeQueueEntry { state position }
         labels(first: 100) { totalCount nodes { name color description } }
+        totalCommentsCount
         commits(last: 1) {
           nodes {
             commit {
@@ -159,14 +160,14 @@ var prList = document{
 }
 
 // prListPageCeiling is the most rows [prList] asks for on one page, whatever the page
-// bound asks. Its rows carry the selection [prMine]'s do, the check rollup and the
-// merge state, and on a repository with many open pull requests a larger page outruns
-// the upstream's evaluation time: measured on one such repository, a page of 50
-// answered on every attempt, the slowest in under 8 s, and a page of 75 answered 502
-// on every attempt after about 10.6 s. A gateway answer is retried and still charged,
-// so a larger page spends the budget and serves nothing; a page this ceiling shortened
+// bound asks. Its rows carry the check rollup and the merge state, and a larger page
+// outruns the upstream's evaluation time: measured 2026-11-16 on two repositories
+// holding 1,355 and 3,128 open pull requests, a page of 50 answered 502 on 8 of 15
+// attempts after 10.8 to 12 s, 40 answered in up to 10.9 s, and 30 answered all six
+// attempts in at most 9.1 s. A gateway answer is retried and still charged, so a
+// larger page spends the budget and serves nothing; a page this ceiling shortened
 // carries its continuation like any other.
-const prListPageCeiling = 50
+const prListPageCeiling = 30
 
 // prRead is the single-pull-request document, whose callers are [Client.ReadPR] and
 // [Client.MergeStatus]. Its field set is the list's minus the list machinery plus the
@@ -212,15 +213,14 @@ var prMine = document{
 }
 
 // prSearchPageCeiling is the most rows [prMine] asks for on one page, whatever the
-// page bound asks, under either scope. Its rows' own selection, the check rollup and
-// the merge state, outruns the upstream's evaluation time at a larger page: measured,
-// a page of 100 answered 502 under two owners whatever the labels page, the smaller of
-// them holding 99 open pull requests, and a page of 50 under the larger, while 25
-// answered under both and [issueMine] answered a page of 100 under the larger. So the
-// page decides it, not the owner's size. A gateway answer is retried and still
-// charged, so a larger page spends the budget and serves nothing; a page this ceiling
-// shortened carries its continuation like any other.
-const prSearchPageCeiling = 25
+// page bound asks, under either scope. Both the page and the owner's size move its
+// evaluation time: measured 2026-11-16 under an owner holding 57,746 open pull
+// requests, a page of 25 answered 502 on 2 of 5 attempts, 20 answered in up to 10.2
+// s and 15 answered all three attempts in at most 8.1 s, while 25 answered in 6 s
+// under an owner holding few. A gateway answer is retried and still charged, so a
+// larger page spends the budget and serves nothing; a page this ceiling shortened
+// carries its continuation like any other.
+const prSearchPageCeiling = 15
 
 // issueMine is the cross-repository ISSUE document, whose caller is
 // [Client.ListMyIssues]. It is the same search connection [prMine] reads, selecting
@@ -248,6 +248,7 @@ var issueMine = document{
         state
         author { __typename login }
         labels(first: 100) { totalCount nodes { name color description } }
+        comments { totalCount }
         repository { nameWithOwner }
       }
     }

@@ -163,6 +163,7 @@ type (
 		AutoMergeRequest *docAutoMerge  `json:"autoMergeRequest"`
 		MergeQueueEntry  *docQueueEntry `json:"mergeQueueEntry"`
 		Labels           *docLabels     `json:"labels"`
+		Comments         *int           `json:"totalCommentsCount"`
 		Commits          *docCommits    `json:"commits"`
 		Repository       *docRepoRef    `json:"repository"`
 	}
@@ -221,7 +222,12 @@ type (
 		State      string      `json:"state"`
 		Author     *docActor   `json:"author"`
 		Labels     *docLabels  `json:"labels"`
+		Comments   *docCount   `json:"comments"`
 		Repository *docRepoRef `json:"repository"`
+	}
+
+	docCount struct {
+		TotalCount int `json:"totalCount"`
 	}
 
 	docIssueSearch struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
@@ -399,6 +405,8 @@ type (
 		Merged         bool           `json:"merged"`
 		Mergeable      *bool          `json:"mergeable"`
 		MergeableState string         `json:"mergeable_state"`
+		Comments       *int           `json:"comments"`
+		ReviewComments *int           `json:"review_comments"`
 		AutoMerge      *restAutoMerge `json:"auto_merge"`
 	}
 
@@ -412,6 +420,7 @@ type (
 		CreatedAt time.Time   `json:"created_at"`
 		UpdatedAt time.Time   `json:"updated_at"`
 		Labels    []restLabel `json:"labels"`
+		Comments  *int        `json:"comments"`
 		// PullRequest is the key that makes a row of the issues route a PULL
 		// REQUEST. It is read to DROP that row, because this route's population is
 		// issues and pull requests both and the operation publishes issues.
@@ -1068,6 +1077,7 @@ func (c *Client) normalizeDocPull(n *docPullRequest, repo forgeapi.RepoRef) forg
 		WebURL:       n.URL,
 		HeadSHA:      n.HeadRefOID,
 		Labels:       normalizeDocLabels(n.Labels),
+		Comments:     commentCount(n.Comments),
 		CreatedAt:    n.CreatedAt,
 		UpdatedAt:    n.UpdatedAt,
 		State:        c.pullState("pull request state (document)", n.State, false),
@@ -1126,6 +1136,7 @@ func (c *Client) normalizeRESTPull(r *restPull, repo forgeapi.RepoRef) forgeapi.
 		WebURL:       r.WebURL,
 		HeadSHA:      sha,
 		Labels:       normalizeLabels(r.Labels),
+		Comments:     commentCount(r.Comments, r.ReviewComments),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 		State:        c.pullState("pull request state (rest)", r.State, r.Merged),
@@ -1170,6 +1181,7 @@ func (c *Client) normalizeIssue(i *restIssue, repo forgeapi.RepoRef) forgeapi.Is
 		AuthorKind: kind,
 		WebURL:     i.WebURL,
 		Labels:     normalizeLabels(i.Labels),
+		Comments:   commentCount(i.Comments),
 		CreatedAt:  i.CreatedAt,
 		UpdatedAt:  i.UpdatedAt,
 		State:      c.issueState("issue state (rest)", i.State),
@@ -1189,10 +1201,33 @@ func (c *Client) normalizeDocIssue(n *docIssue) forgeapi.Issue {
 		AuthorKind: kind,
 		WebURL:     n.URL,
 		Labels:     normalizeDocLabels(n.Labels),
+		Comments:   n.Comments.total(),
 		CreatedAt:  n.CreatedAt,
 		UpdatedAt:  n.UpdatedAt,
 		State:      c.issueState("issue state (document)", n.State),
 	}
+}
+
+// commentCount is the sum of the count keys a record carries, and
+// [forgeapi.CountUnknown] where it lacks any of them.
+func commentCount(parts ...*int) int {
+	total := 0
+	for _, n := range parts {
+		if n == nil {
+			return forgeapi.CountUnknown
+		}
+		total += *n
+	}
+	return total
+}
+
+// total is the connection's count, and [forgeapi.CountUnknown] where the row
+// carries no connection.
+func (c *docCount) total() int {
+	if c == nil {
+		return forgeapi.CountUnknown
+	}
+	return c.TotalCount
 }
 
 // normalizeRun is the workflow-run normalizer. The run's status and conclusion are

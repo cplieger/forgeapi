@@ -60,6 +60,7 @@ func mergeRequestFields(gate string) string {
         pageInfo { hasNextPage }
         nodes { title color description }
       }
+      userNotesCount
       headPipeline { status }`
 }
 
@@ -132,12 +133,11 @@ var ownerLookup = document{
 
 // docAcceptance is the ONE bounded question a connection asks at setup: does this
 // schema carry every field, argument and member the two pull-request documents above
-// select (their variables are literals here, so those are ruled on too). The answer
-// decides documents or REST for the connection's life. The empty project selector
-// resolves nothing while validation still rules on every field: 68 bytes at complexity
-// 53 of 200 on gitlab.com, and an undeclared field answers 200 undefinedField with no
-// data, the refusal [Client.refuseDocument] classifies. Introspection cannot ask it: a
-// named operation cannot select __type, and an unnamed one answers the 8.2 MB schema.
+// select. The answer decides documents or REST for the connection's life. The empty
+// project selector resolves nothing while validation rules on every field (68 bytes at
+// complexity 58 of 200 on gitlab.com, 2026-11-16); an undeclared field answers 200
+// undefinedField with no data, which [Client.refuseDocument] classifies. Introspection
+// cannot ask it: a named operation cannot select __type.
 var docAcceptance = document{
 	name: "DocumentAcceptance",
 	text: `query DocumentAcceptance {

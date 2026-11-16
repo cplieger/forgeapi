@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded ListMyPRs response beside a recorded ListMyPRs-scope-owner-user response, read 2026-09-18 and 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "//": "cut from a recorded ListMyPRs response beside a recorded ListMyPRs-scope-owner-user response, read 2026-09-18 and 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the totalCommentsCount key cut from a recorded ListMyPRs response, read 2026-11-16, its count replaced with the canonical subject's",
   "routes": [
     {
       "graphql": true,
@@ -53,6 +53,7 @@
                     }
                   ]
                 },
+                "totalCommentsCount": 3,
                 "headRefOid": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
                 "commits": {
                   "nodes": [

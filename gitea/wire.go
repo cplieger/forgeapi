@@ -96,22 +96,24 @@ type (
 	}
 
 	wirePull struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
-		Number      int           `json:"number"`
-		State       string        `json:"state"`
-		Title       string        `json:"title"`
-		Body        string        `json:"body"`
-		User        wireUser      `json:"user"`
-		WebURL      string        `json:"html_url"`
-		CreatedAt   time.Time     `json:"created_at"`
-		UpdatedAt   time.Time     `json:"updated_at"`
-		Labels      []wireLabel   `json:"labels"`
-		Head        wireBranch    `json:"head"`
-		Base        wireBranch    `json:"base"`
-		Draft       bool          `json:"draft"`
-		Merged      bool          `json:"merged"`
-		Mergeable   *bool         `json:"mergeable"`
-		Repository  *wireRepoMeta `json:"repository"`
-		PullRequest *wirePullMeta `json:"pull_request"`
+		Number         int           `json:"number"`
+		State          string        `json:"state"`
+		Title          string        `json:"title"`
+		Body           string        `json:"body"`
+		User           wireUser      `json:"user"`
+		WebURL         string        `json:"html_url"`
+		CreatedAt      time.Time     `json:"created_at"`
+		UpdatedAt      time.Time     `json:"updated_at"`
+		Labels         []wireLabel   `json:"labels"`
+		Comments       *int          `json:"comments"`
+		ReviewComments *int          `json:"review_comments"`
+		Head           wireBranch    `json:"head"`
+		Base           wireBranch    `json:"base"`
+		Draft          bool          `json:"draft"`
+		Merged         bool          `json:"merged"`
+		Mergeable      *bool         `json:"mergeable"`
+		Repository     *wireRepoMeta `json:"repository"`
+		PullRequest    *wirePullMeta `json:"pull_request"`
 	}
 
 	wireIssue struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
@@ -124,6 +126,7 @@ type (
 		CreatedAt  time.Time     `json:"created_at"`
 		UpdatedAt  time.Time     `json:"updated_at"`
 		Labels     []wireLabel   `json:"labels"`
+		Comments   *int          `json:"comments"`
 		Repository *wireRepoMeta `json:"repository"`
 	}
 
@@ -395,6 +398,7 @@ func (c *Client) normalizePull(p *wirePull, repo forgeapi.RepoRef) forgeapi.Pull
 		WebURL:       p.WebURL,
 		HeadSHA:      p.Head.SHA,
 		Labels:       normalizeLabels(p.Labels),
+		Comments:     commentCount(p.Comments, p.ReviewComments),
 		CreatedAt:    p.CreatedAt,
 		UpdatedAt:    p.UpdatedAt,
 		Action:       normalizeAction(p),
@@ -567,10 +571,24 @@ func (c *Client) normalizeIssue(i *wireIssue, repo forgeapi.RepoRef) forgeapi.Is
 		AuthorKind: c.accountKind(i.User.Type),
 		WebURL:     i.WebURL,
 		Labels:     normalizeLabels(i.Labels),
+		Comments:   commentCount(i.Comments),
 		CreatedAt:  i.CreatedAt,
 		UpdatedAt:  i.UpdatedAt,
 		State:      c.issueState(i.State),
 	}
+}
+
+// commentCount is the sum of the count keys a record carries, and
+// [forgeapi.CountUnknown] where it lacks any of them.
+func commentCount(parts ...*int) int {
+	total := 0
+	for _, n := range parts {
+		if n == nil {
+			return forgeapi.CountUnknown
+		}
+		total += *n
+	}
+	return total
 }
 
 // normalizeRelease is the release normalizer.

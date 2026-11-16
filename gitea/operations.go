@@ -258,7 +258,10 @@ func (c *Client) pullPage(ctx context.Context, op string, addr *address, rows []
 func (c *Client) myPullPage(rows []wirePull, walk pageWalk) forgeapi.Page[forgeapi.PullRequest] {
 	items := make([]forgeapi.PullRequest, 0, len(rows))
 	for i := range rows {
-		items = append(items, c.normalizePull(&rows[i], metaRepo(rows[i].Repository)))
+		item := c.normalizePull(&rows[i], metaRepo(rows[i].Repository))
+		// A search row is the issue record, which carries no review_comments key.
+		item.Comments = commentCount(rows[i].Comments)
+		items = append(items, item)
 	}
 	next := walk.next(len(rows))
 	return forgeapi.Page[forgeapi.PullRequest]{

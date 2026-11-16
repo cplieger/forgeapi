@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded read_pr response beside a recorded commit_status response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer gitea.com gave anonymously, read 2026-10-02",
+  "//": "cut from a recorded read_pr response beside a recorded commit_status response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer gitea.com gave anonymously, read 2026-10-02; the comments and review_comments keys cut from a recorded ReadPR response, read 2026-11-16, their counts replaced with the canonical subject's",
   "routes": [
     {
       "method": "GET",
@@ -29,6 +29,8 @@
             "description": "Example label."
           }
         ],
+        "comments": 2,
+        "review_comments": 1,
         "head": {
           "ref": "example-feature",
           "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",

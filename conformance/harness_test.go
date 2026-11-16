@@ -40,6 +40,7 @@ const (
 	issueWebURL   = "https://forge.example/example/example/issues/1"
 	labelName     = "example-label"
 	labelDesc     = "Example label."
+	commentCount  = 3
 	repoDesc      = "Example repository."
 	repoWebURL    = "https://forge.example/example/example"
 	repoCloneURL  = "https://forge.example/example/example.git"

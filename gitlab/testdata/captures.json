@@ -1,5 +1,5 @@
 {
-  "//": "cut from this product's own recorded responses, read 2026-09-18, trimmed to the keys this family's wire types read and with the namespace, login, host, branch and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
+  "//": "cut from this product's own recorded responses, read 2026-09-18, and 2026-11-16 for the user-notes count keys, trimmed to the keys this family's wire types read and with the namespace, login, host, branch and prose replaced by the canonical subject; the SHAPE is the instance's own rather than a hand-written one, so a wire tag that disagrees with what this product sends decodes nothing here",
   "graphql_pr_read": {
     "fullPath": "example/group/example",
     "userPermissions": {
@@ -37,6 +37,7 @@
           }
         ]
       },
+      "userNotesCount": 6,
       "headPipeline": {
         "sha": "4f30a69cef33296cfe2efac8fc480467d5fe4b43",
         "status": "SUCCESS"
@@ -70,6 +71,7 @@
     "merge_status": "can_be_merged",
     "detailed_merge_status": "not_approved",
     "merged_at": null,
+    "user_notes_count": 4,
     "references": {
       "short": "!2672",
       "relative": "!2672",
@@ -99,7 +101,8 @@
         "color": "#6699cc",
         "archived": false
       }
-    ]
+    ],
+    "user_notes_count": 7
   },
   "rest_project": {
     "path_with_namespace": "example/group/example",

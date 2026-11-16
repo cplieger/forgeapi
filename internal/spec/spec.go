@@ -174,21 +174,21 @@ type Entry struct {
 var Fields = map[string]int{
 	"Identity.Whoami":                5,
 	"Repos.ListRepos":                17,
-	"PullRequests.ListPRs":           30,
-	"PullRequests.ListMyPRs":         30,
-	"PullRequests.ReadPR":            27,
-	"PullRequests.CreatePR":          27,
-	"PullRequests.ClosePR":           27,
-	"PullRequests.ReopenPR":          27,
+	"PullRequests.ListPRs":           31,
+	"PullRequests.ListMyPRs":         31,
+	"PullRequests.ReadPR":            28,
+	"PullRequests.CreatePR":          28,
+	"PullRequests.ClosePR":           28,
+	"PullRequests.ReopenPR":          28,
 	"PullRequests.RerunFailedChecks": 2,
 	"Merges.MergePR":                 4,
 	"Merges.MergeStatus":             4,
 	"Checks.CommitStatus":            10,
 	"Checks.ListRuns":                15,
-	"Issues.ListIssues":              17,
-	"Issues.ListMyIssues":            17,
-	"Issues.CreateIssue":             14,
-	"Issues.CloseIssue":              14,
+	"Issues.ListIssues":              18,
+	"Issues.ListMyIssues":            18,
+	"Issues.CreateIssue":             15,
+	"Issues.CloseIssue":              15,
 	"Capabilities.ConnectionCaps":    4,
 	"Capabilities.GrantCaps":         2,
 	"Capabilities.RepoAffordances":   6,
@@ -355,10 +355,15 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.ListPRs",
 		Product:   GitHub,
-		Exercises: "the PRList document, asking for at most 50 rows a page whatever the page bound asks, since a larger page of its rows answered 502 on every attempt on a large repository",
+		Exercises: "the PRList document, asking for at most 30 rows a page whatever the page bound asks, since a page of 50 of its rows answered 502 on 8 of 15 attempts on two large repositories",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Items[].Comments",
+				Kind:  DiffersInShape,
+				Says:  "totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16",
+			},
 			{
 				Field: "Items[].Action.Checks, under a fine-grained token",
 				Kind:  CannotSupply,
@@ -512,10 +517,15 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.ListMyPRs",
 		Product:   GitHub,
-		Exercises: "the PRMine search document, asking for at most 25 rows a page whatever the page bound asks, since a larger page of its rows answered 502 under both owners measured, the smaller of them holding fewer than a hundred open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user",
+		Exercises: "the PRMine search document, asking for at most 15 rows a page whatever the page bound asks, since a page of 25 of its rows answered 502 on 2 of 5 attempts under an owner holding 57,746 open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Items[].Comments",
+				Kind:  DiffersInShape,
+				Says:  "totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16",
+			},
 			{
 				Field: "Items[].Action.Checks, under a fine-grained token",
 				Kind:  CannotSupply,
@@ -620,6 +630,11 @@ var Table = []Entry{
 		Support:   Supported,
 		Departures: []Departure{
 			{
+				Field: "Items[].Comments",
+				Kind:  DiffersInShape,
+				Says:  "comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted",
+			},
+			{
 				Field: "Items[].SourceBranch",
 				Kind:  CannotSupply,
 				Says:  "no head key on an issue-search row",
@@ -693,6 +708,11 @@ var Table = []Entry{
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Items[].Comments",
+				Kind:  DiffersInShape,
+				Says:  "comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted",
+			},
 			{
 				Field: "Items[].AuthorKind",
 				Kind:  CannotSupply,
@@ -772,6 +792,11 @@ var Table = []Entry{
 		Requests:  Requests{Min: 0, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Comments",
+				Kind:  DiffersInShape,
+				Says:  "totalCommentsCount on the document, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16; comments plus review_comments, with no review body, on the REST read a connection whose documents were refused falls back to",
+			},
 			{
 				Field: "Action.Checks, under a fine-grained token",
 				Kind:  CannotSupply,

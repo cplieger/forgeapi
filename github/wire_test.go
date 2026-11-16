@@ -106,6 +106,7 @@ func TestTheRecordedPullRequestDecodesEveryFieldTheContractPublishes(t *testing.
 		{name: "Labels[0].Name", got: got.Labels[0].Name, want: "example-label"},
 		{name: "Labels[0].Color", got: got.Labels[0].Color, want: "ededed"},
 		{name: "Labels[0].Description", got: got.Labels[0].Description, want: "Example label."},
+		{name: "Comments", got: got.Comments, want: 8},
 	} {
 		if check.got != check.want {
 			t.Errorf("normalizeDocPull(the recorded bytes).%s = %v, want %v", check.name, check.got, check.want)
@@ -139,6 +140,7 @@ func TestTheRecordedIssueSearchRowDecodesEveryFieldTheContractPublishes(t *testi
 		{name: "Author", got: got.Author, want: "example-user"},
 		{name: "WebURL", got: got.WebURL, want: "https://forge.example/example/example/issues/1"},
 		{name: "Labels", got: slices.Equal(got.Labels, labels), want: true},
+		{name: "Comments", got: got.Comments, want: 2},
 		{name: "CreatedAt", got: got.CreatedAt.Format(time.RFC3339), want: "2026-01-01T00:00:00Z"},
 		{name: "UpdatedAt", got: got.UpdatedAt.Format(time.RFC3339), want: "2026-01-02T00:00:00Z"},
 		{name: "State", got: got.State, want: forgeapi.IssueStateOpen},

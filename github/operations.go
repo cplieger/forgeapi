@@ -167,37 +167,13 @@ func (c *Client) ownedRepos(ctx context.Context, op string, set *forgeapi.ListSe
 	return page, nil
 }
 
-// ListPRs implements [forgeapi.PullRequests].
-//
-// It reads the list document rather than the REST list, which returns neither
-// mergeability field at all: the document carries the check rollup, the merge
-// state, the head commit, the auto-merge request and the merge-queue entry in one
-// call, measured at ONE rate-limit point for 20 pull-request rows and at three for
-// 100. nodeCount tracks what the document REQUESTS rather than what came back, and
-// moves without the cost: at 100 rows it read 2,300 with a labels page of 20 and
-// 10,300 with the labels page of 100 this document selects, at three points both.
-//
-// Each row's check fold is BOUNDED to the first page of that row's contexts
-// connection, which is what keeps the list at one request, and on this product that
-// bound costs NO unknown: the connection's per-state counts describe the WHOLE
-// collection, measured byte-identical across three pages of a 446-context collection,
-// so the verdict and the six counts are exact from the first page and what the bound
-// truncates is the check NAMES. A row whose connection reports a next page therefore
-// carries a real verdict beside [forgeapi.PartialPaginationCap], which is what says
-// the names are short rather than the verdict.
-//
-// It asks for at most [prListPageCeiling] rows a page whatever the page bound asks,
-// for the reason that constant states, and a page of that size cost two points on
-// the repository it was measured on. A page the ceiling shortened is an ordinary
-// page: it carries the document's continuation and no partial marker, so the
-// ceiling costs requests and never rows.
-//
-// This is the one read of this family with no REST arm, and that is its published
-// price rather than an omission: the REST list carries no rollup and no merge state,
-// so a fall-back would answer a different question, and a call that fell back inside
-// itself would spend two requests where this row publishes one. A document refused
-// here is this call's failure and marks the connection, so the two reads that do have
-// a REST arm take it from their next call.
+// ListPRs implements [forgeapi.PullRequests] with the list document, one request a
+// page of at most [prListPageCeiling] rows: the REST list carries no rollup and no
+// merge state, so this read has no REST arm, and a refused document fails the call
+// and marks the connection. Each row's fold is bounded to one context
+// ([listFoldPageSize]), yet its verdict and counts are exact, because the
+// connection's per-state counts describe the whole collection ([docStateCount]); a
+// row whose contexts continue carries [forgeapi.PartialPaginationCap] for the names.
 func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = opListPRs
 	ctx = transport.Call(ctx, op)

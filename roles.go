@@ -128,16 +128,17 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRList document, asking for at most 50 rows a page whatever the page bound asks, since a larger page of its rows answered 502 on every attempt on a large repository, 1 request per page
+	//	GitHub   the PRList document, asking for at most 30 rows a page whatever the page bound asks, since a page of 50 of its rows answered 502 on 8 of 15 attempts on two large repositories, 1 request per page
 	//	GitLab   the PRList document, or GET /api/v4/projects/{id}/merge_requests where this connection's setup found the documents refused, 1 request per page; needs read_merge_state
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus one per row
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus one per row
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Items[].Action.Checks, under a fine-grained token         cannot supply  CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup
-	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply  SupportUnknown on every row: the document leaves mergeable out of the request
-	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply  MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
+	//	Items[].Comments                                          differs in shape  totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16
+	//	Items[].Action.Checks, under a fine-grained token         cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup
+	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply     SupportUnknown on every row: the document leaves mergeable out of the request
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply     MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
 	//
 	// GitLab departs from the normalized contract:
 	//
@@ -181,13 +182,14 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRMine search document, asking for at most 25 rows a page whatever the page bound asks, since a larger page of its rows answered 502 under both owners measured, the smaller of them holding fewer than a hundred open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user, 1 request per page
+	//	GitHub   the PRMine search document, asking for at most 15 rows a page whatever the page bound asks, since a page of 25 of its rows answered 502 on 2 of 5 attempts under an owner holding 57,746 open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user, 1 request per page
 	//	GitLab   GET /api/v4/merge_requests?scope=created_by_me; under an owner scope GET /api/v4/groups/{owner}/merge_requests with the open state, which answers 404 for a user's own namespace; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page; on either route, GET /api/v4/projects/{id} once for each distinct fork a row's source_project_id names, 1 to 2 requests per page plus up to one per row
 	//	Gitea    GET /api/v1/repos/issues/search filtered to pull requests and to the rows the authenticated credential created, whose rows carry no head commit and therefore no folded status; under an owner scope the same route filtered by owner={owner} in place of created=true, 1 request per page
 	//	Forgejo  GET /api/v1/repos/issues/search filtered to pull requests and to the rows the authenticated credential created, whose rows carry no head commit and therefore no folded status; under an owner scope the same route filtered by owner={owner} in place of created=true, 1 request per page
 	//
 	// GitHub departs from the normalized contract:
 	//
+	//	Items[].Comments                                          differs in shape  totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16
 	//	Items[].Action.Checks, under a fine-grained token         cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on this document
 	//	Next                                                      differs in shape  a continuation while hasNextPage holds, as on a viewer's first page of 20 rows over issueCount 23; past the search connection's 1,000th result, where it answers hasNextPage false while issueCount states 2673, and a page asked for after it answers no rows and a null end cursor, so a walk ends there with no continuation and carries result_window
 	//	error, owner unresolved                                   cannot supply     empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open
@@ -211,6 +213,7 @@ type PullRequests interface {
 	//
 	// Gitea departs from the normalized contract:
 	//
+	//	Items[].Comments                             differs in shape  comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted
 	//	Items[].SourceBranch, Items[].SourceRepo     cannot supply     no head key on an issue-search row
 	//	Items[].TargetBranch                         cannot supply     no base key on an issue-search row
 	//	Items[].HeadSHA                              cannot supply     no head key on an issue-search row
@@ -226,6 +229,7 @@ type PullRequests interface {
 	//
 	// Forgejo departs from the normalized contract:
 	//
+	//	Items[].Comments                             differs in shape  comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted
 	//	Items[].AuthorKind                           cannot supply     AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
 	//	Items[].SourceBranch, Items[].SourceRepo     cannot supply     no head key on an issue-search row
 	//	Items[].TargetBranch                         cannot supply     no base key on an issue-search row
@@ -294,7 +298,8 @@ type PullRequests interface {
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Action.Checks, under a fine-grained token  cannot supply  CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup
+	//	Comments                                   differs in shape  totalCommentsCount on the document, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16; comments plus review_comments, with no review body, on the REST read a connection whose documents were refused falls back to
+	//	Action.Checks, under a fine-grained token  cannot supply     CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup
 	//
 	// GitLab departs from the normalized contract:
 	//

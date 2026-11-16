@@ -85,6 +85,7 @@ type (
 		DetailedMergeStatus string       `json:"detailedMergeStatus"`
 		AutoMergeEnabled    *bool        `json:"autoMergeEnabled"`
 		Labels              *docLabels   `json:"labels"`
+		UserNotesCount      *int         `json:"userNotesCount"`
 		HeadPipeline        *docPipeline `json:"headPipeline"`
 	}
 
@@ -245,6 +246,7 @@ type (
 		MergeStatus         string          `json:"merge_status"`
 		DetailedMergeStatus string          `json:"detailed_merge_status"`
 		MergedAt            *time.Time      `json:"merged_at"`
+		UserNotesCount      *int            `json:"user_notes_count"`
 		References          *restReferences `json:"references"`
 		HeadPipeline        *restPipeline   `json:"head_pipeline"`
 		// MergeWhenPipelineSucceeds is this product's REST answer for an armed
@@ -256,16 +258,17 @@ type (
 	}
 
 	restIssue struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
-		IID         int             `json:"iid"`
-		State       string          `json:"state"`
-		Title       string          `json:"title"`
-		Description string          `json:"description"`
-		Author      *restUser       `json:"author"`
-		WebURL      string          `json:"web_url"`
-		CreatedAt   time.Time       `json:"created_at"`
-		UpdatedAt   time.Time       `json:"updated_at"`
-		Labels      json.RawMessage `json:"labels"`
-		References  *restReferences `json:"references"`
+		IID            int             `json:"iid"`
+		State          string          `json:"state"`
+		Title          string          `json:"title"`
+		Description    string          `json:"description"`
+		Author         *restUser       `json:"author"`
+		WebURL         string          `json:"web_url"`
+		CreatedAt      time.Time       `json:"created_at"`
+		UpdatedAt      time.Time       `json:"updated_at"`
+		Labels         json.RawMessage `json:"labels"`
+		UserNotesCount *int            `json:"user_notes_count"`
+		References     *restReferences `json:"references"`
 	}
 
 	restLinks struct {
@@ -646,6 +649,7 @@ func (c *Client) normalizeDocPull(n *docMergeRequest, repo forgeapi.RepoRef) for
 		WebURL:       n.WebURL,
 		HeadSHA:      n.DiffHeadSHA,
 		Labels:       normalizeDocLabels(n.Labels),
+		Comments:     commentCount(n.UserNotesCount),
 		CreatedAt:    n.CreatedAt,
 		UpdatedAt:    n.UpdatedAt,
 		Partial:      c.labelCut(n.Labels),
@@ -733,6 +737,7 @@ func (c *Client) normalizeRESTPull(r *restMergeRequest, repo forgeapi.RepoRef, p
 		WebURL:       r.WebURL,
 		HeadSHA:      r.SHA,
 		Labels:       normalizeRESTLabels(r.Labels),
+		Comments:     commentCount(r.UserNotesCount),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 		State:        c.pullState("merge request state (rest)", r.State),
@@ -801,10 +806,20 @@ func (c *Client) normalizeIssue(i *restIssue, repo forgeapi.RepoRef) forgeapi.Is
 		AuthorKind: kind,
 		WebURL:     i.WebURL,
 		Labels:     normalizeRESTLabels(i.Labels),
+		Comments:   commentCount(i.UserNotesCount),
 		CreatedAt:  i.CreatedAt,
 		UpdatedAt:  i.UpdatedAt,
 		State:      c.issueState(i.State),
 	}
+}
+
+// commentCount is a record's user-notes count, and [forgeapi.CountUnknown] where
+// the record carries none.
+func commentCount(notes *int) int {
+	if notes == nil {
+		return forgeapi.CountUnknown
+	}
+	return *notes
 }
 
 // accountKind is the kind a user's bot flag states, unknown where the answer
