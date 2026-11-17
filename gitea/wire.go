@@ -900,7 +900,7 @@ func statusMapped(op string, status int, header http.Header) (kind forgeapi.Erro
 	case http.StatusUnauthorized:
 		return forgeapi.KindUnauthorized, ""
 	case http.StatusForbidden:
-		if header.Get("RateLimit-Remaining") == "0" {
+		if remaining, _, ok := signal(header); ok && remaining <= 0 {
 			return forgeapi.KindRateLimited, ""
 		}
 		return forgeapi.KindForbidden, ""

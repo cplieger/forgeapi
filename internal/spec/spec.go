@@ -3219,13 +3219,13 @@ var Throttles = []Throttle{
 	{Product: GitHub, Status: 429, Says: "a primary or a secondary limit"},
 	{Product: GitLab, Status: 429, Says: "a rate limit"},
 	{
-		Product: Gitea, Status: 403, Header: "RateLimit-Remaining", Value: "0",
-		Says: "a rate limit with no budget left in the window",
+		Product: Gitea, Status: 403, Header: "RateLimit", Value: "r=0",
+		Says: "a rate limit with no budget left in the window, the structured header's r parameter at 0",
 	},
 	{Product: Gitea, Status: 429, Says: "a rate limit"},
 	{
-		Product: Forgejo, Status: 403, Header: "RateLimit-Remaining", Value: "0",
-		Says: "a rate limit with no budget left in the window",
+		Product: Forgejo, Status: 403, Header: "RateLimit", Value: "r=0",
+		Says: "a rate limit with no budget left in the window, the structured header's r parameter at 0",
 	},
 	{Product: Forgejo, Status: 429, Says: "a rate limit"},
 }

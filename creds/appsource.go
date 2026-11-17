@@ -96,12 +96,17 @@ type issued struct {
 }
 
 // hold is the instant before which the source sends nothing, and what a call
-// answers until then. Its kind and message are read only while no terminal
-// refusal stands, which answers in their place.
+// answers until then. Its kind, message and figures are read only while no
+// terminal refusal stands, which answers in their place; the figures are the
+// limiting answer's own, zero on a hold no limit set.
 type hold struct {
-	until   time.Time
-	message string
-	kind    forgeapi.ErrorKind
+	until     time.Time
+	reset     time.Time
+	message   string
+	pool      string
+	kind      forgeapi.ErrorKind
+	remaining int
+	secondary bool
 }
 
 // NewAppSource builds the source for the installation cfg names, signing with
@@ -275,7 +280,7 @@ func (s *AppSource) Discard(token string) (retry bool) {
 		return true
 	}
 	if age < earlyRejection {
-		s.extend(hold{
+		s.extend(&hold{
 			until: now.Add(doubling(reprobeFirst, reprobeCeiling, s.discardN)), kind: forgeapi.KindUnauthorized,
 			message: "GitHub rejected a token minted under a minute earlier, so the App source waits before minting again",
 		})
@@ -338,15 +343,16 @@ func (s *AppSource) held(op string, now time.Time) error {
 	return &forgeapi.Error{
 		Op: op, Family: forgeapi.FamilyGitHub, Kind: s.wait.kind,
 		Retryable: transport.Retryable(s.wait.kind, 0), Message: s.wait.message,
-		RetryAfter: s.wait.until.Sub(now),
+		RetryAfter: s.wait.until.Sub(now), Pool: s.wait.pool, Remaining: s.wait.remaining,
+		Reset: s.wait.reset, Secondary: s.wait.secondary,
 	}
 }
 
 // extend moves the hold to h where h ends later, so no wait shortens another.
 // It runs under s.mu.
-func (s *AppSource) extend(h hold) {
+func (s *AppSource) extend(h *hold) {
 	if h.until.After(s.wait.until) {
-		s.wait = h
+		s.wait = *h
 	}
 }
 

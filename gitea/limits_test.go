@@ -60,3 +60,47 @@ func TestErrorSecondary(t *testing.T) {
 		t.Errorf("Error = kind %v, secondary %t, want kind %v, secondary false", fe.Kind, fe.Secondary, forgeapi.KindRateLimited)
 	}
 }
+
+// TestErrorRemainingFromAnswer holds Error.Remaining to the r parameter of
+// Forgejo's RateLimit header, and to BudgetRemainingUnknown where the answer
+// carries none, as Gitea's never does. Neither product names a pool.
+func TestErrorRemainingFromAnswer(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{name: "forgejo_states_its_figure", raw: `"baseline";r=3;t=60`, want: 3},
+		{name: "gitea_sends_no_header", want: forgeapi.BudgetRemainingUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if fe := answered(t, test.raw); fe.Remaining != test.want || fe.Pool != "" {
+				t.Errorf("Error = remaining %d, pool %q, want remaining %d, no pool", fe.Remaining, fe.Pool, test.want)
+			}
+		})
+	}
+}
+
+// TestAForbiddenAnswerAtZeroIsARateLimit holds a 403 to the one budget reading
+// the signal takes: Forgejo's RateLimit header at r=0 is a rate limit.
+func TestAForbiddenAnswerAtZeroIsARateLimit(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+		want forgeapi.ErrorKind
+	}{
+		{name: "at_zero", raw: `"baseline";r=0;t=60`, want: forgeapi.KindRateLimited},
+		{name: "above_zero", raw: `"baseline";r=3;t=60`, want: forgeapi.KindForbidden},
+		{name: "no_header", want: forgeapi.KindForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			header := http.Header{}
+			if test.raw != "" {
+				header.Set("RateLimit", test.raw)
+			}
+			if kind, _ := mapped("ListRuns", http.StatusForbidden, header); kind != test.want {
+				t.Errorf("mapper(ListRuns, 403, %v) = %v, want %v", header, kind, test.want)
+			}
+		})
+	}
+}

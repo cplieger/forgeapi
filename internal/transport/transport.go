@@ -1224,8 +1224,8 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 		return c.refusal(ctx, req, c.fail(req.Op, forgeapi.CodeMutationsDisabled, forgeapi.KindForbidden, 0,
 			"mutations are disabled on this client"))
 	}
-	if !c.admitRead(ctx, req) {
-		return c.refusal(ctx, req, c.deferred(req.Op))
+	if held, ok := c.admitRead(ctx, req); !ok {
+		return c.refusal(ctx, req, c.deferred(req.Op, held))
 	}
 	return nil
 }
@@ -1235,17 +1235,16 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 // zero and spends one of the bound when admitted, so a read deferred at zero
 // leaves it to the action's next read. A credential source's read is never the
 // action's, and a read-only client has no reserve to spend.
-func (c *Conn) admitRead(ctx context.Context, req *Request) bool {
+func (c *Conn) admitRead(ctx context.Context, req *Request) (heldPool, bool) {
 	if c.mutations && !req.Credential && callmark.ActionReadsLeft(ctx) {
-		if _, ok := c.gov.admitWithin(req.Op, 0); !ok {
-			return false
+		if held, ok := c.gov.admitWithin(req.Op, 0); !ok {
+			return held, false
 		}
 		if callmark.TakeActionRead(ctx) {
-			return true
+			return heldPool{}, true
 		}
 	}
-	ok := c.gov.admit(req.Op)
-	return ok
+	return c.gov.admit(req.Op)
 }
 
 // discarder is the optional method of a credential source that is told when the
@@ -1661,10 +1660,13 @@ func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capabi
 // turns this into one rather than into a failure; one that cannot reports it.
 // It carries the throttle kind with no code and no status, which is the same pair
 // this family's mapper answers an upstream throttle with minus the status: a
-// consumer tells the two apart by that status.
-func (c *Conn) deferred(op string) *forgeapi.Error {
-	return c.fail(op, "", forgeapi.KindRateLimited, 0,
+// consumer tells the two apart by that status. It carries the held pool's name
+// and figures, as an answer's own would.
+func (c *Conn) deferred(op string, held heldPool) *forgeapi.Error {
+	fe := c.fail(op, "", forgeapi.KindRateLimited, 0,
 		"this read was deferred: a rate-limit pool it draws on is at or under the mutation reserve")
+	fe.Pool, fe.Remaining, fe.Reset = held.name, held.figure.remaining, held.figure.reset
+	return fe
 }
 
 // IsDeferred reports whether an error is the governor's deferral rather than an
@@ -1732,11 +1734,9 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 	kind, code := verdict.Kind, verdict.Code
 	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
 	fe.Needs = resp.Quote(verdict.Needs) // upstream text, made safe as the message is
-	if c.signal != nil {
-		_, fe.Reset, _ = c.signal(resp.Header)
-	}
+	fe.Secondary = kind == forgeapi.KindRateLimited && verdict.Secondary
+	AnswerFigures(fe, resp.Header, c.signal, c.pool)
 	if kind == forgeapi.KindRateLimited {
-		fe.Secondary = verdict.Secondary
 		fe.RetryAfter = httpclient.ParseRetryAfter(resp.Header.Get("Retry-After"))
 		if c.counters.RateLimited != nil {
 			c.counters.RateLimited(c.family)
@@ -1744,6 +1744,22 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 	}
 	c.log(ctx, req, exchange(req), resp.Status, code, fe.DiagID, kind, resp.Header, started, fe.Message, false)
 	return fe
+}
+
+// AnswerFigures sets fe's Remaining, Reset and Pool from the failing answer's
+// own budget signal and pool, as the governor reads them off every answer.
+// [forgeapi.Error.Secondary] is read, so it is set first: a secondary limit
+// names no pool, because it holds every pool.
+func AnswerFigures(fe *forgeapi.Error, header http.Header, signal budgetSignal, pool budgetPool) {
+	fe.Remaining, fe.Reset = forgeapi.BudgetRemainingUnknown, time.Time{}
+	if signal != nil {
+		if remaining, reset, ok := signal(header); ok {
+			fe.Remaining, fe.Reset = remaining, reset
+		}
+	}
+	if pool != nil && !fe.Secondary {
+		fe.Pool, _ = pool(header)
+	}
 }
 
 // classOf is the family's class for a refusal's message member, empty where the

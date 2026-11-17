@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1504,17 +1503,6 @@ func pushSupport(p *restPermissions) forgeapi.Support {
 		return forgeapi.SupportUnknown
 	}
 	return supportOf(p.Push)
-}
-
-// pool names the rate-limit pool a response drew on, core for REST and graphql for
-// documents among them, and that pool's whole limit
-// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit).
-func pool(header http.Header) (name string, limit int) {
-	limit, err := strconv.Atoi(strings.TrimSpace(header.Get("X-RateLimit-Limit")))
-	if err != nil || limit < 0 {
-		limit = 0
-	}
-	return strings.TrimSpace(header.Get("X-RateLimit-Resource")), limit
 }
 
 // mapper is this connection's error mapping: the mapping below, over the one fact

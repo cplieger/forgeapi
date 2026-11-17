@@ -230,6 +230,8 @@ type Error struct {
 	Retryable bool
 	Message string
 	RetryAfter time.Duration
+	Pool string
+	Remaining int
 	Reset time.Time
 	Secondary bool
 	DiagID string

@@ -54,9 +54,9 @@ Every operation reports these answers as `KindRateLimited`, with `RetryAfter` se
 | GitHub | 403 | none: a message carrying "secondary rate limit" | a secondary limit, whatever X-RateLimit-Remaining reads, where the answer carries no Retry-After |
 | GitHub | 429 | none: the status alone | a primary or a secondary limit |
 | GitLab | 429 | none: the status alone | a rate limit |
-| Gitea | 403 | `RateLimit-Remaining: 0` | a rate limit with no budget left in the window |
+| Gitea | 403 | `RateLimit: r=0` | a rate limit with no budget left in the window, the structured header's r parameter at 0 |
 | Gitea | 429 | none: the status alone | a rate limit |
-| Forgejo | 403 | `RateLimit-Remaining: 0` | a rate limit with no budget left in the window |
+| Forgejo | 403 | `RateLimit: r=0` | a rate limit with no budget left in the window, the structured header's r parameter at 0 |
 | Forgejo | 429 | none: the status alone | a rate limit |
 
 ## Conditional reads

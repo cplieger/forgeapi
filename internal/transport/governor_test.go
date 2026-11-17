@@ -612,3 +612,37 @@ func TestANarrowPoolUnderTheReserveIsNotHeldBesideItsParent(t *testing.T) {
 		t.Errorf("the instance saw %d ListRepos request(s), want 5", got)
 	}
 }
+
+// TestTheDeferralNamesThePoolItHeld holds the governor's deferral to the
+// figures of the pool it held the read against: Error.Pool, Error.Remaining
+// and Error.Reset are that pool's, as BudgetState then reports them.
+func TestTheDeferralNamesThePoolItHeld(t *testing.T) {
+	clock := newFakeClock()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	defer srv.Close()
+	reset := clock.read().Add(time.Minute)
+	opts := testOptions()
+	opts.Clock = clock.read
+	opts.Signal = func(http.Header) (int, time.Time, bool) { return 1, reset, true }
+	opts.Pool = func(http.Header) (string, int) { return "core", 5000 }
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, forgeapi.WithMutationReserve(1))
+	read := func() error {
+		_, err := c.Do(Call(t.Context(), "ListPRs"), &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"})
+		return err
+	}
+	if err := read(); err != nil {
+		t.Fatalf("Setup: the first read = %v, want nil", err)
+	}
+	var fe *forgeapi.Error
+	if err := read(); !IsDeferred(err) || !asError(err, &fe) {
+		t.Fatalf("a read at the reserve = %v, want the deferral", err)
+	}
+	if fe.Pool != "core" || fe.Remaining != 1 || !fe.Reset.Equal(reset) {
+		t.Errorf("the deferral = pool %q, remaining %d, reset %v, want pool core, remaining 1, reset %v", fe.Pool, fe.Remaining, fe.Reset, reset)
+	}
+}

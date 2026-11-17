@@ -35,6 +35,18 @@ func Signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 	return remaining, time.Unix(seconds, 0).UTC(), true
 }
 
+// Pool names the rate-limit pool an answer drew on, core for REST and graphql
+// for documents among them, and that pool's whole limit, zero where the answer
+// states none
+// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit).
+func Pool(header http.Header) (name string, limit int) {
+	limit, err := strconv.Atoi(strings.TrimSpace(header.Get("X-RateLimit-Limit")))
+	if err != nil || limit < 0 {
+		limit = 0
+	}
+	return strings.TrimSpace(header.Get("X-RateLimit-Resource")), limit
+}
+
 // SecondaryMessage reports whether a refusal's message member is the one
 // GitHub answers a secondary limit with, whose wording past that phrase varies.
 func SecondaryMessage(message string) bool {

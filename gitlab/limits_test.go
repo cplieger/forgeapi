@@ -65,3 +65,44 @@ func TestErrorSecondary(t *testing.T) {
 		t.Errorf("Error = kind %v, secondary %t, want kind %v, secondary false", fe.Kind, fe.Secondary, forgeapi.KindRateLimited)
 	}
 }
+
+// TestErrorNamesPool holds Error.Pool to the RateLimit-Name the failing answer
+// names, and to none where it names none.
+func TestErrorNamesPool(t *testing.T) {
+	for _, test := range []struct {
+		header http.Header
+		name   string
+		want   string
+	}{
+		{
+			name: "a_throttle_names_its_pool", want: "throttle_authenticated_api",
+			header: headerPairs("RateLimit-Name", "throttle_authenticated_api", "RateLimit-Remaining", "0"),
+		},
+		{name: "a_throttle_naming_none", header: headerPairs("RateLimit-Remaining", "0")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if fe := answered(t, http.StatusTooManyRequests, test.header, `{"message":"refused"}`); fe.Pool != test.want {
+				t.Errorf("Error.Pool = %q, want %q", fe.Pool, test.want)
+			}
+		})
+	}
+}
+
+// TestErrorRemainingFromAnswer holds Error.Remaining to the failing answer's
+// own RateLimit-Remaining, and to BudgetRemainingUnknown where it carries none.
+func TestErrorRemainingFromAnswer(t *testing.T) {
+	for _, test := range []struct {
+		header http.Header
+		name   string
+		want   int
+	}{
+		{name: "a_throttle_carries_its_figure", header: headerPairs("RateLimit-Remaining", "0")},
+		{name: "a_throttle_with_no_figure", want: forgeapi.BudgetRemainingUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if fe := answered(t, http.StatusTooManyRequests, test.header, `{"message":"refused"}`); fe.Remaining != test.want {
+				t.Errorf("Error.Remaining = %d, want %d", fe.Remaining, test.want)
+			}
+		})
+	}
+}

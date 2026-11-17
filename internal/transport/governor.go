@@ -179,15 +179,20 @@ func (g *governor) price(cost int) {
 // click will need. The pools held are the one op's last answer drew on, else the
 // unnamed pool, and the parent that pool overlaps ([forgeapi.WithMutationReserve]
 // owns why). A deferral publishes the pool it held, so the published figure is
-// the budget that stopped the read.
-func (g *governor) admit(op string) bool {
-	_, ok := g.admitWithin(op, g.reserve)
-	return ok
+// the budget that stopped the read, and answers that pool.
+func (g *governor) admit(op string) (heldPool, bool) {
+	return g.admitWithin(op, g.reserve)
+}
+
+// heldPool is the pool a deferral held a read against, by name, with its figure.
+type heldPool struct {
+	name   string
+	figure poolFigure
 }
 
 // admitWithin is [governor.admit] holding reserve of each pool rather than the
 // client's own reserve.
-func (g *governor) admitWithin(op string, reserve int) (forgeapi.PartialReason, bool) {
+func (g *governor) admitWithin(op string, reserve int) (heldPool, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.expire()
@@ -204,9 +209,9 @@ func (g *governor) admitWithin(op string, reserve int) (forgeapi.PartialReason, 
 		if g.counters.ReadDeferred != nil {
 			g.counters.ReadDeferred(g.family, op)
 		}
-		return forgeapi.PartialRateLimited, false
+		return heldPool{name: name, figure: p}, false
 	}
-	return forgeapi.PartialUnknown, true
+	return heldPool{}, true
 }
 
 // admitFold reports whether one folded-status read may be issued inside the
@@ -215,8 +220,8 @@ func (g *governor) admitWithin(op string, reserve int) (forgeapi.PartialReason, 
 // either is not sent and its row is marked with the budget reason. reserve is what
 // the read must leave of its pool, as [governor.admitWithin] takes it.
 func (g *governor) admitFold(op string, reserve int) (forgeapi.PartialReason, bool) {
-	if reason, ok := g.admitWithin(op, reserve); !ok {
-		return reason, false
+	if _, ok := g.admitWithin(op, reserve); !ok {
+		return forgeapi.PartialRateLimited, false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()

@@ -43,7 +43,7 @@ func TestMapperAnswersOneCellPerStatus(t *testing.T) {
 		{
 			name:   "403_with_an_exhausted_window_is_a_throttle",
 			status: http.StatusForbidden,
-			header: http.Header{"Ratelimit-Remaining": {"0"}},
+			header: http.Header{"Ratelimit": {`"baseline";r=0;t=60`}},
 			kind:   forgeapi.KindRateLimited,
 		},
 		{

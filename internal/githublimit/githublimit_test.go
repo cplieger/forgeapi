@@ -24,3 +24,16 @@ func TestTheBudgetSignalIsReadFromTheResponseHeaders(t *testing.T) {
 		t.Error("Signal(no headers) reported a figure, want none: a connection that has sent nothing has no budget to report")
 	}
 }
+
+// TestThePoolIsTheResourceTheResponseNames holds the pool reader to the two headers
+// this product sends on every response, the resource the request drew on and its
+// whole limit.
+func TestThePoolIsTheResourceTheResponseNames(t *testing.T) {
+	name, limit := Pool(http.Header{"X-Ratelimit-Resource": {"graphql"}, "X-Ratelimit-Limit": {"5000"}})
+	if name != "graphql" || limit != 5000 {
+		t.Errorf("Pool(the recorded headers) = %q, %d, want graphql and 5000", name, limit)
+	}
+	if name, limit := Pool(http.Header{}); name != "" || limit != 0 {
+		t.Errorf("Pool(no headers) = %q, %d, want the unnamed pool with no limit", name, limit)
+	}
+}

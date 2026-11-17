@@ -971,19 +971,6 @@ func TestARunsWorkflowPathIsItsDefinitionsWhateverItsName(t *testing.T) {
 	}
 }
 
-// TestThePoolIsTheResourceTheResponseNames holds the pool reader to the two headers
-// this product sends on every response, the resource the request drew on and its
-// whole limit.
-func TestThePoolIsTheResourceTheResponseNames(t *testing.T) {
-	name, limit := pool(http.Header{"X-Ratelimit-Resource": {"graphql"}, "X-Ratelimit-Limit": {"5000"}})
-	if name != "graphql" || limit != 5000 {
-		t.Errorf("pool(the recorded headers) = %q, %d, want graphql and 5000", name, limit)
-	}
-	if name, limit := pool(http.Header{}); name != "" || limit != 0 {
-		t.Errorf("pool(no headers) = %q, %d, want the unnamed pool with no limit", name, limit)
-	}
-}
-
 // GitHub sends the permissions header on every answer to a fine-grained actor, so a
 // success carrying it is a success.
 func TestASuccessCarryingThePermissionsHeaderIsASuccess(t *testing.T) {

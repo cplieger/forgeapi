@@ -117,3 +117,63 @@ func TestErrorSecondary(t *testing.T) {
 		})
 	}
 }
+
+// TestErrorNamesPool holds Error.Pool to the x-ratelimit-resource the failing
+// answer names, and to none on a secondary limit, which holds every pool.
+func TestErrorNamesPool(t *testing.T) {
+	for _, test := range []struct {
+		header http.Header
+		name   string
+		want   string
+		status int
+	}{
+		{
+			name: "a_primary_limit_names_its_pool", status: http.StatusForbidden, want: "core",
+			header: headerPairs("X-RateLimit-Remaining", "0", "X-RateLimit-Resource", "core"),
+		},
+		{
+			name: "a_refusal_that_is_no_limit_names_its_pool", status: http.StatusNotFound, want: "core",
+			header: headerPairs("X-RateLimit-Remaining", "4000", "X-RateLimit-Resource", "core"),
+		},
+		{
+			name: "a_403_with_retry_after_names_none", status: http.StatusForbidden,
+			header: headerPairs("Retry-After", "60", "X-RateLimit-Remaining", "4000", "X-RateLimit-Resource", "core"),
+		},
+		{
+			name: "a_429_with_retry_after_names_none", status: http.StatusTooManyRequests,
+			header: headerPairs("Retry-After", "60", "X-RateLimit-Resource", "core"),
+		},
+		{name: "a_bare_429_names_none", status: http.StatusTooManyRequests},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if fe := answered(t, test.status, test.header, `{"message":"refused"}`); fe.Pool != test.want {
+				t.Errorf("Error.Pool = %q, want %q", fe.Pool, test.want)
+			}
+		})
+	}
+}
+
+// TestErrorRemainingFromAnswer holds Error.Remaining to the failing answer's
+// own x-ratelimit-remaining, and to BudgetRemainingUnknown where it carries none.
+func TestErrorRemainingFromAnswer(t *testing.T) {
+	for _, test := range []struct {
+		header http.Header
+		name   string
+		status int
+		want   int
+	}{
+		{name: "a_primary_limit_carries_zero", status: http.StatusForbidden, header: headerPairs("X-RateLimit-Remaining", "0")},
+		{
+			name: "a_secondary_limit_carries_its_figure", status: http.StatusForbidden, want: 4000,
+			header: headerPairs("Retry-After", "60", "X-RateLimit-Remaining", "4000"),
+		},
+		{name: "a_refusal_carries_its_figure", status: http.StatusNotFound, want: 12, header: headerPairs("X-RateLimit-Remaining", "12")},
+		{name: "a_429_with_no_figure", status: http.StatusTooManyRequests, want: forgeapi.BudgetRemainingUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if fe := answered(t, test.status, test.header, `{"message":"refused"}`); fe.Remaining != test.want {
+				t.Errorf("Error.Remaining = %d, want %d", fe.Remaining, test.want)
+			}
+		})
+	}
+}

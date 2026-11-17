@@ -231,8 +231,8 @@ func (s *AppSource) refused(ctx context.Context, ep *transport.Conn, req *transp
 		}
 		fe := ep.Fail(ctx, req.Op, transport.REST(req.Method), "", forgeapi.KindRateLimited, resp.Status,
 			resp.Quote(joined("GitHub rate-limited the App's request", said)))
-		_, fe.Reset, _ = githublimit.Signal(resp.Header)
 		fe.Secondary = githublimit.Secondary(resp.Status, resp.Header, secondary)
+		transport.AnswerFigures(fe, resp.Header, githublimit.Signal, githublimit.Pool)
 		return &failure{err: fe, wait: limitWait(resp.Header, time.Now()), status: resp.Status, class: failLimited}
 	}
 	kind, why := forgeapi.KindUpstream, "GitHub refused the request as invalid: the grant's repositories or permissions are the likely cause"
@@ -271,13 +271,13 @@ func (s *AppSource) settle(f *failure) (forgeapi.CredState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if f.class != failEnded && s.ended != nil {
-		s.extend(hold{until: now.Add(doubling(reprobeFirst, reprobeCeiling, max(s.endedN-1, 0)))})
+		s.extend(&hold{until: now.Add(doubling(reprobeFirst, reprobeCeiling, max(s.endedN-1, 0)))})
 	}
 	switch f.class {
 	case failEnded:
 		fe, _ := errors.AsType[*forgeapi.Error](f.err)
 		s.ended = copyOf(fe)
-		s.extend(hold{until: now.Add(doubling(reprobeFirst, reprobeCeiling, s.endedN))})
+		s.extend(&hold{until: now.Add(doubling(reprobeFirst, reprobeCeiling, s.endedN))})
 		s.endedN++
 	case failLimited:
 		wait := f.wait
@@ -285,12 +285,16 @@ func (s *AppSource) settle(f *failure) (forgeapi.CredState, error) {
 			wait = doubling(limitFirst, limitCeiling, s.limitN)
 			s.limitN++
 		}
-		s.wake(f, now, hold{
+		h := hold{
 			until: now.Add(wait), kind: forgeapi.KindRateLimited,
 			message: "GitHub rate-limited the App source, so it sends nothing until the wait GitHub asked for has passed",
-		})
+		}
+		if fe, ok := errors.AsType[*forgeapi.Error](f.err); ok {
+			h.pool, h.remaining, h.reset, h.secondary = fe.Pool, fe.Remaining, fe.Reset, fe.Secondary
+		}
+		s.wake(f, now, &h)
 	case failRefused:
-		s.wake(f, now, hold{
+		s.wake(f, now, &hold{
 			until: now.Add(doubling(limitFirst, limitCeiling, s.refusedN)), kind: forgeapi.KindUpstream,
 			message: "GitHub refused the App's request with a status the source does not classify, so it waits before sending again",
 		})
@@ -304,7 +308,7 @@ func (s *AppSource) settle(f *failure) (forgeapi.CredState, error) {
 
 // wake extends the hold to h and states the wait in force on f's error. It
 // runs under s.mu.
-func (s *AppSource) wake(f *failure, now time.Time, h hold) {
+func (s *AppSource) wake(f *failure, now time.Time, h *hold) {
 	s.extend(h)
 	if fe, ok := errors.AsType[*forgeapi.Error](f.err); ok {
 		fe.RetryAfter = s.wait.until.Sub(now)
