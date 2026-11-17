@@ -390,11 +390,11 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	Message string
 	// RetryAfter is the wait upstream asked for, zero when it named none.
 	RetryAfter time.Duration
-	// Pool is the rate-limit pool the failing answer names: GitHub's
-	// X-RateLimit-Resource, GitLab's RateLimit-Name. It is empty where the
-	// answer names none, on a secondary limit, which holds every pool, and on
-	// every product of the Gitea family.
-	// The governor's deferral names the pool it held the read against.
+	// Pool is the rate-limit pool the failing answer names, as it names it:
+	// GitHub's X-RateLimit-Resource, GitLab's RateLimit-Name, empty where the
+	// answer names none, as no product of the Gitea family does. A secondary
+	// limit names its pool too; that it holds every pool is [Error.Secondary]'s
+	// to say. The governor's deferral names the pool it held the read against.
 	Pool string
 	// Remaining is the remaining figure of the failing answer's own budget
 	// signal, read as [BudgetState.Remaining] is, [BudgetRemainingUnknown] where

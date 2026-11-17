@@ -3262,7 +3262,7 @@ var FigureFields = [...]string{"Pool", "Remaining", "Reset", "Secondary"}
 var Figures = []Figure{
 	{
 		Product: GitHub, Field: "Pool", Header: "X-RateLimit-Resource", Value: "core",
-		Says: "the pool the answer drew on, `core` for REST, `graphql` for documents and `search` for searches, and empty on a secondary limit, which holds every pool " +
+		Says: "the pool the answer drew on, `core` for REST, `graphql` for documents and `search` for searches, named on a secondary limit too, which holds every pool " +
 			"([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit))",
 	},
 	{Product: GitHub, Field: "Remaining", Header: "X-RateLimit-Remaining", Value: "0", Says: "the units left in that pool's window: requests on REST, points on documents"},

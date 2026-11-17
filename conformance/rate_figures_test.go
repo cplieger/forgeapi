@@ -221,9 +221,9 @@ func TestAPrimaryLimitCarriesTheFiguresTheTableNames(t *testing.T) {
 }
 
 // TestARetryAfterIsASecondaryLimitWhereTheTableSaysSo holds Secondary to the
-// products whose Figures row names Retry-After: there the answer names no pool,
-// since a secondary limit holds every pool, and elsewhere the same answer stays
-// the primary limit it reads as.
+// products whose Figures row names Retry-After, and elsewhere the same answer to
+// the primary limit it reads as; either way Error.Pool is the pool the answer
+// names.
 func TestARetryAfterIsASecondaryLimitWhereTheTableSaysSo(t *testing.T) {
 	for _, p := range spec.Products {
 		t.Run(string(p), func(t *testing.T) {
@@ -233,9 +233,6 @@ func TestARetryAfterIsASecondaryLimitWhereTheTableSaysSo(t *testing.T) {
 			a := answerFigures(t, p, http.StatusTooManyRequests, header, `{"message":"API rate limit exceeded"}`)
 			secondary := rows["Secondary"].Header == "Retry-After"
 			pool := wantPool(rows)
-			if secondary {
-				pool = ""
-			}
 			if a.err.Kind != forgeapi.KindRateLimited || a.err.Secondary != secondary || a.err.RetryAfter != time.Minute {
 				t.Errorf("%s on %s answered 429 with Retry-After = kind %v, secondary %t, retry after %v, want %v, secondary %t, after %v: %s",
 					figureMethod, p, a.err.Kind, a.err.Secondary, a.err.RetryAfter, forgeapi.KindRateLimited, secondary, time.Minute, rows["Secondary"].Says)
@@ -252,8 +249,9 @@ func TestARetryAfterIsASecondaryLimitWhereTheTableSaysSo(t *testing.T) {
 
 // TestASecondaryLimitMessageIsARateLimitWhereTheTableSaysSo holds a 403 whose
 // message is the secondary limit's, with budget left and no Retry-After, to the
-// Figures rows: a secondary limit naming no pool where the product's row names
-// the message, and elsewhere the permission refusal it reads as.
+// Figures rows: a secondary limit where the product's row names the message,
+// and elsewhere the permission refusal it reads as, each naming the answer's
+// pool.
 func TestASecondaryLimitMessageIsARateLimitWhereTheTableSaysSo(t *testing.T) {
 	phrase := secondaryPhrase(t)
 	for _, p := range spec.Products {
@@ -264,7 +262,7 @@ func TestASecondaryLimitMessageIsARateLimitWhereTheTableSaysSo(t *testing.T) {
 			secondary := rows["Secondary"].Message == phrase
 			kind, pool := forgeapi.KindForbidden, wantPool(rows)
 			if secondary {
-				kind, pool = forgeapi.KindRateLimited, ""
+				kind = forgeapi.KindRateLimited
 			}
 			if a.err.Kind != kind || a.err.Secondary != secondary {
 				t.Errorf("%s on %s answered 403 with the secondary-limit message = kind %v, secondary %t, want %v, secondary %t: %s",

@@ -212,6 +212,7 @@ func TestAppSource_rate_limit_sets_the_not_before_instant(t *testing.T) {
 func TestAppSource_rate_limit_takes_the_wait_GitHub_states(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
+		pool      string
 		status    int
 		header    func(now time.Time) http.Header
 		want      time.Duration
@@ -219,16 +220,22 @@ func TestAppSource_rate_limit_takes_the_wait_GitHub_states(t *testing.T) {
 		remaining int
 		secondary bool
 	}{
-		{"a 403 with Retry-After", http.StatusForbidden, func(time.Time) http.Header { return http.Header{"Retry-After": {"30"}} }, 30 * time.Second, 0, forgeapi.BudgetRemainingUnknown, true},
-		{"a 429 with Retry-After", http.StatusTooManyRequests, func(time.Time) http.Header { return http.Header{"Retry-After": {"90"}} }, 90 * time.Second, 0, forgeapi.BudgetRemainingUnknown, true},
-		{"a 429 stating nothing", http.StatusTooManyRequests, func(time.Time) http.Header { return nil }, time.Minute, 0, forgeapi.BudgetRemainingUnknown, false},
-		{"a 403 with the primary budget spent", http.StatusForbidden, func(now time.Time) http.Header {
+		{"a 403 with Retry-After", "", http.StatusForbidden, func(time.Time) http.Header { return http.Header{"Retry-After": {"30"}} }, 30 * time.Second, 0, forgeapi.BudgetRemainingUnknown, true},
+		{"a 429 with Retry-After", "", http.StatusTooManyRequests, func(time.Time) http.Header { return http.Header{"Retry-After": {"90"}} }, 90 * time.Second, 0, forgeapi.BudgetRemainingUnknown, true},
+		{"a 429 stating nothing", "", http.StatusTooManyRequests, func(time.Time) http.Header { return nil }, time.Minute, 0, forgeapi.BudgetRemainingUnknown, false},
+		{"a 403 with the primary budget spent", "core", http.StatusForbidden, func(now time.Time) http.Header {
 			return http.Header{
 				"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Resource": {"core"},
 				"X-Ratelimit-Reset": {strconv.FormatInt(now.Add(10*time.Minute).Unix(), 10)},
 			}
 		}, 10 * time.Minute, 10 * time.Minute, 0, false},
-		{"a Retry-After past an hour", http.StatusForbidden, func(time.Time) http.Header { return http.Header{"Retry-After": {"86400"}} }, time.Hour, 0, forgeapi.BudgetRemainingUnknown, true},
+		{"a secondary 403 with budget left naming its pool", "core", http.StatusForbidden, func(now time.Time) http.Header {
+			return http.Header{
+				"Retry-After": {"30"}, "X-Ratelimit-Remaining": {"4000"}, "X-Ratelimit-Resource": {"core"},
+				"X-Ratelimit-Reset": {strconv.FormatInt(now.Add(50*time.Minute).Unix(), 10)},
+			}
+		}, 30 * time.Second, 50 * time.Minute, 4000, true},
+		{"a Retry-After past an hour", "", http.StatusForbidden, func(time.Time) http.Header { return http.Header{"Retry-After": {"86400"}} }, time.Hour, 0, forgeapi.BudgetRemainingUnknown, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -241,9 +248,9 @@ func TestAppSource_rate_limit_takes_the_wait_GitHub_states(t *testing.T) {
 				if fe := forgeError(t, err); fe.Kind != forgeapi.KindRateLimited || fe.RetryAfter != tc.want || !fe.Retryable {
 					t.Errorf("Token() = %+v, want rate-limited and retryable with RetryAfter %v", fe, tc.want)
 				}
-				wantReset, wantPool := time.Time{}, ""
+				wantReset, wantPool := time.Time{}, tc.pool
 				if tc.reset > 0 {
-					wantReset, wantPool = time.Unix(start.Add(tc.reset).Unix(), 0), "core"
+					wantReset = time.Unix(start.Add(tc.reset).Unix(), 0)
 				}
 				if fe := forgeError(t, err); fe.Pool != wantPool {
 					t.Errorf("Token() = pool %q, want %q", fe.Pool, wantPool)

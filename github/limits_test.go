@@ -1,7 +1,9 @@
 package github
 
 import (
+	"cmp"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -38,12 +40,18 @@ func answered(t *testing.T, status int, header http.Header, body string) *forgea
 // x-ratelimit-reset, and to the zero time where the answer carries none.
 func TestErrorResetFromAnswer(t *testing.T) {
 	reset := time.Unix(1790000000, 0).UTC()
+	ahead := time.Unix(time.Now().Add(50*time.Minute).Unix(), 0).UTC()
 	for _, test := range []struct {
 		header http.Header
 		want   time.Time
 		name   string
+		body   string
 		status int
 	}{
+		{
+			name: "a_secondary_limit_with_budget_left_carries_its_reset", status: http.StatusForbidden, want: ahead, body: secondaryMessage,
+			header: headerPairs("X-RateLimit-Remaining", "4000", "X-RateLimit-Reset", strconv.FormatInt(ahead.Unix(), 10)),
+		},
 		{
 			name: "a_primary_limit_carries_its_reset", status: http.StatusForbidden, want: reset,
 			header: headerPairs("X-RateLimit-Remaining", "0", "X-RateLimit-Reset", "1790000000"),
@@ -59,7 +67,7 @@ func TestErrorResetFromAnswer(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fe := answered(t, test.status, test.header, `{"message":"refused"}`)
+			fe := answered(t, test.status, test.header, cmp.Or(test.body, `{"message":"refused"}`))
 			if !fe.Reset.Equal(test.want) {
 				t.Errorf("Error.Reset = %v, want %v", fe.Reset, test.want)
 			}
@@ -119,7 +127,8 @@ func TestErrorSecondary(t *testing.T) {
 }
 
 // TestErrorNamesPool holds Error.Pool to the x-ratelimit-resource the failing
-// answer names, and to none on a secondary limit, which holds every pool.
+// answer names, a secondary limit's included: whether a limit holds every pool is
+// Secondary's to say.
 func TestErrorNamesPool(t *testing.T) {
 	for _, test := range []struct {
 		header http.Header
@@ -136,12 +145,16 @@ func TestErrorNamesPool(t *testing.T) {
 			header: headerPairs("X-RateLimit-Remaining", "4000", "X-RateLimit-Resource", "core"),
 		},
 		{
-			name: "a_403_with_retry_after_names_none", status: http.StatusForbidden,
+			name: "a_403_with_retry_after_names_its_pool", status: http.StatusForbidden, want: "core",
 			header: headerPairs("Retry-After", "60", "X-RateLimit-Remaining", "4000", "X-RateLimit-Resource", "core"),
 		},
 		{
-			name: "a_429_with_retry_after_names_none", status: http.StatusTooManyRequests,
+			name: "a_429_with_retry_after_names_its_pool", status: http.StatusTooManyRequests, want: "core",
 			header: headerPairs("Retry-After", "60", "X-RateLimit-Resource", "core"),
+		},
+		{
+			name: "a_429_with_retry_after_and_no_resource_names_none", status: http.StatusTooManyRequests,
+			header: headerPairs("Retry-After", "60"),
 		},
 		{name: "a_bare_429_names_none", status: http.StatusTooManyRequests},
 	} {

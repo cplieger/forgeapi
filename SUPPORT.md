@@ -65,7 +65,7 @@ A failed answer's `Error` carries the figures its answer states: `Pool`, `Remain
 
 | Product | Figure | Header | Answer |
 | --- | --- | --- | --- |
-| GitHub | `Pool` | `X-RateLimit-Resource` | the pool the answer drew on, `core` for REST, `graphql` for documents and `search` for searches, and empty on a secondary limit, which holds every pool ([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit)) |
+| GitHub | `Pool` | `X-RateLimit-Resource` | the pool the answer drew on, `core` for REST, `graphql` for documents and `search` for searches, named on a secondary limit too, which holds every pool ([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit)) |
 | GitHub | `Remaining` | `X-RateLimit-Remaining` | the units left in that pool's window: requests on REST, points on documents |
 | GitHub | `Reset` | `X-RateLimit-Reset` | the instant that window renews, in epoch seconds |
 | GitHub | `Secondary` | `Retry-After`, or a message carrying "secondary rate limit" | a secondary limit, set on a 403 or 429 carrying either signal whatever X-RateLimit-Remaining reads ([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits)) |

@@ -1769,9 +1769,8 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 }
 
 // AnswerFigures sets fe's Remaining, Reset and Pool from the failing answer's
-// own budget signal and pool, as the governor reads them off every answer.
-// [forgeapi.Error.Secondary] is read, so it is set first: a secondary limit
-// names no pool, because it holds every pool.
+// own budget signal and pool, as the governor reads them off every answer, raw:
+// what a limit holds is the consumer's to read from them and Secondary.
 func AnswerFigures(fe *forgeapi.Error, header http.Header, signal budgetSignal, pool budgetPool) {
 	fe.Remaining, fe.Reset = forgeapi.BudgetRemainingUnknown, time.Time{}
 	if signal != nil {
@@ -1779,7 +1778,7 @@ func AnswerFigures(fe *forgeapi.Error, header http.Header, signal budgetSignal, 
 			fe.Remaining, fe.Reset = remaining, reset
 		}
 	}
-	if pool != nil && !fe.Secondary {
+	if pool != nil {
 		fe.Pool, _ = pool(header)
 	}
 }
