@@ -106,3 +106,42 @@ func TestErrorRemainingFromAnswer(t *testing.T) {
 		})
 	}
 }
+
+// TestBudgetStatePools holds BudgetState.Pools to each RateLimit-Name an
+// answer reported, with the API-wide throttle less the request an answer
+// under a narrower limit also counted against it
+// (https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/#response-headers).
+func TestBudgetStatePools(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		"GET /api/v4/user": `{"username": "example-user", "name": "Example User",
+  "email": "example-user@forge.example", "web_url": "https://forge.example/example-user"}`,
+		labelsRoute: `[]`,
+	})
+	answer := func(name, remaining, limit, reset string) {
+		for _, pair := range [][2]string{{"RateLimit-Name", name}, {"RateLimit-Remaining", remaining}, {"RateLimit-Limit", limit}, {"RateLimit-Reset", reset}} {
+			h.instance.answerHeader(pair[0], pair[1])
+		}
+	}
+	answer("throttle_authenticated_api", "1990", "2000", "1890000060")
+	if _, err := h.client.Whoami(t.Context()); err != nil {
+		t.Fatalf("Setup: Whoami = %v", err)
+	}
+	answer("burst_traffic_per_user_free_plan", "99", "100", "1890000030")
+	if _, err := h.client.ListLabels(t.Context(), testRef()); err != nil {
+		t.Fatalf("Setup: ListLabels = %v", err)
+	}
+	got := h.client.BudgetState().Pools
+	want := []forgeapi.PoolState{
+		{Name: "burst_traffic_per_user_free_plan", Remaining: 99, Limit: 100, Reset: time.Unix(1890000030, 0).UTC()},
+		{Name: "throttle_authenticated_api", Remaining: 1989, Limit: 2000, Reset: time.Unix(1890000060, 0).UTC()},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Pools = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].Name != want[i].Name || got[i].Remaining != want[i].Remaining ||
+			got[i].Limit != want[i].Limit || !got[i].Reset.Equal(want[i].Reset) {
+			t.Errorf("Pools[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

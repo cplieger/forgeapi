@@ -8,6 +8,8 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -104,11 +106,21 @@ func windowLength(clock time.Duration) time.Duration {
 func (g *governor) state() forgeapi.BudgetState {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	now := g.now()
+	var pools []forgeapi.PoolState
+	for name, p := range g.pools {
+		if !p.reset.IsZero() && !now.Before(p.reset) {
+			continue
+		}
+		pools = append(pools, forgeapi.PoolState{Name: name, Remaining: p.remaining, Limit: p.limit, Reset: p.reset})
+	}
+	slices.SortFunc(pools, func(a, b forgeapi.PoolState) int { return strings.Compare(a.Name, b.Name) })
 	return forgeapi.BudgetState{
 		Remaining:      g.remaining,
 		Reset:          g.reset,
 		LastCost:       g.lastCost,
 		RotationCursor: g.cursor,
+		Pools:          pools,
 	}
 }
 

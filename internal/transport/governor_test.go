@@ -646,3 +646,70 @@ func TestTheDeferralNamesThePoolItHeld(t *testing.T) {
 		t.Errorf("the deferral = pool %q, remaining %d, reset %v, want pool core, remaining 1, reset %v", fe.Pool, fe.Remaining, fe.Reset, reset)
 	}
 }
+
+// TestBudgetStatePools holds BudgetState.Pools to each pool's own last answer:
+// two pools answered keep their figures apart, in name order, and the slice a
+// caller holds is its own copy.
+func TestBudgetStatePools(t *testing.T) {
+	clock := newFakeClock()
+	coreReset, searchReset := clock.read().Add(time.Hour), clock.read().Add(time.Minute)
+	answers := map[string][4]string{
+		"/core":   {"core", "4990", "5000", strconv.FormatInt(coreReset.Unix(), 10)},
+		"/search": {"search", "29", "30", strconv.FormatInt(searchReset.Unix(), 10)},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a := answers[strings.TrimPrefix(r.URL.Path, "/api/v1")]
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Pool", a[0])
+		w.Header().Set("X-Remaining", a[1])
+		w.Header().Set("X-Limit", a[2])
+		w.Header().Set("X-Reset", a[3])
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	defer srv.Close()
+	opts := testOptions()
+	opts.Clock = clock.read
+	opts.Signal = func(h http.Header) (int, time.Time, bool) {
+		remaining, _ := strconv.Atoi(h.Get("X-Remaining"))
+		seconds, _ := strconv.ParseInt(h.Get("X-Reset"), 10, 64)
+		return remaining, time.Unix(seconds, 0).UTC(), true
+	}
+	opts.Pool = func(h http.Header) (string, int) {
+		limit, _ := strconv.Atoi(h.Get("X-Limit"))
+		return h.Get("X-Pool"), limit
+	}
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts)
+	if got := c.BudgetState().Pools; len(got) != 0 {
+		t.Errorf("Pools before any answer = %v, want none", got)
+	}
+	if err := readOp(t, c, "Search", "/search"); err != nil {
+		t.Fatalf("Setup: Search = %v, want nil", err)
+	}
+	if err := readOp(t, c, "ListPRs", "/core"); err != nil {
+		t.Fatalf("Setup: ListPRs = %v, want nil", err)
+	}
+	got := c.BudgetState().Pools
+	want := []forgeapi.PoolState{
+		{Name: "core", Remaining: 4990, Limit: 5000, Reset: coreReset.UTC()},
+		{Name: "search", Remaining: 29, Limit: 30, Reset: searchReset.UTC()},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Pools = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].Name != want[i].Name || got[i].Remaining != want[i].Remaining ||
+			got[i].Limit != want[i].Limit || !got[i].Reset.Equal(want[i].Reset) {
+			t.Errorf("Pools[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	got[0].Remaining = 0
+	if again := c.BudgetState().Pools; again[0].Remaining != 4990 {
+		t.Errorf("Pools[0].Remaining after the caller wrote its copy = %d, want 4990", again[0].Remaining)
+	}
+	clock.advance(time.Minute)
+	if renewed := c.BudgetState().Pools; len(renewed) != 1 || renewed[0].Name != "core" {
+		t.Errorf("Pools once search's window renewed = %v, want core alone: only an answer reports the renewed figure", renewed)
+	}
+}

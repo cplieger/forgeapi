@@ -50,6 +50,7 @@ type BudgetState struct {
 	LastCost int
 	RotationCursor RotationCursor
 	ReadCache ReadCacheState
+	Pools []PoolState
 }
 const CapCanPush Capability = "can_push"
 const CapHasIssues Capability = "has_issues"
@@ -460,6 +461,12 @@ type PartialReason int
 func (p PartialReason) String() string
 const PartialResultWindow PartialReason = iota + 6
 const PartialUnknown PartialReason = iota
+type PoolState struct {
+	Reset time.Time
+	Name string
+	Remaining int
+	Limit int
+}
 type Product int
 func (p Product) String() string
 const ProductForgejo Product = iota + 4

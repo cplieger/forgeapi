@@ -98,4 +98,22 @@ type BudgetState struct { //nolint:govet // fieldalignment: field order is the r
 	RotationCursor RotationCursor
 	// ReadCache is what this connection's read cache has done and holds now.
 	ReadCache ReadCacheState
+	// Pools is each rate-limit pool as its own last answer reported it, in name
+	// order: empty before any answer carried a figure, and always on Gitea, which
+	// sends none. The slice is the caller's own copy.
+	Pools []PoolState
+}
+
+// PoolState is one rate-limit pool as its last answer reported it, named as
+// [Error.Pool] names it (GitHub's X-RateLimit-Resource, GitLab's RateLimit-Name),
+// empty for a figure reported under no name, as every Forgejo answer's is.
+// Remaining is less the requests counted against the pool since by answers that
+// named only a narrower pool overlapping it. Limit and Reset are zero where the
+// answer stated none. A pool whose window has renewed is left out, because only
+// an answer can report its new figure.
+type PoolState struct {
+	Reset     time.Time
+	Name      string
+	Remaining int
+	Limit     int
 }

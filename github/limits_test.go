@@ -177,3 +177,38 @@ func TestErrorRemainingFromAnswer(t *testing.T) {
 		})
 	}
 }
+
+// TestBudgetStatePools holds BudgetState.Pools to GitHub's own pool names: a
+// REST answer drawing on core and a document answer drawing on graphql keep
+// their x-ratelimit figures apart.
+func TestBudgetStatePools(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		reposRoute:    `[]`,
+		documentRoute: documentEnvelope(`"repository":{"nameWithOwner":"example/example"}`),
+	})
+	h.instance.answerHeaders(reposRoute, headerPairs("X-RateLimit-Remaining", "4990", "X-RateLimit-Limit", "5000",
+		"X-RateLimit-Reset", "1890000000", "X-RateLimit-Resource", "core"))
+	h.instance.answerHeaders(documentRoute, headerPairs("X-RateLimit-Remaining", "4000", "X-RateLimit-Limit", "5000",
+		"X-RateLimit-Reset", "1890000600", "X-RateLimit-Resource", "graphql"))
+	if _, err := h.client.ListRepos(t.Context()); err != nil {
+		t.Fatalf("Setup: ListRepos = %v", err)
+	}
+	var payload docPayload
+	if _, err := h.client.execute(t.Context(), "ListPRs", prList, map[string]any{}, &payload); err != nil {
+		t.Fatalf("Setup: execute = %v", err)
+	}
+	got := h.client.BudgetState().Pools
+	want := []forgeapi.PoolState{
+		{Name: "core", Remaining: 4990, Limit: 5000, Reset: time.Unix(1890000000, 0).UTC()},
+		{Name: "graphql", Remaining: 4000, Limit: 5000, Reset: time.Unix(1890000600, 0).UTC()},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Pools = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].Name != want[i].Name || got[i].Remaining != want[i].Remaining ||
+			got[i].Limit != want[i].Limit || !got[i].Reset.Equal(want[i].Reset) {
+			t.Errorf("Pools[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

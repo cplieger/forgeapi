@@ -178,22 +178,13 @@ func boolWord(b bool) string {
 	return "false"
 }
 
-// BudgetState implements [forgeapi.Governor]. It is the read-only view of this
-// connection's governor: the remaining budget the instance last reported, when
-// it renews, and what the last call cost. This product reports remaining and
-// reset through its rate-limit headers and prices a document by the complexity
-// the endpoint reports, which is what LastCost carries after a document read.
-// The headers report the credential's own quota rather than this client's share
-// of it, so it moves when another application spends and the governor's reserve
-// is held against that shared pool.
-//
-// [forgeapi.BudgetState.RotationCursor] is empty on this family and nothing
-// rotates: the folded verdict here is one scalar selected by a document the list
-// already sends, so no row costs a read of its own and there is no per-interval
-// cap for a rotation to spread.
-//
-// It performs no I/O and is safe to call concurrently with operations; it is
-// never written from outside. See [forgeapi.BudgetState].
+// BudgetState implements [forgeapi.Governor]: the credential's own quota, shared
+// with every application acting for it, as the rate-limit headers report it, with
+// Pools holding each throttle by its RateLimit-Name. LastCost is 1 per REST
+// request and a document's reported complexity after a document read.
+// RotationCursor is empty: the folded verdict is one scalar the list's document
+// already selects, so no row costs a read of its own and nothing rotates. No I/O;
+// safe concurrently.
 func (c *Client) BudgetState() forgeapi.BudgetState { return c.core.BudgetState() }
 
 // Close implements [forgeapi.Core]: it releases this client's pool, the idle

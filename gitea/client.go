@@ -146,22 +146,14 @@ func (c *Client) foldPosition(list string) (int, bool) {
 	return at, ok
 }
 
-// BudgetState implements [forgeapi.Governor]. It is the read-only view of this
-// connection's governor, and which of its four fields carry a read value depends
-// on the PRODUCT rather than the family. Forgejo sends a structured `ratelimit`
-// header on every response, so Remaining is its `r` parameter and Reset its `t`
-// seconds; Gitea sends no rate-limit header at all, so there Remaining is
-// [forgeapi.BudgetRemainingUnknown] and Reset is the zero time. On both, LastCost
-// is this library's own per-call price, one per request, with the folded status
-// read as the expensive member, since neither product prices a call on the wire.
-// The governor's reserve has a signal to hold against on Forgejo and is inert on
-// Gitea; what bounds this family's folded-status work on either is the two
-// per-interval caps [forgeapi.Budget] publishes, counted by this client over a
-// rolling window of its own, and [forgeapi.BudgetState.RotationCursor] is where
-// that rotation stands.
-//
-// It performs no I/O and is safe to call concurrently with operations; it is
-// never written from outside. See [forgeapi.BudgetState].
+// BudgetState implements [forgeapi.Governor]; what it reads depends on the
+// PRODUCT. Forgejo's structured `ratelimit` header gives Remaining (its `r`),
+// Reset (its `t` seconds) and [forgeapi.BudgetState.Pools] as that one figure
+// under no name; Gitea sends none, so Remaining is [forgeapi.BudgetRemainingUnknown],
+// Reset the zero time and Pools empty, and the reserve is inert there. LastCost
+// is this library's own price, one per request, since neither product prices a
+// call; the folded-status work is bounded by [forgeapi.Budget]'s per-interval caps,
+// whose rotation [forgeapi.BudgetState.RotationCursor] holds. No I/O; safe concurrently.
 func (c *Client) BudgetState() forgeapi.BudgetState { return c.core.BudgetState() }
 
 // Close implements [forgeapi.Core]: it releases this client's pool, the idle

@@ -104,3 +104,36 @@ func TestAForbiddenAnswerAtZeroIsARateLimit(t *testing.T) {
 		})
 	}
 }
+
+// TestBudgetStatePools holds BudgetState.Pools to the one figure Forgejo's
+// RateLimit header reports, under no pool name and with no limit stated, and
+// to none on Gitea, which sends no figure.
+func TestBudgetStatePools(t *testing.T) {
+	pools := func(t *testing.T, raw string) []forgeapi.PoolState {
+		t.Helper()
+		header := http.Header{}
+		if raw != "" {
+			header.Set("RateLimit", raw)
+		}
+		h := newAnsweringHarness(t, http.StatusTooManyRequests, header, `{"message":"refused"}`)
+		if _, err := h.client.ListRuns(t.Context(), testRef()); err == nil {
+			t.Fatal("Setup: ListRuns answered 429 = nil, want the refusal")
+		}
+		return h.client.BudgetState().Pools
+	}
+	t.Run("forgejo", func(t *testing.T) {
+		before := time.Now()
+		got := pools(t, `"baseline";r=7;t=600`)
+		if len(got) != 1 {
+			t.Fatalf("Pools = %v, want the one figure the answer reported", got)
+		}
+		if got[0].Name != "" || got[0].Remaining != 7 || got[0].Limit != 0 || got[0].Reset.Before(before.Add(600*time.Second)) {
+			t.Errorf("Pools[0] = %+v, want no name, 7 remaining, no limit, renewing 600s after the answer", got[0])
+		}
+	})
+	t.Run("gitea", func(t *testing.T) {
+		if got := pools(t, ""); len(got) != 0 {
+			t.Errorf("Pools = %v, want none: Gitea sends no figure", got)
+		}
+	})
+}
