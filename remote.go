@@ -25,10 +25,11 @@ type Remote struct {
 // ParseRemote reads a git remote, in its URL or scp form, as the repository it names:
 // every spelling of one repository answers one [Remote.Key]. It answers false for a
 // remote with no host (a local path), one past 2,048 bytes, git's
-// <transport>::<address> helper form, and one it cannot name canonically: invalid
-// UTF-8, an ASCII control, "?", "#", "%" or "\" in the host or path, an empty, "." or
-// ".." segment, a host that does not read back as a URL host, or a key that would not
-// read back as itself through its https form.
+// <transport>::<address> helper form, a URL with a query, a fragment or an escaped
+// slash, and one it cannot name canonically: invalid UTF-8, an ASCII control, "?",
+// "#", "%" or "\" in the host or path, an empty, "." or ".." segment, a host that
+// does not read back as a URL host, or a key that would not read back as itself
+// through its https form.
 func ParseRemote(raw string) (Remote, bool) {
 	if len(raw) > maxRemoteBytes {
 		return Remote{}, false
@@ -81,13 +82,17 @@ type remoteParts struct {
 	host, path, scheme, port string
 }
 
+// splitRemote reads s as a URL or git's scp form. A URL with a query or a
+// fragment, or whose path escapes a slash, is refused rather than keyed by a
+// path net/url cut or decoded into other segments: git sends the whole string,
+// and an escaped slash is not the separator it decodes to (RFC 3986 section 2.2).
 func splitRemote(s string) (remoteParts, bool) {
 	if !strings.Contains(s, "://") {
 		host, p, ok := scpForm(s)
 		return remoteParts{host: host, path: p}, ok
 	}
 	u, err := url.Parse(s)
-	if err != nil {
+	if err != nil || strings.ContainsAny(s, "?#") || strings.Contains(strings.ToLower(u.EscapedPath()), "%2f") {
 		return remoteParts{}, false
 	}
 	host := u.Hostname()

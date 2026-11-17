@@ -45,7 +45,7 @@ The one optional role, `Releases`, is reached by type assertion on a `Core`. A f
 
 A `RepoRef` comes from what the forge answered and is never built by hand. It is derived from the family's own canonical selector and carries the family with it. `RepoRef.Encode` and `DecodeRepoRef` round-trip an identifier through a store.
 
-`ParseRemote` reads a git remote, in its URL or scp form, as the `Remote` it names, so every spelling of one repository answers one `Remote.Key`, the host and path joined by `/`. `Owner` and `Name` split the path at its last `/`. `WebOrigin` is the origin an `http` or `https` remote carries, with its port, and is empty for an ssh or scp remote. It answers false for a local path, a remote past 2,048 bytes, git's `<transport>::<address>` helper form and a remote it cannot name canonically. It reads only the string, so it cannot tell which family serves the host. To learn that, pass the instance's web origin to `families.Open` as `Connection.WebBaseURL`.
+`ParseRemote` reads a git remote, in its URL or scp form, as the `Remote` it names, so every spelling of one repository answers one `Remote.Key`, the host and path joined by `/`. `Owner` and `Name` split the path at its last `/`. `WebOrigin` is the origin an `http` or `https` remote carries, with its port, and is empty for an ssh or scp remote. It answers false for a local path, a remote past 2,048 bytes, git's `<transport>::<address>` helper form, a URL with a query, a fragment or an escaped `/` in its path, and a remote it cannot name canonically. It reads only the string, so it cannot tell which family serves the host. To learn that, pass the instance's web origin to `families.Open` as `Connection.WebBaseURL`.
 
 ## Options
 

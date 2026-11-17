@@ -30,7 +30,6 @@ func TestParseRemote(t *testing.T) {
 		{"Azure DevOps scp names with spaces", "git@ssh.dev.azure.com:v3/org/My Project/My Repo", "ssh.dev.azure.com/v3/org/My Project/My Repo"},
 		{"space segment", "git@github.com:o/ /r", "github.com/o/ /r"},
 		{"no-break space segment", "git@github.com:o/\u00a0/r", "github.com/o/\u00a0/r"},
-		{"query dropped", "https://github.com/a/b?x=1", "github.com/a/b"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,6 +70,12 @@ func TestParseRemoteRefusals(t *testing.T) {
 		{"escaped DEL in the path", "https://github.com/a/b%7f"},
 		{"escaped backslash in the path", "https://github.com/a%5cb/c"},
 		{"escaped question mark in the path", "https://github.com/a/b%3Fc"},
+		{"escaped slash in the path", "https://github.com/o%2Fr"},
+		{"lower-case escaped slash in the path", "https://github.com/o/r%2fs"},
+		{"query", "https://github.com/a/b?x=1"},
+		{"empty query", "https://github.com/o/r?"},
+		{"fragment", "https://github.com/o/r#frag"},
+		{"empty fragment", "https://github.com/o/r#"},
 		{"backslash in an scp path", "git@github.com:a/b\\c.git"},
 		{"NUL in an scp path", "git@github.com:a/b\x00c.git"},
 		{"IPv6 zone", "https://[fe80::1%25eth0]/o/r"},
