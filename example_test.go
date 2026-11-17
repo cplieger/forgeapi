@@ -68,3 +68,15 @@ func Example() {
 		fmt.Printf("#%d %s\n", pr.Ref.Number, pr.Title)
 	}
 }
+
+// ExampleParseRemote keys two spellings of one repository alike; only the https
+// remote has a web origin.
+func ExampleParseRemote() {
+	for _, raw := range []string{"git@GitLab.com:group/sub/app.git", "https://gitlab.com:8443/group/sub/app"} {
+		r, ok := forgeapi.ParseRemote(raw)
+		fmt.Printf("%v %s owner=%s name=%s web=%q\n", ok, r.Key(), r.Owner(), r.Name(), r.WebOrigin)
+	}
+	// Output:
+	// true gitlab.com/group/sub/app owner=group/sub name=app web=""
+	// true gitlab.com/group/sub/app owner=group/sub name=app web="https://gitlab.com:8443"
+}

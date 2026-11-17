@@ -449,6 +449,7 @@ type Page[T any] struct {
 	Successor *RepoRef
 	Indexed bool
 }
+func ParseRemote(raw string) (Remote, bool)
 type Partial struct {
 	Reason PartialReason
 	Fetched int
@@ -542,6 +543,14 @@ type Releases interface {
 	ListReleases(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Release], error)
 	CreateRelease(ctx context.Context, repo RepoRef, req NewRelease) (Release, error)
 }
+type Remote struct {
+	Host string
+	Path string
+	WebOrigin string
+}
+func (r Remote) Key() string
+func (r Remote) Name() string
+func (r Remote) Owner() string
 type RepoAffordances struct {
 	MergeStrategies []string
 	HasIssues Support
