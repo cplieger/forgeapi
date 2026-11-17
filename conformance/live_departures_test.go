@@ -276,7 +276,7 @@ func TestALiveCaseFailsWhereACellItsSubjectCannotMoveLeavesTheTable(t *testing.T
 		for _, arm := range []string{asRecorded, altered} {
 			t.Run(caseName+"_"+arm, func(t *testing.T) {
 				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^"+name+"$", "-test.v")
-				cmd.Env = append(withoutLiveVars(os.Environ()), liveDepartureCase+"="+caseName, liveDepartureArm+"="+arm)
+				cmd.Env = append(childEnviron(os.Environ()), liveDepartureCase+"="+caseName, liveDepartureArm+"="+arm)
 				out, err := cmd.CombinedOutput()
 				text := string(out)
 				_, failed := errors.AsType[*exec.ExitError](err)

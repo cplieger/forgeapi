@@ -110,7 +110,7 @@ func TestALiveReadOfOneIssueFailsItsSetupOnAMalformedNumber(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), os.Args[0],
 				"-test.run=^TestALiveReadOfOneIssueFailsItsSetupOnAMalformedNumber$", "-test.v")
-			cmd.Env = append(withoutLiveVars(os.Environ()),
+			cmd.Env = append(childEnviron(os.Environ()),
 				liveSetupCase+"="+readIssue, liveVar(p, "REPO")+"="+selector, liveVar(p, "ISSUE")+"="+raw)
 			out, err := cmd.CombinedOutput()
 			text := string(out)
