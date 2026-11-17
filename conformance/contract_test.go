@@ -314,7 +314,7 @@ var operations = []operation{
 		method:    "PullRequests.ReadPR",
 		zero:      forgeapi.PullRequest{},
 		rowArms:   []string{authorKind},
-		errorArms: []string{checksUnderFineGrained},
+		errorArms: []string{checksUnderFineGrained, approvalsUnderOption, changesUnderOption},
 		readsPR:   true,
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)

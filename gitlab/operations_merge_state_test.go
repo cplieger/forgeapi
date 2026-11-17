@@ -79,7 +79,7 @@ func TestOnlyTheListDocumentGatesTheMergeFields(t *testing.T) {
 	}
 	for _, doc := range []document{prRead, docAcceptance} {
 		t.Run(doc.name, func(t *testing.T) {
-			if strings.Contains(doc.text, "mergeState") || strings.Contains(doc.text, "@include") {
+			if strings.Contains(doc.text, "mergeState") || strings.Contains(doc.text, "@include(if: $mergeState)") {
 				t.Errorf("the %s document names the merge state gate, want both fields selected unconditionally", doc.name)
 			}
 			for _, want := range []string{"\n      mergeable\n", "\n      detailedMergeStatus\n"} {

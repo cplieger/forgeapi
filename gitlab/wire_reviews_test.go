@@ -160,19 +160,20 @@ func TestTheDocumentListGatesItsReviewsOnTheOption(t *testing.T) {
 	}
 }
 
-// The list document gates both review fields on its required variable, while the
-// single read and the schema probe select them unconditionally.
-func TestOnlyTheListDocumentGatesTheReviewFields(t *testing.T) {
-	for _, want := range []string{"$reviews: Boolean!", "approvedBy @include(if: $reviews) { count }", "reviewers(first: 100) @include(if: $reviews) {"} {
-		if !strings.Contains(prList.text, want) {
-			t.Errorf("the PRList document does not contain %q", want)
+// TestTheReviewFieldsAreGatedWhereAnOptionReachesThem holds the requests WithReviews
+// changes: the list document and the single read gate the review fields on their
+// required variable, while the schema probe selects them unconditionally.
+func TestTheReviewFieldsAreGatedWhereAnOptionReachesThem(t *testing.T) {
+	for _, doc := range []document{prList, prRead} {
+		for _, want := range []string{"$reviews: Boolean!", "approvedBy @include(if: $reviews) { count }", "reviewers(first: 100) @include(if: $reviews) {"} {
+			if !strings.Contains(doc.text, want) {
+				t.Errorf("the %s document does not contain %q", doc.name, want)
+			}
 		}
 	}
-	for _, doc := range []document{prRead, docAcceptance} {
-		for _, want := range []string{"approvedBy { count }", "reviewers(first: 100) {", "mergeRequestInteraction { reviewState }"} {
-			if !strings.Contains(doc.text, want) {
-				t.Errorf("the %s document does not select %q", doc.name, want)
-			}
+	for _, want := range []string{"approvedBy { count }", "reviewers(first: 100) {", "mergeRequestInteraction { reviewState }"} {
+		if !strings.Contains(docAcceptance.text, want) {
+			t.Errorf("the %s document does not select %q", docAcceptance.name, want)
 		}
 	}
 }

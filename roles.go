@@ -267,10 +267,9 @@ type PullRequests interface {
 	// rather than a budget.
 	//
 	// It is priced per CALL, because the ordinary caller is a UI action or the
-	// follow-up read after a mutation rather than a poller: one to three requests
-	// on GitHub, exactly one on GitLab and two to four on the Gitea family, and
-	// none of it counted against the folded-status cap the client keeps per
-	// rolling interval. A published price counts every request the call puts on
+	// follow-up read after a mutation rather than a poller, at the range each
+	// per-forge line below states, and none of it is counted against the
+	// folded-status cap the client keeps per rolling interval. A published price counts every request the call puts on
 	// the wire, a refused one included, because a refused request spends the same
 	// shared quota an answered one does. Which product's upper arm is a page of a
 	// fold is not uniform: it is [Budget.StatusPages] on GitHub and on the Gitea
@@ -289,6 +288,11 @@ type PullRequests interface {
 	// rather than folded over a second endpoint. Every later call on that
 	// connection spends one.
 	//
+	// It takes [WithReviews], as the pull request lists do. False reads no review
+	// and answers [ActionState.Approvals] and [ActionState.ChangesRequested] as
+	// [CountUnknown]: one request less on the Gitea family, and on GitHub and
+	// GitLab the same request with the review selection left out of the document.
+	//
 	// Its fold is COMPLETE, which is the difference between this read and a
 	// list. The caller named one pull request and is owed a verdict, so where the
 	// product serves a checks collection the library follows its pages until the
@@ -304,41 +308,46 @@ type PullRequests interface {
 	//
 	//	GitHub   the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address; the document selects latestOpinionatedReviews(first: 20), and more than 20 reviewers answer both counts CountUnknown with pagination_cap on Partial, as does the REST record, which carries no review, 0 to 3 requests
 	//	GitLab   the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused; the document selects approvedBy.count and the review state of the first 100 reviewers, and reviewers continuing past them answer ChangesRequested CountUnknown with pagination_cap on Partial; the REST record carries neither, so that arm answers both counts CountUnknown, 1 request; needs read_merge_state
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial, 2 to 5 requests
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial, 2 to 5 requests
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then, unless WithReviews(false) left them unread, one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial, 1 to 5 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then, unless WithReviews(false) left them unread, one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial, 1 to 5 requests
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Comments                                   differs in shape  totalCommentsCount on the document, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16; comments plus review_comments, with no review body, on the REST read a connection whose documents were refused falls back to
-	//	Action.Checks, under a fine-grained token  cannot supply     CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup
+	//	Comments                                                                                       differs in shape  totalCommentsCount on the document, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16; comments plus review_comments, with no review body, on the REST read a connection whose documents were refused falls back to
+	//	Action.Checks, under a fine-grained token                                                      cannot supply     CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup
+	//	Action.Approvals, under WithReviews(false), Action.ChangesRequested, under WithReviews(false)  cannot supply     CountUnknown: the document leaves latestOpinionatedReviews out of the request
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Ref                                  differs in spelling  iid, sigil "!"
-	//	Labels[].Name                        differs in spelling  labels.nodes[].title, not name
-	//	Labels[].Color                       differs in spelling  color string, leading #
-	//	Action.Checks                        differs in shape     headPipeline.status scalar, no fold; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a merged results one included, since that payload carries no source_sha to match it by
-	//	Action.ChecksPassing .. ChecksTotal  cannot supply        absent: one scalar status
-	//	Action.QueueState                    cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
-	//	Action.QueuePosition                 cannot supply        no position; train index null
-	//	Action.Approvals                     differs in shape     approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review
-	//	Action.ChangesRequested              differs in shape     the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented
+	//	Ref                                                differs in spelling  iid, sigil "!"
+	//	Labels[].Name                                      differs in spelling  labels.nodes[].title, not name
+	//	Labels[].Color                                     differs in spelling  color string, leading #
+	//	Action.Checks                                      differs in shape     headPipeline.status scalar, no fold; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a merged results one included, since that payload carries no source_sha to match it by
+	//	Action.ChecksPassing .. ChecksTotal                cannot supply        absent: one scalar status
+	//	Action.QueueState                                  cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
+	//	Action.QueuePosition                               cannot supply        no position; train index null
+	//	Action.Approvals                                   differs in shape     approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review
+	//	Action.ChangesRequested                            differs in shape     the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented
+	//	Action.Approvals, under WithReviews(false)         cannot supply        CountUnknown: the document leaves approvedBy out of the request
+	//	Action.ChangesRequested, under WithReviews(false)  cannot supply        CountUnknown: the document leaves reviewers out of the request
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	Action.AutoMergeArmed                                                                          cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                                                                              cannot supply  QueueNone always
+	//	Action.QueuePosition                                                                           cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                                                                            cannot supply  mergeable and draft, no reason
+	//	Action.Approvals, under WithReviews(false), Action.ChangesRequested, under WithReviews(false)  cannot supply  CountUnknown: the reviews page is not read, which spends one request less
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
-	ReadPR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
+	//	AuthorKind                                                                                     cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Action.AutoMergeArmed                                                                          cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                                                                              cannot supply  QueueNone always
+	//	Action.QueuePosition                                                                           cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                                                                            cannot supply  mergeable and draft, no reason
+	//	Action.Approvals, under WithReviews(false), Action.ChangesRequested, under WithReviews(false)  cannot supply  CountUnknown: the reviews page is not read, which spends one request less
+	ReadPR(ctx context.Context, repo RepoRef, pr PRRef, opts ...ReadOption) (PullRequest, error)
 
 	// CreatePR opens a pull request and returns the created object.
 	//

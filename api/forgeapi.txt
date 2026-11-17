@@ -487,7 +487,7 @@ type PullRequest struct {
 type PullRequests interface {
 	ListPRs(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[PullRequest], error)
 	ListMyPRs(ctx context.Context, opts ...ListOption) (Page[PullRequest], error)
-	ReadPR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
+	ReadPR(ctx context.Context, repo RepoRef, pr PRRef, opts ...ReadOption) (PullRequest, error)
 	CreatePR(ctx context.Context, repo RepoRef, req NewPullRequest) (PullRequest, error)
 	ClosePR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
 	ReopenPR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
@@ -508,6 +508,12 @@ type ReadCacheState struct {
 	Misses int
 	Saved int
 	Bytes int64
+}
+type ReadOption interface {
+	// contains unexported members
+}
+type ReadSettings struct {
+	Reviews bool
 }
 type Release struct {
 	TagName string
@@ -555,6 +561,11 @@ type Repository struct {
 func ReservedHeaders() []string
 func Resolve(opts ...Option) Settings
 func ResolveList(opts ...ListOption) (ListSettings, error)
+func ResolveRead(opts ...ReadOption) ReadSettings
+type ReviewsOption interface {
+	ListOption
+	ReadOption
+}
 type RotationCursor string
 type Run struct {
 	Ref RunRef
@@ -628,7 +639,7 @@ func WithReadConcurrency(n int) Option
 func WithRefreshLead(d time.Duration) Option
 func WithRequestObserver(wrap func(next http.RoundTripper) http.RoundTripper) Option
 func WithRetries(n int) Option
-func WithReviews(read bool) ListOption
+func WithReviews(read bool) ReviewsOption
 func WithRotationCursor(c RotationCursor) Option
 func WithSince(t time.Time) ListOption
 func WithState(s ListState) ListOption
@@ -793,7 +804,7 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
 func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
-func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error)
 func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
@@ -833,7 +844,7 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
 func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
-func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error)
 func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
@@ -871,7 +882,7 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
 func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
-func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error)
 func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)

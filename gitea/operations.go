@@ -424,14 +424,16 @@ func (c *Client) applyReviews(ctx context.Context, op string, addr *address, num
 
 // ReadPR implements [forgeapi.PullRequests]: the record, its COMPLETE status fold up
 // to [forgeapi.Budget.StatusPages] pages outside the per-interval cap, since this call
-// is priced per call, and one page of its reviews. A fold that reaches the bound
+// is priced per call, and one page of its reviews unless [forgeapi.WithReviews] is
+// false, which answers both review counts [forgeapi.CountUnknown]. A fold that reaches the bound
 // answers [forgeapi.CheckUnknown] with [forgeapi.PartialPaginationCap]. Absence answers
 // [forgeapi.CodeRepoOrPRNotVisible] always: one REST status cannot tell a missing pull
 // request from an invisible repository, and a further read would break the price. A
 // moved repository answers [forgeapi.CodeRepoRefStale] carrying the successor.
-func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
+func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error) {
 	const op = "ReadPR"
 	ctx = transport.Call(ctx, op)
+	set := forgeapi.ResolveRead(opts...)
 	addr := &address{named: repo}
 	record, err := c.readPull(ctx, op, addr, pr)
 	if err != nil {
@@ -450,6 +452,9 @@ func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.
 		if stale := c.moved(ctx, op, addr); stale != nil {
 			return forgeapi.PullRequest{}, stale
 		}
+	}
+	if !set.Reviews {
+		return item, nil // both counts stay the CountUnknown normalizePull answers
 	}
 	if err := c.applyReviews(ctx, op, addr, pr.Number, &item); err != nil {
 		return forgeapi.PullRequest{}, err

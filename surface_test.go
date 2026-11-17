@@ -95,7 +95,7 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"func NewStoredSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*StoredSource, error)",
 		"func New(store creds.Store, opts ...forgeapi.Option) *Helper",
 		"const CountUnknown = -1",
-		"func WithReviews(read bool) ListOption",
+		"func WithReviews(read bool) ReviewsOption",
 		"func ActionReads(ctx context.Context, n int) context.Context",
 		"func Mutates(r *http.Request) bool",
 		"type LabelTarget struct {",

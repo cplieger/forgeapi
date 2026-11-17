@@ -16,6 +16,8 @@ import (
 const (
 	rowApprovalsUnderOption = "Items[].Action.Approvals, under WithReviews(false)"
 	rowChangesUnderOption   = "Items[].Action.ChangesRequested, under WithReviews(false)"
+	approvalsUnderOption    = "Action.Approvals, under WithReviews(false)"
+	changesUnderOption      = "Action.ChangesRequested, under WithReviews(false)"
 )
 
 // reviewsLists are the lists that take WithReviews.
@@ -122,6 +124,94 @@ func TestThePullRequestListsReadNoReviewWithTheOptionOff(t *testing.T) {
 			})
 		}
 	}
+}
+
+// ReadPR takes WithReviews too. With reviews left unread it answers both counts
+// unknown and sends nothing that reads a review, which on the Gitea family is one
+// request fewer than the default read and elsewhere the same request count; each
+// cell states the option's answer in its own conditional row.
+func TestTheSingleReadReadsNoReviewWithTheOptionOff(t *testing.T) {
+	const method = "PullRequests.ReadPR"
+	fields := []struct {
+		field, underOption string
+	}{
+		{field: "Action.Approvals", underOption: approvalsUnderOption},
+		{field: "Action.ChangesRequested", underOption: changesUnderOption},
+	}
+	for _, p := range spec.Products {
+		e := requireEntry(t, p, method)
+		t.Run(caseName(e), func(t *testing.T) {
+			_, defaults, err := readFixture(t, e)
+			if err != nil {
+				t.Fatalf("%s on %s = error %v, want the pull request", method, p, err)
+			}
+			got, requests, err := readFixture(t, e, forgeapi.WithReviews(false))
+			if err != nil {
+				t.Fatalf("%s on %s with WithReviews(false) = error %v, want the pull request; the requests were %s",
+					method, p, err, describeRequests(requests))
+			}
+			if got.Action.Approvals != forgeapi.CountUnknown || got.Action.ChangesRequested != forgeapi.CountUnknown {
+				t.Errorf("%s on %s with WithReviews(false) answered Approvals %d, ChangesRequested %d, want both %d",
+					method, p, got.Action.Approvals, got.Action.ChangesRequested, forgeapi.CountUnknown)
+			}
+			for _, r := range requests {
+				if strings.HasSuffix(r.path, "/reviews") {
+					t.Errorf("%s on %s with WithReviews(false) sent %s, want no review read", method, p, r)
+				}
+				if reviews, ok := documentVariable(r.body, "reviews"); ok && reviews != false {
+					t.Errorf("%s on %s with WithReviews(false) sent the document variable reviews %v, want false", method, p, reviews)
+				}
+			}
+			want := len(defaults)
+			if p == spec.Gitea || p == spec.Forgejo {
+				want--
+			}
+			if len(requests) != want {
+				t.Errorf("%s on %s with WithReviews(false) sent %d requests, want %d (the default read sent %d): %s",
+					method, p, len(requests), want, len(defaults), describeRequests(requests))
+			}
+			for _, f := range fields {
+				d, stated := departureFor(&e, f.underOption)
+				switch {
+				case !stated:
+					t.Errorf("%s on %s carries no %q row, want one: its default answer reads %s", method, p, f.underOption, f.field)
+				case d.Kind != spec.CannotSupply:
+					t.Errorf("%s on %s states %q as %s, want %s", method, p, f.underOption, d.Kind, spec.CannotSupply)
+				}
+			}
+		})
+	}
+}
+
+// readFixture drives ReadPR against its own fixture with the options given, after
+// the prelude the operation declares, and answers the pull request and the requests
+// the read itself sent.
+func readFixture(t *testing.T, e spec.Entry, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, []sent, error) {
+	t.Helper()
+	f, err := loadFixture(e.Product, e.Method)
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	srv, rec := newFixtureServer(t, f)
+	conn := forgeapi.Connection{WebBaseURL: srv.URL, APIBaseURL: srv.URL + apiRoot(e.Product)}
+	client, err := guard(func() (any, error) { return newClient(e.Product, conn, offlineOptions(srv)...) })
+	if err != nil {
+		t.Fatalf("Setup: %s client: %v", e.Product, err)
+	}
+	s := canonicalSubject(e.Product)
+	if op, declared := operationFor(e.Method); declared {
+		if prelude := preludeMethod(e, op); prelude != "" {
+			runPrelude(t, e, prelude, client, s)
+		}
+	}
+	r, ok := client.(forgeapi.PullRequests)
+	if !ok {
+		t.Fatalf("Setup: the %s client is not a PullRequests", e.Product)
+	}
+	before := rec.count()
+	got, err := guard(func() (any, error) { return r.ReadPR(t.Context(), s.repo, s.pr, opts...) })
+	pr, _ := got.(forgeapi.PullRequest)
+	return pr, rec.since(before), err
 }
 
 // cannotSupply reports that a cell's default answer cannot supply a field, where a

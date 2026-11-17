@@ -754,15 +754,47 @@ func WithMergeState(read bool) ListOption {
 	})
 }
 
-// WithReviews sets whether [PullRequests.ListPRs] and [PullRequests.ListMyPRs] read
-// each row's [ActionState.Approvals] and [ActionState.ChangesRequested]. False sends no
-// review selection or per-row review read and answers both as [CountUnknown]. Every
-// other list refuses it, at either value, with [CodeListReviewsInvalid].
+// ReadSettings is the resolved per-call option state for a single read.
+type ReadSettings struct {
+	// Reviews is whether [PullRequests.ReadPR] answers [ActionState.Approvals] and
+	// [ActionState.ChangesRequested], true where the caller named none.
+	Reviews bool
+}
+
+// ReadOption configures one single read. Like [Option] it cannot be implemented
+// outside this package, and last one wins.
+type ReadOption interface {
+	applyReadOption(*ReadSettings)
+}
+
+// ResolveRead applies defaults and then every read option in order. No read option
+// takes a value it could refuse, so it answers no error.
+func ResolveRead(opts ...ReadOption) ReadSettings {
+	s := ReadSettings{Reviews: true}
+	for _, o := range opts {
+		if o != nil {
+			o.applyReadOption(&s)
+		}
+	}
+	return s
+}
+
+// ReviewsOption is the one option both a pull request list and [PullRequests.ReadPR]
+// take, since the cost it controls is the same on both: [WithReviews].
+type ReviewsOption interface {
+	ListOption
+	ReadOption
+}
+
+// WithReviews sets whether [PullRequests.ListPRs], [PullRequests.ListMyPRs] and
+// [PullRequests.ReadPR] read [ActionState.Approvals] and
+// [ActionState.ChangesRequested]. False sends no review selection or review read and
+// answers both as [CountUnknown]: on the Gitea family that is one request less per
+// list row and per read, and on GitHub and GitLab the same request count at a lower
+// document cost. Every other list refuses it, at either value, with
+// [CodeListReviewsInvalid].
 //
 // Default: true.
-func WithReviews(read bool) ListOption {
-	return listOptionFunc(func(ls *ListSettings) {
-		ls.Reviews = read
-		ls.ReviewsSet = true
-	})
+func WithReviews(read bool) ReviewsOption {
+	return reviewsOption(read)
 }
