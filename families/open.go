@@ -11,16 +11,12 @@ import (
 	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
-// Open builds a client for conn by asking GitLab's connection read, then GitHub's, then the
-// Gitea family's, and answers the first family whose read establishes it beside that family's
-// client, its connection capabilities held; an optional role it lacks fails a type assertion.
-// It costs that read plus one request per family asked first, at most 2 on GitLab, 3 on GitHub
-// and 5 on the Gitea family, the reads ahead counted by no budget the caller holds; a caller that
-// knows its family calls that family's constructor. No family established is a [*forgeapi.Error]
-// with [forgeapi.CodeFamilyUndetected], [forgeapi.FamilyUnknown] and the last read's status; the
-// caller's context ending answers its sentinel, and a constructor's refusal returns unchanged.
-// Every client Open built and does not answer is closed before it returns, since the caller
-// never holds one; the client it answers is the caller's to close.
+// Open asks GitLab's connection read, then GitHub's, then the Gitea family's, and answers the
+// first family it establishes with that family's client, capabilities held, at that read plus
+// one request per family asked first (at most 2, 3 and 5), on no budget the caller holds. No
+// family established is [forgeapi.CodeFamilyUndetected] with [forgeapi.FamilyUnknown] and the
+// last read's status and figures; a context ending, a constructor's refusal and an attempt the
+// [forgeapi.WithAttemptObserver] hook refused return unchanged; Open closes all but its answer.
 //
 //nolint:gocritic // hugeParam: the connection record is the published signature's own parameter
 func Open(ctx context.Context, conn forgeapi.Connection, opts ...forgeapi.Option) (forgeapi.Core, forgeapi.Family, error) {
@@ -41,6 +37,9 @@ func Open(ctx context.Context, conn forgeapi.Connection, opts ...forgeapi.Option
 			return client, candidate.family, nil
 		}
 		client.Close()
+		if transport.IsRefused(err) {
+			return nil, forgeapi.FamilyUnknown, err
+		}
 		refused = err
 	}
 	return nil, forgeapi.FamilyUnknown, undetected(refused)
@@ -87,13 +86,18 @@ func undetected(err error) error {
 		return err
 	}
 	return &forgeapi.Error{
-		Op:        fe.Op,
-		Code:      forgeapi.CodeFamilyUndetected,
-		Family:    forgeapi.FamilyUnknown,
-		Status:    fe.Status,
-		Kind:      fe.Kind,
-		Retryable: transport.Retryable(fe.Kind, fe.Status),
-		Message:   fe.Message,
-		DiagID:    fe.DiagID,
+		Op:         fe.Op,
+		Code:       forgeapi.CodeFamilyUndetected,
+		Family:     forgeapi.FamilyUnknown,
+		Status:     fe.Status,
+		Kind:       fe.Kind,
+		Retryable:  transport.Retryable(fe.Kind, fe.Status),
+		Message:    fe.Message,
+		RetryAfter: fe.RetryAfter,
+		Pool:       fe.Pool,
+		Remaining:  fe.Remaining,
+		Reset:      fe.Reset,
+		Secondary:  fe.Secondary,
+		DiagID:     fe.DiagID,
 	}
 }

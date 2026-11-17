@@ -55,6 +55,9 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 	if sentinel := transport.ContextSentinel(err); sentinel != nil {
 		return forgeapi.ConnectionCaps{}, sentinel
 	}
+	if transport.IsRefused(err) {
+		return forgeapi.ConnectionCaps{}, err
+	}
 	if header.Get(headerMeta) == "" {
 		return forgeapi.ConnectionCaps{}, c.undetected(ctx, op, err)
 	}

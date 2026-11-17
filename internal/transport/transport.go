@@ -1691,6 +1691,14 @@ func IsDeferred(err error) bool {
 	return ok && fe.Kind == forgeapi.KindRateLimited && fe.Status == 0
 }
 
+// IsRefused reports whether an error is an attempt the attempt hook refused
+// ([forgeapi.CodeAttemptRefused]). Nothing was sent, so it says nothing about the
+// instance: a caller returns it unchanged rather than reading it as an answer.
+func IsRefused(err error) bool {
+	fe, ok := errors.AsType[*forgeapi.Error](err)
+	return ok && fe.Code == forgeapi.CodeAttemptRefused
+}
+
 // IsThrottled reports whether an error is a throttle the INSTANCE answered rather
 // than a deferral this library chose, which the status is what separates: a deferral
 // sent nothing and so carries none. It is what lets a fold refused by a throttle mark

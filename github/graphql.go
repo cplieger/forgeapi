@@ -614,12 +614,13 @@ func (c *Client) countEnvelope(errs []docError) {
 }
 
 // degradeOn marks the connection degraded where the failure was the document's own. A
-// credential failure, a throttle, an absence and a transport failure are not: a
-// connection that meets one of those would answer the document on the next call, and
-// degrading it would spend the rest of its life on REST for a reason that has passed.
+// credential failure, a throttle, an absence, a transport failure and a refused
+// attempt are not: a connection that meets one of those would answer the document on
+// the next call, and degrading it would spend the rest of its life on REST for a
+// reason that has passed.
 func (c *Client) degradeOn(err error) {
 	var fe *forgeapi.Error
-	if !asForgeError(err, &fe) {
+	if !asForgeError(err, &fe) || transport.IsRefused(err) {
 		return
 	}
 	switch fe.Kind {

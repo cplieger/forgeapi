@@ -46,9 +46,8 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 		return *caps, nil
 	}
 	if c.sawWitness() {
-		c.askVersions(ctx, op)
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return forgeapi.ConnectionCaps{}, ctxErr
+		if err := c.askVersions(ctx, op); err != nil {
+			return forgeapi.ConnectionCaps{}, err
 		}
 		return c.holdCaps(rerunEvidence(forgeapi.EvidenceResponseHeader,
 			"a response on this connection carried "+headerRequestID+", which this product sends on every response including a refusal")), nil
@@ -58,12 +57,14 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 	if sentinel := transport.ContextSentinel(err); sentinel != nil {
 		return forgeapi.ConnectionCaps{}, sentinel
 	}
+	if transport.IsRefused(err) {
+		return forgeapi.ConnectionCaps{}, err
+	}
 	if !c.sawWitness() {
 		return forgeapi.ConnectionCaps{}, c.undetected(ctx, op, err)
 	}
-	c.askVersions(ctx, op)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return forgeapi.ConnectionCaps{}, ctxErr
+	if askErr := c.askVersions(ctx, op); askErr != nil {
+		return forgeapi.ConnectionCaps{}, askErr
 	}
 	source, detail := forgeapi.EvidenceMetadata, "the metadata endpoint answered for "+productName(meta.InstalledVersion)
 	if err != nil {
@@ -84,13 +85,18 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 // A read the credential cannot make, a route an instance does not serve and a set the
 // pinned version is absent from all leave the pin OFF, which is why none of them is a
 // failure of connection setup: the instance then answers under its own default, and
-// that is the arm an appliance below the pinned version takes.
-func (c *Client) askVersions(ctx context.Context, op string) {
+// that is the arm an appliance below the pinned version takes. It answers only the
+// caller's context ending and a refused attempt, which asked the instance nothing.
+func (c *Client) askVersions(ctx context.Context, op string) error {
 	var served []string
-	if _, err := c.readJSON(ctx, op, versionsPath, nil, &served); err != nil {
-		return
+	_, err := c.readJSON(ctx, op, versionsPath, nil, &served)
+	switch {
+	case transport.IsRefused(err):
+		return err
+	case err == nil:
+		c.holdPin(slices.Contains(served, APIVersion))
 	}
-	c.holdPin(slices.Contains(served, APIVersion))
+	return ctx.Err()
 }
 
 // holdCaps records this connection's one-time answers and returns them.
