@@ -3230,6 +3230,76 @@ var Throttles = []Throttle{
 	{Product: Forgejo, Status: 429, Says: "a rate limit"},
 }
 
+// Figure is where one product's answers carry one rate-limit figure, which a
+// failed answer's Error reports and which BudgetState's Pools and PoolOf read
+// from every answer. Says carries the reading and its citation.
+type Figure struct {
+	Product Product
+	// Field is the figure as Error names it, one of FigureFields.
+	Field string
+	// Header is the response header carrying the figure, empty where the
+	// product's answers carry none, and Value a value it arrives with.
+	Header string
+	Value  string
+	// Param is the parameter of Header's structured value carrying the figure,
+	// empty where the whole value does.
+	Param string
+	// Message is a phrase of a refusal's message member that sets Secondary,
+	// matched in any case, empty where none does.
+	Message string
+	Says    string
+	// Relative reports a Reset counting seconds after the answer rather than
+	// epoch seconds.
+	Relative bool
+}
+
+// FigureFields is every figure a product's Figures row states, in rendering
+// order.
+var FigureFields = [...]string{"Pool", "Remaining", "Reset", "Secondary"}
+
+// Figures is every product's rate-limit figures, one row per product per
+// field.
+var Figures = []Figure{
+	{
+		Product: GitHub, Field: "Pool", Header: "X-RateLimit-Resource", Value: "core",
+		Says: "the pool the answer drew on, `core` for REST, `graphql` for documents and `search` for searches, and empty on a secondary limit, which holds every pool " +
+			"([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit))",
+	},
+	{Product: GitHub, Field: "Remaining", Header: "X-RateLimit-Remaining", Value: "0", Says: "the units left in that pool's window: requests on REST, points on documents"},
+	{Product: GitHub, Field: "Reset", Header: "X-RateLimit-Reset", Value: "4102444800", Says: "the instant that window renews, in epoch seconds"},
+	{
+		Product: GitHub, Field: "Secondary", Header: "Retry-After", Value: "60", Message: "secondary rate limit",
+		Says: "a secondary limit, set on a 403 or 429 carrying either signal whatever X-RateLimit-Remaining reads " +
+			"([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits))",
+	},
+	{
+		Product: GitLab, Field: "Pool", Header: "RateLimit-Name", Value: "throttle_authenticated_api",
+		Says: "the throttle the request counted against, the most restrictive one: on gitlab.com `throttle_authenticated_api` for most routes " +
+			"([response headers](https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/#response-headers))",
+	},
+	{Product: GitLab, Field: "Remaining", Header: "RateLimit-Remaining", Value: "0", Says: "the requests left in that throttle's window"},
+	{Product: GitLab, Field: "Reset", Header: "RateLimit-Reset", Value: "4102444800", Says: "the instant that window renews, in epoch seconds"},
+	{Product: GitLab, Field: "Secondary", Says: "never set: every limit this product answers names its throttle"},
+	{Product: Gitea, Field: "Pool", Says: "empty: the product sends no budget signal (measured on gitea.com)"},
+	{Product: Gitea, Field: "Remaining", Says: "`BudgetRemainingUnknown`, since the product sends no budget signal"},
+	{Product: Gitea, Field: "Reset", Says: "the zero time, since the product sends no budget signal"},
+	{Product: Gitea, Field: "Secondary", Says: "never set: the product has no secondary limit"},
+	{
+		Product: Forgejo, Field: "Pool",
+		Says: "empty: the header's one figure is the whole service's, reported under no name, though the header names its policy (`baseline` on codeberg.org, measured)",
+	},
+	{
+		Product: Forgejo, Field: "Remaining", Header: "RateLimit", Param: "r", Value: `"baseline";r=0;t=600`,
+		Says: "the requests left in the window " +
+			"([RateLimit header fields](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/))",
+	},
+	{
+		Product: Forgejo, Field: "Reset", Header: "RateLimit", Param: "t", Value: `"baseline";r=0;t=600`, Relative: true,
+		Says: "the instant the window renews, counted in seconds after the answer, and the zero time where the header has no `t`",
+	},
+	{Product: Forgejo, Field: "Secondary", Says: "never set: the product has no secondary limit"},
+}
+
 // Revalidation is what one product does with a conditional read of a REST route:
 // the validators it sends, what a not-modified answer bills, and whether a
 // document read can be revalidated. NotModifiedPrice is in the product's own

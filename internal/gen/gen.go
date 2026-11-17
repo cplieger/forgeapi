@@ -431,8 +431,43 @@ func renderSupport() []byte {
 		out.WriteString("\n")
 	}
 	renderThrottles(&out)
+	renderFigures(&out)
 	renderRevalidations(&out)
 	return []byte(out.String())
+}
+
+// renderFigures writes where each product's answers carry the rate-limit
+// figures a failed answer's Error and the client's budget report.
+func renderFigures(out *strings.Builder) {
+	out.WriteString("\n## Rate-limit figures\n\n")
+	out.WriteString("A failed answer's `Error` carries the figures its answer states: `Pool`, `Remaining`, `Reset` and `Secondary`. ")
+	out.WriteString("Where the answer states none, `Pool` is empty, `Remaining` reads `BudgetRemainingUnknown` and `Reset` is the zero time. ")
+	out.WriteString("`BudgetState().Pools` and each client's `PoolOf` read the pool and its figures from every answer.\n\n")
+	out.WriteString("| Product | Figure | Header | Answer |\n| --- | --- | --- | --- |\n")
+	for _, product := range spec.Products {
+		for _, field := range spec.FigureFields {
+			for _, f := range spec.Figures {
+				if f.Product == product && f.Field == field {
+					fmt.Fprintf(out, "| %s | `%s` | %s | %s |\n", product, field, figureSource(&f), f.Says)
+				}
+			}
+		}
+	}
+}
+
+// figureSource is the Header cell of one figure's row.
+func figureSource(f *spec.Figure) string {
+	header := "none"
+	switch {
+	case f.Param != "":
+		header = "`" + f.Header + "`, its `" + f.Param + "` parameter"
+	case f.Header != "":
+		header = "`" + f.Header + "`"
+	}
+	if f.Message != "" {
+		header += ", or a message carrying \"" + f.Message + "\""
+	}
+	return header
 }
 
 // renderRevalidations writes what each product does with a conditional read, which
