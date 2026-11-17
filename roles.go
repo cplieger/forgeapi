@@ -522,15 +522,13 @@ type PullRequests interface {
 	// current one and pins that; a pull request the forge answers with no head
 	// is refused with [CodeMissingSHA] before any write.
 	//
-	// The run re-run is the one the forge links to the checks verdict on the head.
-	// On GitHub, Gitea and Forgejo that verdict is the commit's rollup or combined
-	// status, which counts every run on the head SHA, so the run is the first on it
-	// that failed or was cancelled, whatever its event or pull request, looked for on
-	// up to three pages at the most rows the instance serves on one. On GitLab it is
-	// the head pipeline GitLab matches to the head (its departure below). Before any
-	// write, a head with nothing that failed or was cancelled is refused with
-	// [CodeRunNotFailed], and one whose third page came back full with none of them
-	// qualifying with [CodeRunPageTruncated].
+	// The run re-run is the one the forge links to the head's checks verdict. On
+	// GitHub, Gitea and Forgejo that is the commit's rollup or combined status, which
+	// counts every run on the head SHA, so the first run on it that failed or was
+	// cancelled, whatever its event or pull request, read on up to three pages at the
+	// most rows the instance serves; on GitLab, the head pipeline GitLab matches to the
+	// head (its departure below). Before any write, a head with no such run is refused
+	// with [CodeRunNotFailed], or [CodeRunPageTruncated] where its third page was full.
 	//
 	// Whether an instance can do this at all is [CapRerunChecks], read from
 	// [ConnectionCaps]: an instance with no re-run verb reports the capability
