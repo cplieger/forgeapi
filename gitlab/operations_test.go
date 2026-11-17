@@ -35,8 +35,8 @@ const (
 
 	pipelinesBody = `[{"id": 77, "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d", "status": "failed", "ref": "main"}]`
 
-	// headPipelineBody is the merge request whose head pipeline failed on its head,
-	// which the re-run reads for the pipeline it retries.
+	// headPipelineBody is the REST merge request whose stored head pipeline failed on
+	// its head, which a re-run on a connection whose documents are refused reads.
 	headPipelineBody = `{"iid": 1, "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d", "source_project_id": 1, "target_project_id": 1,
   "head_pipeline": {"id": 77, "project_id": 1, "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d", "ref": "example-feature", "status": "failed"}}`
 
@@ -54,14 +54,16 @@ const (
 // that sent the decoded namespace path would arrive at three path segments and match
 // none of these.
 const (
-	projectRouteKey   = "GET /api/v4/projects/" + testEncoded
-	issuesRoute       = "GET /api/v4/projects/" + testEncoded + "/issues"
-	releasesRoute     = "GET /api/v4/projects/" + testEncoded + "/releases"
-	labelsRoute       = "GET /api/v4/projects/" + testEncoded + "/labels"
-	statusesRoute     = "GET /api/v4/projects/" + testEncoded + "/repository/commits/" + testHeadSHA + "/statuses"
-	mergeRoute        = "PUT /api/v4/projects/" + testEncoded + "/merge_requests/1/merge"
-	pipelinesRoute    = "GET /api/v4/projects/" + testEncoded + "/pipelines"
-	retryRoute        = "POST /api/v4/projects/" + testEncoded + "/pipelines/77/retry"
+	projectRouteKey = "GET /api/v4/projects/" + testEncoded
+	issuesRoute     = "GET /api/v4/projects/" + testEncoded + "/issues"
+	releasesRoute   = "GET /api/v4/projects/" + testEncoded + "/releases"
+	labelsRoute     = "GET /api/v4/projects/" + testEncoded + "/labels"
+	statusesRoute   = "GET /api/v4/projects/" + testEncoded + "/repository/commits/" + testHeadSHA + "/statuses"
+	mergeRoute      = "PUT /api/v4/projects/" + testEncoded + "/merge_requests/1/merge"
+	pipelinesRoute  = "GET /api/v4/projects/" + testEncoded + "/pipelines"
+	retryRoute      = "POST /api/v4/projects/" + testEncoded + "/pipelines/77/retry"
+	// rerunDocRoute is the key the RerunHead document is answered and recorded under.
+	rerunDocRoute     = documentRoute + " RerunHead"
 	metadataRoute     = "GET /api/v4/metadata"
 	myMergeRoute      = "GET /api/v4/merge_requests"
 	myIssuesRoute     = "GET /api/v4/issues"
@@ -353,7 +355,7 @@ func TestEveryOperationSpendsThePriceItPublishes(t *testing.T) {
 		groupIssuesRoute:  "[" + crossIssueBody + "]",
 		metadataRoute:     metadataBody,
 		pipelinesRoute:    pipelinesBody,
-		readRoute:         headPipelineBody,
+		rerunDocRoute:     rerunHeadAnswer(testHeadSHA, docHeadPipeline(1, "FAILED")),
 		retryRoute:        `{}`,
 		mergeRoute:        mergedBody,
 		"GET /api/v4/user": `{"username": "example-user", "name": "Example User",
@@ -432,7 +434,7 @@ func TestEveryOperationSpendsThePriceItPublishes(t *testing.T) {
 			before := h.instance.count()
 			err := h.client.RerunFailedChecks(t.Context(), repo, testPR(), testHeadSHA)
 			if spent := h.instance.count() - before; spent != 2 {
-				t.Errorf("RerunFailedChecks sent %d request(s) after the capability was resolved, want 2: the retry verb is addressed by a pipeline id, which the merge request read names",
+				t.Errorf("RerunFailedChecks sent %d request(s) after the capability was resolved, want 2: the retry verb is addressed by a pipeline id, which the RerunHead document names",
 					spent)
 			}
 			return err
@@ -458,7 +460,7 @@ func TestTheCapabilityAccessorIsResolvedOncePerConnection(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		metadataRoute: metadataBody,
 		documentRoute: docAcceptanceAnswer,
-		readRoute:     headPipelineBody,
+		rerunDocRoute: rerunHeadAnswer(testHeadSHA, docHeadPipeline(1, "FAILED")),
 		retryRoute:    `{}`,
 	})
 	h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
@@ -504,7 +506,7 @@ func TestTheReRunCostsTheSameOnAFreshConnectionAsOnAUsedOne(t *testing.T) {
 	routes := map[string]string{
 		metadataRoute: metadataBody,
 		documentRoute: docAcceptanceAnswer,
-		readRoute:     headPipelineBody,
+		rerunDocRoute: rerunHeadAnswer(testHeadSHA, docHeadPipeline(1, "FAILED")),
 		retryRoute:    `{}`,
 	}
 	for _, test := range []struct {
@@ -534,7 +536,7 @@ func TestTheReRunCostsTheSameOnAFreshConnectionAsOnAUsedOne(t *testing.T) {
 			}
 			spent := h.instance.count() - before
 			if spent != 2 {
-				t.Errorf("RerunFailedChecks sent %d request(s), want 2: the merge request read and the retry, which is every request this row prices", spent)
+				t.Errorf("RerunFailedChecks sent %d request(s), want 2: the RerunHead document and the retry, which is every request this row prices", spent)
 			}
 			for _, sent := range h.instance.arrived()[before:] {
 				if sent == metadataRoute || sent == documentRoute {

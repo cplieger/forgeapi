@@ -12,8 +12,8 @@ import (
 )
 
 // walkedProducts are the products whose re-run walks the head's runs for one that
-// failed; GitLab retries the merge request's head pipeline instead, held by
-// TestAGitLabReRunRetriesTheMergeRequestsHeadPipeline.
+// failed; GitLab retries the head pipeline it matches to the merge request's head
+// instead, held by TestAGitLabReRunRetriesThePipelineGitLabMatchesToTheHead.
 var walkedProducts = []spec.Product{spec.GitHub, spec.Gitea, spec.Forgejo}
 
 // runPageMaximum is the page size each product's re-run reads its runs at: the REST
@@ -162,6 +162,73 @@ func TestAReRunWalksTheHeadsRunsAtThePageMaximum(t *testing.T) {
 	}
 }
 
+// linked is a failed run on the head as a run triggered by event answers it, with the
+// numbers of the pull requests the forge links it to and the repository its head
+// came from.
+func linked(p spec.Product, id int, event string, pulls []int, headRepo string) map[string]any {
+	row := runRow(p, id, headSHA, true)
+	links := make([]map[string]any, 0, len(pulls))
+	for _, n := range pulls {
+		links = append(links, map[string]any{"number": n})
+	}
+	row["event"], row["trigger_event"] = event, event
+	row["pull_requests"] = links
+	row["head_repository"] = map[string]any{"full_name": headRepo}
+	return row
+}
+
+// Choosing which run a re-run targets: on GitHub, Gitea and Forgejo the run re-run is
+// a failed or cancelled run on the pull request's current head SHA, whatever its event
+// or pull request, because the checks verdict a consumer shows red is that commit's
+// rollup or combined status, which counts every run on the commit. A run's pull
+// request link is no filter: GitHub answers a fork pull request's run with an empty
+// pull_requests array (https://github.com/github/docs/issues/22501).
+func TestAReRunTargetsAFailedRunOnThePullRequestsHeadSHA(t *testing.T) {
+	const fork = "example-fork/example"
+	for _, p := range walkedProducts {
+		size := runPageMaximum[p]
+		for _, test := range []struct {
+			name  string
+			pages [][]map[string]any
+			rerun int
+		}{
+			{name: "the_pull_requests_own_run", pages: [][]map[string]any{{linked(p, 7, "pull_request", []int{prNumber}, selector)}}, rerun: 7},
+			{name: "another_pull_requests_failed_run_on_the_same_sha_re_run_since_the_commits_verdict_counts_it", pages: [][]map[string]any{{linked(p, 7, "pull_request", []int{prNumber + 1}, selector)}}, rerun: 7},
+			{name: "a_fork_pull_requests_run_with_no_pull_request_link", pages: [][]map[string]any{{linked(p, 7, "pull_request", nil, fork)}}, rerun: 7},
+			{name: "a_push_run_on_the_head_re_run_since_the_commits_verdict_counts_it", pages: [][]map[string]any{{linked(p, 7, "push", nil, selector)}}, rerun: 7},
+			{name: "a_green_run_refused", pages: [][]map[string]any{passingRows(p, 2)}},
+			{name: "a_failed_run_past_page_1", pages: [][]map[string]any{passingRows(p, size), {linked(p, 7, "pull_request", []int{prNumber}, selector)}}, rerun: 7},
+		} {
+			t.Run(string(p)+"_"+test.name, func(t *testing.T) {
+				routes := make([]wire, 0, len(test.pages))
+				for _, rows := range test.pages {
+					routes = append(routes, runPage(t, p, rows, 1))
+				}
+				sent, err := rerunOver(t, p, headSHA, routes...)
+				if test.rerun == 0 {
+					var fe *forgeapi.Error
+					if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeRunNotFailed {
+						t.Errorf("RerunFailedChecks over passed runs on %s = %v, want code %q", p, err, forgeapi.CodeRunNotFailed)
+					}
+					if w := writes(sent); len(w) != 0 {
+						t.Errorf("RerunFailedChecks over passed runs on %s wrote %s, want nothing", p, describeRequests(w))
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("RerunFailedChecks on %s = %v, want the re-run of run %d", p, err, test.rerun)
+				}
+				if got := len(runReads(sent)); got != len(test.pages) {
+					t.Errorf("RerunFailedChecks on %s read the runs %d times, want %d", p, got, len(test.pages))
+				}
+				if w := writes(sent); len(w) != 1 || !reRunOf(w, test.rerun) {
+					t.Errorf("RerunFailedChecks on %s wrote %s, want the re-run of run %d alone", p, describeRequests(w), test.rerun)
+				}
+			})
+		}
+	}
+}
+
 // A re-run with no pin reads the pull request's current head and filters by it, so a
 // failed run of another branch the instance answers beside it is never re-run.
 func TestAReRunWithNoPinReRunsARunOfThePullRequestsHead(t *testing.T) {
@@ -197,8 +264,19 @@ func TestAReRunWithNoPinReRunsARunOfThePullRequestsHead(t *testing.T) {
 // gitlabProject is the canonical project as GitLab's routes address it.
 var gitlabProject = "/api/v4/projects/" + strings.ReplaceAll(selector, "/", "%2F")
 
-// headPipelineRead is GitLab's read of the canonical merge request on head, its head
-// pipeline answered as pipeline, or null where pipeline is nil.
+// rerunHeadAnswer is GitLab's RerunHead document answered for the canonical project,
+// id 1, whose merge request carries head and the matched head pipeline pipeline, or
+// null where pipeline is nil.
+func rerunHeadAnswer(t *testing.T, head string, pipeline map[string]any) wire {
+	t.Helper()
+	mr := map[string]any{"diffHeadSha": head, "headPipeline": pipeline}
+	return wire{GraphQL: true, Status: http.StatusOK, Body: jsonBody(t, map[string]any{
+		"data": map[string]any{"project": map[string]any{"id": "gid://gitlab/Project/1", "mergeRequest": mr}},
+	})}
+}
+
+// headPipelineRead is GitLab's REST read of the canonical merge request on head, its
+// stored head pipeline answered as pipeline, or null where pipeline is nil.
 func headPipelineRead(t *testing.T, head string, pipeline map[string]any) wire {
 	t.Helper()
 	return wire{
@@ -207,57 +285,116 @@ func headPipelineRead(t *testing.T, head string, pipeline map[string]any) wire {
 	}
 }
 
-// GitLab's checks verdict is the merge request's head pipeline, so its re-run retries
-// that pipeline, at its own project: on merged results it runs on a merge commit of
-// the head and on a fork's merge request in the fork's project, the two shapes a
-// listing filtered by the head misses. The merged results shape is the documented
-// single merge request example's (https://docs.gitlab.com/api/merge_requests/), whose
-// head pipeline's sha differs from the merge request's and whose ref is
-// refs/merge-requests/:iid/merge.
-func TestAGitLabReRunRetriesTheMergeRequestsHeadPipeline(t *testing.T) {
-	const mergeCommit = "1604b0c46c395822e4e9478777f8e54ac99fe5b9"
-	pipeline := func(project int, sha, ref, status string) map[string]any {
-		return map[string]any{"id": 538, "project_id": project, "sha": sha, "ref": ref, "status": status}
+// gitlabRerunOver is the re-run of the canonical merge request on GitLab, pinned to
+// pin, after connection setup, over the recorded case with its RerunHead answer
+// replaced by resolve, or, on a connection whose setup question is refused, with the
+// document routes replaced by that refusal and resolve, the REST merge request read.
+func gitlabRerunOver(t *testing.T, pin string, degraded bool, resolve wire) ([]sent, error) {
+	t.Helper()
+	f, err := loadFixture(spec.GitLab, "PullRequests.RerunFailedChecks")
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	refused := wire{GraphQL: true, Status: http.StatusOK, Body: jsonBody(t, map[string]any{
+		"errors": []map[string]any{{"message": "Field 'diffHeadSha' doesn't exist on type 'MergeRequest'", "extensions": map[string]any{"code": "undefinedField"}}},
+	})}
+	var routes []wire
+	documents := 0
+	for _, w := range f.Routes {
+		switch {
+		case !w.GraphQL:
+			routes = append(routes, w)
+		case documents == 0 && degraded:
+			routes = append(routes, refused, resolve)
+		case documents == 0:
+			routes = append(routes, w)
+		case !degraded:
+			routes = append(routes, resolve)
+		}
+		if w.GraphQL {
+			documents++
+		}
 	}
 	forkRetry := wire{Method: http.MethodPost, Path: "/api/v4/projects/99/pipelines/538/retry", Status: http.StatusCreated, Body: jsonBody(t, map[string]any{})}
+	srv, rec := newFixtureServer(t, fixture{path: "inline", Routes: append(routes, forkRetry)})
+	client := pagedClient(t, spec.GitLab, srv, forgeapi.WithMutations(true))
+	if _, err := client.(forgeapi.Capabilities).ConnectionCaps(t.Context()); err != nil {
+		t.Fatalf("Setup: ConnectionCaps = %v", err)
+	}
+	err = client.(forgeapi.PullRequests).RerunFailedChecks(t.Context(), repoRef(spec.GitLab), prRef(spec.GitLab), pin)
+	return rec.since(0), err
+}
+
+// GitLab's re-run retries the head pipeline GitLab itself matches to the merge
+// request's head, at its own project: GraphQL headPipeline is diff_head_pipeline,
+// matched by sha or source_sha (app/graphql/types/merge_request_type.rb), so a merged
+// results pipeline of the head answers, on a merge commit, and one of an earlier
+// head answers null. The REST merge request answers the stored head pipeline
+// unmatched, so where the documents are refused one on another commit is refused.
+func TestAGitLabReRunRetriesThePipelineGitLabMatchesToTheHead(t *testing.T) {
+	const mergeCommit = "1604b0c46c395822e4e9478777f8e54ac99fe5b9"
+	matched := func(project int, status string) map[string]any {
+		return map[string]any{"id": "gid://gitlab/Ci::Pipeline/538", "status": status, "project": map[string]any{"id": fmt.Sprintf("gid://gitlab/Project/%d", project)}}
+	}
+	stored := func(sha, ref, status string) map[string]any {
+		return map[string]any{"id": 538, "project_id": 1, "sha": sha, "ref": ref, "status": status}
+	}
+	ownRetry := gitlabProject + "/pipelines/538/retry"
 	for _, test := range []struct {
-		name, pin string
-		read      wire
-		retry     string
-		code      string
+		name, pin   string
+		degraded    bool
+		resolve     func(*testing.T) wire
+		retry, code string
 	}{
 		{
-			name: "a_merged_results_pipeline", pin: headSHA,
-			read:  headPipelineRead(t, headSHA, pipeline(1, mergeCommit, "refs/merge-requests/1/merge", "failed")),
-			retry: gitlabProject + "/pipelines/538/retry",
+			name: "a_merged_results_pipeline_matched_to_the_head", pin: headSHA,
+			resolve: func(t *testing.T) wire { return rerunHeadAnswer(t, headSHA, matched(1, "FAILED")) },
+			retry:   ownRetry,
 		},
 		{
 			name: "a_fork_pipeline_in_the_forks_project", pin: headSHA,
-			read:  headPipelineRead(t, headSHA, pipeline(99, headSHA, sourceBranch, "failed")),
-			retry: forkRetry.Path,
+			resolve: func(t *testing.T) wire { return rerunHeadAnswer(t, headSHA, matched(99, "FAILED")) },
+			retry:   "/api/v4/projects/99/pipelines/538/retry",
+		},
+		{
+			name: "an_earlier_heads_merged_results_pipeline_gitlab_answers_null", pin: headSHA,
+			resolve: func(t *testing.T) wire { return rerunHeadAnswer(t, headSHA, nil) },
+			code:    forgeapi.CodeRunNotFailed,
 		},
 		{
 			name: "a_pin_the_merge_request_moved_past", pin: mergeCommit,
-			read: headPipelineRead(t, headSHA, pipeline(1, headSHA, sourceBranch, "failed")),
-			code: forgeapi.CodeStaleHead,
+			resolve: func(t *testing.T) wire { return rerunHeadAnswer(t, headSHA, matched(1, "FAILED")) },
+			code:    forgeapi.CodeStaleHead,
 		},
 		{
-			name: "a_head_pipeline_that_passed", pin: headSHA,
-			read: headPipelineRead(t, headSHA, pipeline(1, headSHA, sourceBranch, "success")),
-			code: forgeapi.CodeRunNotFailed,
+			name: "a_green_pipeline", pin: headSHA,
+			resolve: func(t *testing.T) wire { return rerunHeadAnswer(t, headSHA, matched(1, "SUCCESS")) },
+			code:    forgeapi.CodeRunNotFailed,
 		},
 		{
-			name: "no_head_pipeline", pin: headSHA,
-			read: headPipelineRead(t, headSHA, nil),
+			name: "documents_refused_a_stored_pipeline_on_the_head", pin: headSHA, degraded: true,
+			resolve: func(t *testing.T) wire { return headPipelineRead(t, headSHA, stored(headSHA, sourceBranch, "failed")) },
+			retry:   ownRetry,
+		},
+		{
+			name: "documents_refused_a_stored_pipeline_on_another_commit", pin: headSHA, degraded: true,
+			resolve: func(t *testing.T) wire {
+				return headPipelineRead(t, headSHA, stored(mergeCommit, "refs/merge-requests/1/merge", "failed"))
+			},
 			code: forgeapi.CodeRunNotFailed,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			sent, err := rerunOver(t, spec.GitLab, test.pin, test.read, forkRetry)
-			if reads := runReads(sent); len(reads) != 0 {
-				t.Errorf("RerunFailedChecks on GitLab read the pipelines as %s, want the merge request read alone", describeRequests(reads))
+			arrived, err := gitlabRerunOver(t, test.pin, test.degraded, test.resolve(t))
+			if reads := runReads(arrived); len(reads) != 0 {
+				t.Errorf("RerunFailedChecks on GitLab read the pipelines as %s, want the merge request resolved alone", describeRequests(reads))
 			}
-			w := writes(sent)
+			var w []sent
+			for _, s := range writes(arrived) {
+				if !strings.HasSuffix(s.path, "/graphql") {
+					w = append(w, s)
+				}
+			}
 			if test.code != "" {
 				var fe *forgeapi.Error
 				if !asForgeError(err, &fe) || fe.Code != test.code {

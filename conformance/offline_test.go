@@ -354,9 +354,9 @@ var decides = map[string]bool{
 }
 
 // decidesNowhere are the cells of an operation above whose request carries no
-// decision on that product: GitLab's re-run takes its pipeline off the merge request
-// rather than filtering a listing by the head, a pick
-// TestAGitLabReRunRetriesTheMergeRequestsHeadPipeline holds.
+// decision on that product: GitLab's re-run takes the pipeline GitLab matches to the
+// merge request's head rather than filtering a listing by the head, a pick
+// TestAGitLabReRunRetriesThePipelineGitLabMatchesToTheHead holds.
 var decidesNowhere = map[spec.Product]map[string]bool{spec.GitLab: {"PullRequests.RerunFailedChecks": true}}
 
 // TestEveryRequestDecisionTheDesignNamesIsStated holds the table to the operations

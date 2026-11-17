@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded connection-caps response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; no sandbox capture exists for this mutation on this product, so the merge request read's answer is the single merge request answer this product's merge requests API documentation gives as its example, trimmed to its head and head pipeline, and the retry's answer is the same product's read capture, which this product's swagger document gives the mutation as its response schema; the first two routes are connection setup, whose bounded schema question was measured anonymously against this product's own public instance on 2026-09-20 and answers a null project beside the complexity charged; this call itself reads the merge request and retries its head pipeline, on a fresh connection as on a used one, because the capability it is gated on is the connection's and is held from setup",
+  "//": "cut from a recorded connection-caps response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; no sandbox capture exists for this mutation on this product, so the RerunHead document's answer is cut from that document measured anonymously against this product's own public instance, read 2026-11-17, on a merge request whose matched head pipeline ran on a merge commit of its head, its status set to failed and its ids replaced with the canonical project's and pipeline 1, and the retry's answer is the same product's read capture, which this product's swagger document gives the mutation as its response schema; the first two routes are connection setup, whose bounded schema question was measured anonymously against the same instance on 2026-11-17 and answers a null project beside the complexity charged; this call itself sends the RerunHead document and retries the pipeline it names, on a fresh connection as on a used one, because the capability it is gated on is the connection's and is held from setup",
   "routes": [
     {
       "method": "GET",
@@ -25,30 +25,37 @@
         "data": {
           "project": null,
           "queryComplexity": {
-            "score": 53,
+            "score": 74,
             "limit": 200
           }
         }
       }
     },
     {
-      "method": "GET",
-      "path": "/api/v4/projects/example%2Fexample/merge_requests/1",
+      "graphql": true,
       "status": 200,
       "headers": {
         "Content-Type": "application/json"
       },
       "body": {
-        "iid": 1,
-        "source_project_id": 1,
-        "target_project_id": 1,
-        "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
-        "head_pipeline": {
-          "id": 1,
-          "project_id": 1,
-          "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
-          "ref": "example-feature",
-          "status": "failed"
+        "data": {
+          "project": {
+            "id": "gid://gitlab/Project/1",
+            "mergeRequest": {
+              "diffHeadSha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+              "headPipeline": {
+                "id": "gid://gitlab/Ci::Pipeline/1",
+                "status": "FAILED",
+                "project": {
+                  "id": "gid://gitlab/Project/1"
+                }
+              }
+            }
+          },
+          "queryComplexity": {
+            "score": 13,
+            "limit": 200
+          }
         }
       }
     },

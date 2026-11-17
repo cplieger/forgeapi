@@ -8,6 +8,20 @@ import (
 	"github.com/cplieger/forgeapi/v3"
 )
 
+// RunTarget is the run or pipeline a re-run of a pull request's failed checks
+// retries: its id, and the id of the project holding it where that is not the
+// addressed repository, 0 where it is.
+type RunTarget struct {
+	ID      int64
+	Project int64
+}
+
+// RerunResolver is choosing which run a re-run targets, the one signature every
+// family implements for [forgeapi.PullRequests.RerunFailedChecks]: the run the
+// forge itself links to the pull request's checks verdict on its current head, the
+// head pinned where pin is not empty, or a refusal sent before any write.
+type RerunResolver func(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, pin string) (RunTarget, error)
+
 // MaxRunPages is the most pages a re-run's resolving read walks for a run that
 // failed. The GitHub, Gitea and Forgejo prices for
 // [forgeapi.PullRequests.RerunFailedChecks] in internal/spec count this many reads.

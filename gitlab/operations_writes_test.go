@@ -151,8 +151,9 @@ func TestAMergeSendsTheSquashFlagItsIntentNames(t *testing.T) {
 	}
 }
 
-// headPipelineRequest is a merge request on head whose head pipeline is pipeline,
-// at a target project the addressed one's id names, or none where target is 0.
+// headPipelineRequest is a REST merge request on head whose stored head pipeline is
+// pipeline, at a target project the addressed one's id names, or none where target
+// is 0.
 func headPipelineRequest(head string, target int, pipeline string) string {
 	body := `{"iid": 1, "sha": "` + head + `", "source_project_id": 1`
 	if target != 0 {
@@ -161,8 +162,8 @@ func headPipelineRequest(head string, target int, pipeline string) string {
 	return body + `, "head_pipeline": ` + pipeline + `}`
 }
 
-// headPipeline is one head pipeline as the merge request read answers it, with no
-// project id where project is 0.
+// headPipeline is one stored head pipeline as the REST merge request answers it, with
+// no project id where project is 0.
 func headPipeline(project int, sha, ref, status string) string {
 	body := `{"id": 77`
 	if project != 0 {
@@ -171,11 +172,98 @@ func headPipeline(project int, sha, ref, status string) string {
 	return body + `, "sha": "` + sha + `", "ref": "` + ref + `", "status": "` + status + `"}`
 }
 
-// The re-run retries the merge request's head pipeline, the one its checks verdict
-// reads: on merged results it ran on a merge commit of the head, on a fork's merge
-// request in the fork's project, and neither is a row of the project's pipelines on
-// the head. Every refusal is sent before any write, and no pipeline listing is read.
-func TestTheReRunRetriesTheMergeRequestsHeadPipeline(t *testing.T) {
+// rerunHeadAnswer is the RerunHead document's answer for the canonical project, id 1,
+// whose merge request carries head and the matched head pipeline pipeline.
+func rerunHeadAnswer(head, pipeline string) string {
+	return `{"data": {"project": {"id": "gid://gitlab/Project/1", "mergeRequest": {"diffHeadSha": "` + head +
+		`", "headPipeline": ` + pipeline + `}}, "queryComplexity": {"score": 13, "limit": 200}}}`
+}
+
+// docHeadPipeline is a matched head pipeline as the RerunHead document answers it,
+// pipeline 77 in project, or with a null project where project is 0.
+func docHeadPipeline(project int, status string) string {
+	owner := "null"
+	if project != 0 {
+		owner = `{"id": "gid://gitlab/Project/` + strconv.Itoa(project) + `"}`
+	}
+	return `{"id": "gid://gitlab/Ci::Pipeline/77", "status": "` + status + `", "project": ` + owner + `}`
+}
+
+// The re-run retries the pipeline GitLab itself matches to the merge request's head,
+// the document's headPipeline (diff_head_pipeline, matched by sha or source_sha). A
+// merged results pipeline runs on a merge commit of the head and a fork's in the
+// fork's project, so neither is a row of the project's pipelines on the head; a
+// merged results pipeline of an earlier head GitLab answers null. Every refusal is
+// sent before any write.
+func TestTheReRunRetriesThePipelineGitLabMatchesToTheHead(t *testing.T) {
+	const other = "0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293"
+	const forkRetryRoute = "POST /api/v4/projects/99/pipelines/77/retry"
+	failed := docHeadPipeline(1, "FAILED")
+	for _, test := range []struct {
+		name, pin, answer, retry, code string
+		kind                           forgeapi.ErrorKind
+	}{
+		{name: "the_merge_requests_own_failed_pipeline", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, failed), retry: retryRoute},
+		{name: "no_pin_takes_the_merge_requests_head", answer: rerunHeadAnswer(testHeadSHA, failed), retry: retryRoute},
+		{name: "a_canceled_pipeline", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, docHeadPipeline(1, "CANCELED")), retry: retryRoute},
+		{name: "a_merged_results_pipeline_gitlab_matched_to_the_head_by_its_source_sha", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, failed), retry: retryRoute},
+		{name: "another_merge_requests_pipeline_on_the_same_sha_retried_since_gitlab_matched_it_to_this_head", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, failed), retry: retryRoute},
+		{name: "a_fork_pipeline_in_the_forks_project", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, docHeadPipeline(99, "FAILED")), retry: forkRetryRoute},
+		{name: "a_pipeline_naming_no_project", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, docHeadPipeline(0, "FAILED")), retry: retryRoute},
+		{name: "an_earlier_heads_merged_results_pipeline_gitlab_answers_null", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, "null"), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "a_pin_the_merge_request_moved_past", pin: other, answer: rerunHeadAnswer(testHeadSHA, failed), code: forgeapi.CodeStaleHead, kind: forgeapi.KindConflict},
+		{name: "a_green_pipeline", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, docHeadPipeline(1, "SUCCESS")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "a_running_pipeline", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, docHeadPipeline(1, "RUNNING")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "a_merge_request_with_no_head", answer: rerunHeadAnswer("", failed), code: forgeapi.CodeMissingSHA, kind: forgeapi.KindUpstream},
+		{name: "no_project", pin: testHeadSHA, answer: `{"data": {"project": null}}`, code: forgeapi.CodeRepoOrPRNotVisible, kind: forgeapi.KindNotFound},
+		{name: "no_merge_request", pin: testHeadSHA, answer: `{"data": {"project": {"id": "gid://gitlab/Project/1", "mergeRequest": null}}}`, code: forgeapi.CodePRNotFound, kind: forgeapi.KindNotFound},
+		{name: "a_pipeline_id_that_is_no_global_id", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, `{"id": "77", "status": "FAILED", "project": {"id": "gid://gitlab/Project/1"}}`), code: forgeapi.CodeValidation, kind: forgeapi.KindUpstream},
+		{name: "a_fork_project_id_that_is_no_global_id", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, `{"id": "gid://gitlab/Ci::Pipeline/77", "status": "FAILED", "project": {"id": "gid://gitlab/Project/"}}`), code: forgeapi.CodeValidation, kind: forgeapi.KindUpstream},
+		{name: "an_answer_in_part", pin: testHeadSHA, answer: `{"data": {"project": {"id": "gid://gitlab/Project/1", "mergeRequest": {"diffHeadSha": "` + testHeadSHA + `", "headPipeline": null}}}, "errors": [{"message": "headPipeline unavailable"}]}`, kind: forgeapi.KindUpstream},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{
+				metadataRoute:  metadataBody,
+				documentRoute:  docAcceptanceAnswer,
+				rerunDocRoute:  test.answer,
+				readRoute:      headPipelineBody,
+				pipelinesRoute: pipelinesBody,
+				retryRoute:     `{}`,
+				forkRetryRoute: `{}`,
+			})
+			h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
+			if _, err := h.client.ConnectionCaps(t.Context()); err != nil {
+				t.Fatalf("Setup: ConnectionCaps = %v", err)
+			}
+			before := h.instance.count()
+			err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), test.pin)
+			sent := h.instance.arrived()[before:]
+			if test.retry != "" {
+				if err != nil {
+					t.Fatalf("RerunFailedChecks = %v, want the retry", err)
+				}
+				if want := []string{rerunDocRoute, test.retry}; !slices.Equal(sent, want) {
+					t.Errorf("RerunFailedChecks sent %v, want %v", sent, want)
+				}
+				return
+			}
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != test.code || fe.Kind != test.kind {
+				t.Errorf("RerunFailedChecks = %v, want code %q on %v", err, test.code, test.kind)
+			}
+			if want := []string{rerunDocRoute}; !slices.Equal(sent, want) {
+				t.Errorf("RerunFailedChecks sent %v, want %v alone and no retry", sent, want)
+			}
+		})
+	}
+}
+
+// Where the connection's documents are refused, the re-run reads the REST merge
+// request, whose head_pipeline is the STORED one, kept after a push until a pipeline
+// of the new head exists (lib/api/entities/merge_request.rb). Its payload carries no
+// source_sha to prove a pipeline on another commit belongs to the head, so one is
+// refused, a merged results pipeline of the current head included.
+func TestADegradedReRunRetriesOnlyAStoredPipelineOnTheHead(t *testing.T) {
 	const other = "0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293"
 	const forkRetryRoute = "POST /api/v4/projects/99/pipelines/77/retry"
 	const targetRetryRoute = "POST /api/v4/projects/1/pipelines/77/retry"
@@ -184,29 +272,24 @@ func TestTheReRunRetriesTheMergeRequestsHeadPipeline(t *testing.T) {
 		name, pin, request, retry, code string
 		kind                            forgeapi.ErrorKind
 	}{
-		{name: "a_failed_branch_pipeline_on_the_pin", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, failedOnHead), retry: retryRoute},
+		{name: "the_merge_requests_own_failed_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, failedOnHead), retry: retryRoute},
 		{name: "no_pin_takes_the_merge_requests_head", request: headPipelineRequest(testHeadSHA, 1, failedOnHead), retry: retryRoute},
 		{name: "a_canceled_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, testHeadSHA, "example-feature", "canceled")), retry: retryRoute},
-		{name: "a_merged_results_pipeline_on_a_merge_commit", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "refs/merge-requests/1/merge", "failed")), retry: retryRoute},
-		{name: "a_merge_train_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "refs/merge-requests/1/train", "failed")), retry: retryRoute},
 		{name: "a_fork_pipeline_in_the_forks_project", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(99, testHeadSHA, "example-feature", "failed")), retry: forkRetryRoute},
 		{name: "a_pipeline_naming_no_project", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(0, testHeadSHA, "example-feature", "failed")), retry: retryRoute},
 		{name: "a_merge_request_naming_no_target_project", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 0, failedOnHead), retry: targetRetryRoute},
+		{name: "an_earlier_heads_stored_merged_results_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "refs/merge-requests/1/merge", "failed")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "an_earlier_commits_branch_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "example-feature", "failed")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
 		{name: "a_pin_the_merge_request_moved_past", pin: other, request: headPipelineRequest(testHeadSHA, 1, failedOnHead), code: forgeapi.CodeStaleHead, kind: forgeapi.KindConflict},
-		{name: "a_head_pipeline_that_passed", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, testHeadSHA, "example-feature", "success")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
-		{name: "a_running_head_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, testHeadSHA, "example-feature", "running")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
+		{name: "a_green_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, testHeadSHA, "example-feature", "success")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
 		{name: "no_head_pipeline", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, "null"), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
-		{name: "a_head_pipeline_of_an_earlier_commit", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "example-feature", "failed")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
-		{name: "an_earlier_commits_pipeline_on_the_head_ref", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "refs/merge-requests/1/head", "failed")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
-		{name: "another_merge_requests_merge_ref", pin: testHeadSHA, request: headPipelineRequest(testHeadSHA, 1, headPipeline(1, other, "refs/merge-requests/2/merge", "failed")), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
 		{name: "a_merge_request_with_no_head", request: headPipelineRequest("", 1, failedOnHead), code: forgeapi.CodeMissingSHA, kind: forgeapi.KindUpstream},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := newHarness(t, map[string]string{
 				metadataRoute:    metadataBody,
-				documentRoute:    docAcceptanceAnswer,
+				documentRoute:    docTooComplex,
 				readRoute:        test.request,
-				pipelinesRoute:   pipelinesBody,
 				retryRoute:       `{}`,
 				forkRetryRoute:   `{}`,
 				targetRetryRoute: `{}`,
@@ -214,6 +297,9 @@ func TestTheReRunRetriesTheMergeRequestsHeadPipeline(t *testing.T) {
 			h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
 			if _, err := h.client.ConnectionCaps(t.Context()); err != nil {
 				t.Fatalf("Setup: ConnectionCaps = %v", err)
+			}
+			if !h.client.isDegraded() {
+				t.Fatal("Setup: the refused schema question left the connection undegraded")
 			}
 			before := h.instance.count()
 			err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), test.pin)

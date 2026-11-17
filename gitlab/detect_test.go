@@ -115,7 +115,7 @@ func TestTheFamilyIsEstablishedFromAMarkerRatherThanFromAVersionKey(t *testing.T
 func TestACapabilityUnknownRefusesTheOperationRatherThanSendingIt(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		metadataRoute: `{"message":"401 Unauthorized"}`,
-		readRoute:     headPipelineBody,
+		rerunDocRoute: rerunHeadAnswer(testHeadSHA, docHeadPipeline(1, "FAILED")),
 		retryRoute:    `{}`,
 	})
 	h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)

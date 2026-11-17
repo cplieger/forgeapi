@@ -1637,7 +1637,7 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.RerunFailedChecks",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects/{id}/merge_requests/{iid} for the merge request's head and its head pipeline, the one its checks verdict reads, then POST /api/v4/projects/{id}/pipelines/{run}/retry, addressed instead at the project that pipeline names where it is another, a fork's",
+		Exercises: "the RerunHead document for the merge request's head and the head pipeline GitLab matches to it by sha or source_sha, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused, then POST /api/v4/projects/{id}/pipelines/{run}/retry, addressed instead at the project that pipeline names where it is another, a fork's",
 		Requests:  Requests{Min: 2, Max: 2},
 		Needs:     "rerun_checks",
 		Support:   Supported,
@@ -1650,7 +1650,7 @@ var Table = []Entry{
 			{
 				Field: "run re-run",
 				Kind:  DiffersInShape,
-				Says:  "the merge request's head pipeline rather than a run picked among the head's: on a project with merged results pipelines it ran on a merge commit of the head, and on a fork's merge request in the fork's project; one on an earlier commit is refused with CodeRunNotFailed",
+				Says:  "the head pipeline GitLab matches to the merge request's head rather than a run picked among the head's: on a project with merged results pipelines it ran on a merge commit of the head, and on a fork's merge request in the fork's project; none matched, an earlier head's pipeline included, is refused with CodeRunNotFailed, and so is a stored pipeline on another commit where the documents are refused, since the REST payload carries no source_sha to match it by",
 			},
 		},
 	},

@@ -97,8 +97,8 @@ const (
 	CodeStaleHead = "stale_head"
 	// CodeRunNotFailed is a re-run refused before any write because nothing it
 	// addresses failed or was cancelled: the run, every run on the head, or on
-	// GitLab the merge request's head pipeline, absent or of an earlier commit
-	// included. It rides [KindConflict], and the remedy is reading the checks again.
+	// GitLab the head pipeline GitLab matches to the head, none matched included.
+	// It rides [KindConflict], and the remedy is reading the checks again.
 	CodeRunNotFailed = "run_not_failed"
 	// CodeRunPageTruncated is a re-run of a pull request's failed checks, on every
 	// family but GitLab, refused before any write because no run on the pages it

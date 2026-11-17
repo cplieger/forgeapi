@@ -24,8 +24,9 @@ const (
 
 // The checks a decoded body can fail, each the cause its failure line names.
 var (
-	errGlobalIDUnreadable = errors.New("group or user id is not a gid://gitlab/ id")
-	errMergeRequestsNull  = errors.New("mergeRequests are null")
+	errGlobalIDUnreadable   = errors.New("group or user id is not a gid://gitlab/ id")
+	errPipelineIDUnreadable = errors.New("head pipeline or project id is not a gid://gitlab/ id")
+	errMergeRequestsNull    = errors.New("mergeRequests are null")
 )
 
 // developerAccess is the project role integer at which a credential may push, which
@@ -62,8 +63,12 @@ type (
 		Count    int         `json:"count"`
 	}
 
+	// docPipeline is a head pipeline: its status on every document, its global id
+	// and project on the re-run's alone.
 	docPipeline struct {
-		Status string `json:"status"`
+		Project *docGlobalID `json:"project"`
+		ID      string       `json:"id"`
+		Status  string       `json:"status"`
 	}
 
 	docMergeRequest struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the response it decodes
@@ -122,6 +127,7 @@ type (
 	}
 
 	docProject struct { //nolint:govet // fieldalignment: the field order is the document's own selection order, so a reader compares this type against the query it decodes
+		ID              string           `json:"id"`
 		FullPath        string           `json:"fullPath"`
 		UserPermissions *docPermissions  `json:"userPermissions"`
 		MergeRequests   *docConnection   `json:"mergeRequests"`

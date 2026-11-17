@@ -535,14 +535,9 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 	return c.normalizeMutatedPull(&record, repo), nil
 }
 
-// RerunFailedChecks implements [forgeapi.PullRequests]. A missing verb is a
-// capability rather than an unimplemented role, because one package serves every
-// version of both products. The runs read is filtered by the head, the caller's pin
-// or else the pull request's own, read first, and a pinned head no run carries is
-// refused as stale rather than re-run, since a re-run can carry deployment side
-// effects. The runs route declares no sort parameter and no ordering, so among
-// several runs on the head that [Client.rerunnable] holds, the one re-run is the
-// first the instance returns.
+// RerunFailedChecks implements [forgeapi.PullRequests]: the run re-run is the one
+// [Client.rerunTarget] resolves. A missing verb is a capability rather than an
+// unimplemented role, because one package serves every version of both products.
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
 	ctx = transport.CallWrite(ctx, op)
@@ -552,8 +547,7 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if pr.Number <= 0 {
 		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
 	}
-	pinned := headSHA != ""
-	if pinned {
+	if headSHA != "" {
 		if err := forgeapi.ValidateRef(headSHA); err != nil {
 			return err
 		}
@@ -561,18 +555,37 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if err := c.capability(ctx, op, forgeapi.CapRerunChecks); err != nil {
 		return err
 	}
-	limit, err := c.statedMaximum(ctx)
+	run, err := c.rerunTarget(ctx, op, repo, pr, headSHA)
 	if err != nil {
 		return err
 	}
+	route, _ := c.rerunRoute(run.ID)
+	return c.sendAt(ctx, op, http.MethodPost, &address{named: repo}, route, nil, nil)
+}
+
+var _ transport.RerunResolver = (*Client)(nil).rerunTarget
+
+// rerunTarget is this family's [transport.RerunResolver]: a run on the head (the pin,
+// or the pull request's own, read first) that [Client.rerunnable] holds, whatever its
+// event or pull request, since the checks verdict is the commit's combined status,
+// which counts every run on it. The runs route declares no sort parameter and no
+// ordering, so among several the one re-run is the first the instance returns. A
+// pinned head no run carries is refused as stale, and a repository that moved
+// mid-call with its successor.
+func (c *Client) rerunTarget(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, pin string) (transport.RunTarget, error) {
+	limit, err := c.statedMaximum(ctx)
+	if err != nil {
+		return transport.RunTarget{}, err
+	}
 	addr := &address{named: repo}
-	if !pinned {
-		if headSHA, err = c.pullHead(ctx, op, addr, pr); err != nil {
-			return err
+	head := pin
+	if pin == "" {
+		if head, err = c.pullHead(ctx, op, addr, pr); err != nil {
+			return transport.RunTarget{}, err
 		}
 	}
 	read := func(page int) ([]wireRun, error) {
-		query := url.Values{keyPage: {strconv.Itoa(page)}, keyLimit: {strconv.Itoa(limit)}, "head_sha": {headSHA}}
+		query := url.Values{keyPage: {strconv.Itoa(page)}, keyLimit: {strconv.Itoa(limit)}, "head_sha": {head}}
 		runs, readErr := c.readRuns(ctx, op, addr, query)
 		if readErr != nil {
 			return nil, readErr
@@ -583,14 +596,13 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 		return runs.WorkflowRuns, nil
 	}
 	pick := func(r *wireRun) (onHead, rerunnable bool) {
-		return r.head() == headSHA, c.rerunnable(r)
+		return r.head() == head, c.rerunnable(r)
 	}
-	run, err := transport.PickRun(ctx, c.core, op, "workflow run", limit, pinned, read, pick)
+	run, err := transport.PickRun(ctx, c.core, op, "workflow run", limit, pin != "", read, pick)
 	if err != nil {
-		return err
+		return transport.RunTarget{}, err
 	}
-	route, _ := c.rerunRoute(run.ID)
-	return c.sendAt(ctx, op, http.MethodPost, addr, route, nil, nil)
+	return transport.RunTarget{ID: run.ID}, nil
 }
 
 // pullHead is the head commit a pull request carries now, for a re-run whose caller

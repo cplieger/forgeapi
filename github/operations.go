@@ -860,13 +860,11 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 	return c.normalizeMutatedPull(&record, repo), nil
 }
 
-// RerunFailedChecks implements [forgeapi.PullRequests]: the run on the head is
-// resolved first, because this product's retry is addressed by a run id, by a read
-// filtered by the head (the caller's pin, or the pull request's own, read first).
-// It is not gated on [forgeapi.CapRerunChecks], whose verdict is unknown at connection
-// scope: the runner is enabled per repository, the read naming it needs admin, and a
-// runs read answers 200 either way, so a refusal here is the instance's own. A request
-// answering from another address spends the one further read resolving the successor.
+// RerunFailedChecks implements [forgeapi.PullRequests]: the run re-run is the one
+// [Client.rerunTarget] resolves. It is not gated on [forgeapi.CapRerunChecks], whose
+// verdict is unknown at connection scope: the runner is enabled per repository, the
+// read naming it needs admin, and a runs read answers 200 either way, so a refusal
+// here is the instance's own.
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
 	ctx = transport.CallWrite(ctx, op)
@@ -876,22 +874,40 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if pr.Number <= 0 {
 		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
 	}
-	pinned := headSHA != ""
-	if pinned {
+	if headSHA != "" {
 		if err := forgeapi.ValidateRef(headSHA); err != nil {
 			return err
 		}
 	}
+	run, err := c.rerunTarget(ctx, op, repo, pr, headSHA)
+	if err != nil {
+		return err
+	}
+	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
+	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
+}
+
+var _ transport.RerunResolver = (*Client)(nil).rerunTarget
+
+// rerunTarget is this family's [transport.RerunResolver]: the first workflow run on
+// the head (the pin, or the pull request's own, read first) that failed or was
+// cancelled, whatever its event or pull request, since the checks verdict is the
+// commit's statusCheckRollup, which counts every run on it. A run's pull_requests is
+// no filter: a fork pull request's run answers it empty
+// (https://github.com/github/docs/issues/22501). A request answering from another
+// address spends the one further read resolving the successor.
+func (c *Client) rerunTarget(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, pin string) (transport.RunTarget, error) {
 	var moved rename
-	if !pinned {
-		head, err := c.pullHead(ctx, op, repo, pr, &moved)
+	head := pin
+	if pin == "" {
+		pulled, err := c.pullHead(ctx, op, repo, pr, &moved)
 		if err != nil {
-			return err
+			return transport.RunTarget{}, err
 		}
-		headSHA = head
+		head = pulled
 	}
 	read := func(page int) ([]restWorkflowRun, error) {
-		query := url.Values{keyPerPage: {strconv.Itoa(maxRunPageItems)}, keyPage: {strconv.Itoa(page)}, "head_sha": {headSHA}}
+		query := url.Values{keyPerPage: {strconv.Itoa(maxRunPageItems)}, keyPage: {strconv.Itoa(page)}, "head_sha": {head}}
 		runs, resp, err := c.readRuns(ctx, op, repo, query, &moved)
 		if err != nil {
 			return nil, err
@@ -902,14 +918,13 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 		return runs.Runs, nil
 	}
 	pick := func(r *restWorkflowRun) (onHead, rerunnable bool) {
-		return r.ID != 0 && r.HeadSHA == headSHA, c.runVerdict(r) == forgeapi.CheckFailing || member(r.Conclusion) == "cancelled"
+		return r.ID != 0 && r.HeadSHA == head, c.runVerdict(r) == forgeapi.CheckFailing || member(r.Conclusion) == "cancelled"
 	}
-	run, err := transport.PickRun(ctx, c.core, op, "workflow run", maxRunPageItems, pinned, read, pick)
+	run, err := transport.PickRun(ctx, c.core, op, "workflow run", maxRunPageItems, pin != "", read, pick)
 	if err != nil {
-		return err
+		return transport.RunTarget{}, err
 	}
-	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
-	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
+	return transport.RunTarget{ID: run.ID}, nil
 }
 
 // pullHead is the head commit a pull request carries now, for a re-run whose caller

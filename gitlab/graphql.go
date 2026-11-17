@@ -140,24 +140,49 @@ var ownerLookup = document{
 `,
 }
 
+// rerunHeadFields is the merge request selection a re-run resolves its pipeline
+// from. GraphQL `headPipeline` is GitLab's diff_head_pipeline, the stored head
+// pipeline only where its sha or source_sha matches `diffHeadSha`
+// (app/graphql/types/merge_request_type.rb), so a merged results pipeline of the
+// head answers and one of an earlier head answers null.
+const rerunHeadFields = `
+      diffHeadSha
+      headPipeline { id status project { id } }`
+
+// rerunHead is the re-run's document. Its caller is [Client.rerunTarget]; the
+// project's id tells the addressed project from a fork's.
+var rerunHead = document{
+	name: "RerunHead",
+	text: `query RerunHead($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    id
+    mergeRequest(iid: $iid) {` + rerunHeadFields + `
+    }
+  }
+  queryComplexity { score limit }
+}
+`,
+}
+
 // docAcceptance is the ONE bounded question a connection asks at setup: does this
-// schema carry every field, argument and member the two pull-request documents above
-// select. The answer decides documents or REST for the connection's life. The empty
-// project selector resolves nothing while validation rules on every field (68 bytes at
-// complexity 70 of 200 on gitlab.com, 2026-11-16); an undeclared field answers 200
-// undefinedField with no data, which [Client.refuseDocument] classifies. Introspection
-// cannot ask it: a named operation cannot select __type.
+// schema carry every field, argument and member the pull-request and re-run
+// documents above select. The answer decides documents or REST for the connection's
+// life. The empty project selector resolves nothing while validation rules on every
+// field (complexity 74 of 200 on gitlab.com, 2026-11-17); an undeclared field answers
+// 200 undefinedField with no data, which [Client.refuseDocument] classifies.
+// Introspection cannot ask it: a named operation cannot select __type.
 var docAcceptance = document{
 	name: "DocumentAcceptance",
 	text: `query DocumentAcceptance {
   project(fullPath: "") {
+    id
     fullPath
     userPermissions { pushCode readMergeRequest }
     mergeRequests(state: opened, first: 1, after: null) {
       pageInfo { hasNextPage endCursor }
       nodes { iid }
     }
-    mergeRequest(iid: "0") {` + mergeRequestFields("", "") + `
+    mergeRequest(iid: "0") {` + mergeRequestFields("", "") + rerunHeadFields + `
     }
   }
   queryComplexity { score limit }

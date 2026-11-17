@@ -522,13 +522,15 @@ type PullRequests interface {
 	// current one and pins that; a pull request the forge answers with no head
 	// is refused with [CodeMissingSHA] before any write.
 	//
-	// A head carries a run per workflow, and the one re-run is the first on it that
-	// failed or was cancelled, looked for on up to three pages at the most rows
-	// the instance serves on one; GitLab re-runs the merge request's head pipeline
-	// instead (its departure below). Before any write, a head with nothing that
-	// failed or was cancelled is refused with [CodeRunNotFailed], and one whose
-	// third page came back full with none of them qualifying with
-	// [CodeRunPageTruncated].
+	// The run re-run is the one the forge links to the checks verdict on the head.
+	// On GitHub, Gitea and Forgejo that verdict is the commit's rollup or combined
+	// status, which counts every run on the head SHA, so the run is the first on it
+	// that failed or was cancelled, whatever its event or pull request, looked for on
+	// up to three pages at the most rows the instance serves on one. On GitLab it is
+	// the head pipeline GitLab matches to the head (its departure below). Before any
+	// write, a head with nothing that failed or was cancelled is refused with
+	// [CodeRunNotFailed], and one whose third page came back full with none of them
+	// qualifying with [CodeRunPageTruncated].
 	//
 	// Whether an instance can do this at all is [CapRerunChecks], read from
 	// [ConnectionCaps]: an instance with no re-run verb reports the capability
@@ -544,7 +546,7 @@ type PullRequests interface {
 	// Per forge:
 	//
 	//	GitHub   GET /repos/{owner}/{repo}/pulls/{pull_number} for the pull request's current head where the caller brought none, then GET /repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages of 100, to resolve a run on it that failed or was cancelled, then POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where any of them answered from another address, 2 to 6 requests; needs rerun_checks
-	//	GitLab   GET /api/v4/projects/{id}/merge_requests/{iid} for the merge request's head and its head pipeline, the one its checks verdict reads, then POST /api/v4/projects/{id}/pipelines/{run}/retry, addressed instead at the project that pipeline names where it is another, a fork's, 2 requests; needs rerun_checks
+	//	GitLab   the RerunHead document for the merge request's head and the head pipeline GitLab matches to it by sha or source_sha, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused, then POST /api/v4/projects/{id}/pipelines/{run}/retry, addressed instead at the project that pipeline names where it is another, a fork's, 2 requests; needs rerun_checks
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, both of which this product's swagger document names, 2 to 5 requests; needs rerun_checks
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 2 to 5 requests; needs rerun_checks
 	//
@@ -555,7 +557,7 @@ type PullRequests interface {
 	// GitLab departs from the normalized contract:
 	//
 	//	jobs re-run  differs in shape  failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict
-	//	run re-run   differs in shape  the merge request's head pipeline rather than a run picked among the head's: on a project with merged results pipelines it ran on a merge commit of the head, and on a fork's merge request in the fork's project; one on an earlier commit is refused with CodeRunNotFailed
+	//	run re-run   differs in shape  the head pipeline GitLab matches to the merge request's head rather than a run picked among the head's: on a project with merged results pipelines it ran on a merge commit of the head, and on a fork's merge request in the fork's project; none matched, an earlier head's pipeline included, is refused with CodeRunNotFailed, and so is a stored pipeline on another commit where the documents are refused, since the REST payload carries no source_sha to match it by
 	//
 	// Forgejo departs from the normalized contract:
 	//
