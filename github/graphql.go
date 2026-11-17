@@ -407,6 +407,8 @@ type docData interface {
 // cost the endpoint charged, and whether data arrived BESIDE errors, which is the
 // partial success the caller marks rather than truncating or failing.
 type docResult struct {
+	// Answer is the answer the document came on.
+	Answer *transport.Response
 	// Refusal is the first envelope error's message, quoted, on a partial answer: a
 	// mutation whose payload is null beside an error is refused by that error.
 	Refusal string
@@ -417,7 +419,6 @@ type docResult struct {
 	// against the rows they fell in (see [docResult.placed]).
 	errors  []docError
 	Cost    int
-	Status  int
 	Partial bool
 }
 
@@ -535,7 +536,7 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 		AbsoluteURL: c.documentURL,
 	})
 	c.noteResponse(resp)
-	body, status := responseBody(resp)
+	body := responseBody(resp)
 	var env envelope
 	decodeErr := transport.Decode(body, &env)
 	decoded := decodeErr == nil
@@ -555,12 +556,12 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 			return docResult{}, c.refuseDocument(ctx, op, doc, resp, env.Errors)
 		}
 		c.countEnvelope(env.Errors)
-		return docResult{Status: status}, nil
+		return docResult{Answer: resp}, nil
 	}
 	if err := transport.Decode(env.Data, out); err != nil {
 		return docResult{}, c.core.FailDecode(ctx, op, transport.Document(http.MethodPost), resp, err)
 	}
-	result := docResult{Cost: out.cost(), Status: status, Partial: len(env.Errors) > 0}
+	result := docResult{Answer: resp, Cost: out.cost(), Partial: len(env.Errors) > 0}
 	if result.Cost > 0 {
 		c.core.Price(result.Cost)
 	}
@@ -575,13 +576,13 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	return result, nil
 }
 
-// responseBody is the bytes and the status of a response that may have come back with
-// a failure, because the envelope is read on that arm too.
-func responseBody(resp *transport.Response) (body []byte, status int) {
+// responseBody is the bytes of a response that may have come back with a failure,
+// because the envelope is read on that arm too.
+func responseBody(resp *transport.Response) []byte {
 	if resp == nil {
-		return nil, 0
+		return nil
 	}
-	return resp.Body, resp.Status
+	return resp.Body
 }
 
 // refuseDocument is the refusal an envelope carrying errors and no data earns.
@@ -596,7 +597,7 @@ func responseBody(resp *transport.Response) (body []byte, status int) {
 func (c *Client) refuseDocument(ctx context.Context, op string, doc document, resp *transport.Response, errs []docError) *forgeapi.Error {
 	c.countEnvelope(errs)
 	c.markDegraded()
-	return c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream, resp.Status,
+	return c.core.Fail(ctx, op, transport.Document(http.MethodPost), resp, "", forgeapi.KindUpstream,
 		resp.Quote("the "+doc.name+" document was refused: "+errs[0].Message))
 }
 
@@ -613,10 +614,9 @@ func (c *Client) documentLimit(ctx context.Context, op string, doc document, res
 	if counters := c.core.Counters(); counters.RateLimited != nil {
 		counters.RateLimited(forgeapi.FamilyGitHub)
 	}
-	fe := c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindRateLimited, resp.Status,
+	fe := c.core.Fail(ctx, op, transport.Document(http.MethodPost), resp, "", forgeapi.KindRateLimited,
 		resp.Quote("the "+doc.name+" document was rate-limited: "+errs[0].Message))
 	fe.Secondary, fe.RetryAfter = secondary, transport.RetryAfter(resp.Header)
-	transport.AnswerFigures(fe, resp.Header, githublimit.Signal, githublimit.Pool)
 	return fe
 }
 

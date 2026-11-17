@@ -2,7 +2,9 @@ package creds_test
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -200,6 +202,40 @@ func TestATokenEndpointThatTimedOutOrThrottledLeavesTheGrantPollable(t *testing.
 			}
 			if _, done, err := g.Poll(t.Context()); err != nil || done {
 				t.Errorf("a second Poll() = (%v, %v), want (false, nil) while authorization is pending", done, err)
+			}
+		})
+	}
+}
+
+// An OAuth endpoint's throttle carries the wait its Retry-After asks for, and no
+// budget figure, since the endpoints' answers state none; every other refusal of
+// theirs states no figure either.
+func TestAnOAuthEndpointsRefusalCarriesItsWaitAndNoBudgetFigure(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusBadRequest} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			ep := &endpoint{}
+			ep.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", "30")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				if _, err := io.WriteString(w, `{}`); err != nil {
+					t.Errorf("Setup: writing the answer: %v", err)
+				}
+			}))
+			t.Cleanup(ep.srv.Close)
+			_, err := creds.StartDeviceGrant(t.Context(), ep.conn(), forgeapi.FamilyGitHub,
+				creds.GrantRequest{ClientID: clientID, Scopes: scopes}, ep.options()...)
+			fe, ok := errors.AsType[*forgeapi.Error](err)
+			if !ok || fe.Status != status {
+				t.Fatalf("StartDeviceGrant() over a %d = %v, want a *forgeapi.Error at that status", status, err)
+			}
+			wait := time.Duration(0)
+			if status == http.StatusTooManyRequests {
+				wait = 30 * time.Second
+			}
+			if fe.Remaining != forgeapi.BudgetRemainingUnknown || fe.RetryAfter != wait {
+				t.Errorf("StartDeviceGrant() over a %d = remaining %d retry after %v, want %d and %v",
+					status, fe.Remaining, fe.RetryAfter, forgeapi.BudgetRemainingUnknown, wait)
 			}
 		})
 	}

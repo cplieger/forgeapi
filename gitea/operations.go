@@ -66,7 +66,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	items := make([]forgeapi.Repository, 0, len(rows))
 	for i := range rows {
 		if rows[i].FullName == "" {
-			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), http.StatusOK, errFullNameEmpty)
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp, errFullNameEmpty)
 		}
 		items = append(items, c.normalizeRepo(&rows[i]))
 	}
@@ -74,8 +74,8 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	if set.OwnerSet {
 		total, err := strconv.Atoi(resp.Header.Get("X-Total-Count"))
 		if err != nil || total < 0 {
-			return forgeapi.Page[forgeapi.Repository]{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation,
-				forgeapi.KindUpstream, resp.Status, "the owner's repositories answered no X-Total-Count it can count by, which is what says whether a further page exists")
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, forgeapi.CodeValidation,
+				forgeapi.KindUpstream, "the owner's repositories answered no X-Total-Count it can count by, which is what says whether a further page exists")
 		}
 		next = walk.nextOfTotal(total)
 	}
@@ -207,7 +207,8 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 		return page, nil
 	}
 	var rows []wireIssue
-	if err := c.readPage(ctx, op, issueSearch, query, ownerStatus(&set, http.StatusBadRequest), &walk, set.PageBound, &rows); err != nil {
+	resp, err := c.readPageResponse(ctx, op, issueSearch, query, ownerStatus(&set, http.StatusBadRequest), &walk, set.PageBound, &rows)
+	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.Issue](err); ok {
 			return page, nil
 		}
@@ -215,7 +216,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 	}
 	for i := range rows {
 		if m := rows[i].Repository; m != nil && m.FullName == "" {
-			return forgeapi.Page[forgeapi.Issue]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), http.StatusOK, errRepositoryFullNameEmpty)
+			return forgeapi.Page[forgeapi.Issue]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp, errRepositoryFullNameEmpty)
 		}
 	}
 	return c.issuePage(&address{}, rows, walk), nil
@@ -589,16 +590,16 @@ func (c *Client) rerunTarget(ctx context.Context, op string, repo forgeapi.RepoR
 			return transport.RunTarget{}, err
 		}
 	}
-	read := func(page int) ([]wireRun, error) {
+	read := func(page int) ([]wireRun, *transport.Response, error) {
 		query := url.Values{keyPage: {strconv.Itoa(page)}, keyLimit: {strconv.Itoa(limit)}, "head_sha": {head}}
 		runs, readErr := c.readRuns(ctx, op, addr, query)
 		if readErr != nil {
-			return nil, readErr
+			return nil, nil, readErr
 		}
 		if stale := c.moved(ctx, op, addr); stale != nil {
-			return nil, stale
+			return nil, nil, stale
 		}
-		return runs.WorkflowRuns, nil
+		return runs.WorkflowRuns, addr.answer, nil
 	}
 	pick := func(r *wireRun) (onHead, rerunnable bool) {
 		return r.head() == head, c.rerunnable(r)
@@ -621,7 +622,7 @@ func (c *Client) pullHead(ctx context.Context, op string, addr *address, pr forg
 		return "", stale
 	}
 	if record.Head.SHA == "" {
-		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeMissingSHA, forgeapi.KindUpstream, http.StatusOK,
+		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), addr.answer, forgeapi.CodeMissingSHA, forgeapi.KindUpstream,
 			"the pull request answered no head commit")
 	}
 	return record.Head.SHA, nil
@@ -655,7 +656,7 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 			return stale
 		}
 		if !c.rerunnable(&record) {
-			return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunNotFailed, forgeapi.KindConflict, http.StatusOK,
+			return c.core.Fail(ctx, op, transport.REST(http.MethodGet), addr.answer, forgeapi.CodeRunNotFailed, forgeapi.KindConflict,
 				"workflow run "+strconv.FormatInt(run.ID, 10)+" neither failed nor was cancelled")
 		}
 	}
@@ -713,11 +714,11 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
 	if runs.TotalCount == nil || *runs.TotalCount < 0 {
-		return forgeapi.Page[forgeapi.Run]{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation,
-			forgeapi.KindUpstream, http.StatusOK, "the run listing answered no total_count it can count by, which is what says whether a further page exists")
+		return forgeapi.Page[forgeapi.Run]{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), addr.answer, forgeapi.CodeValidation,
+			forgeapi.KindUpstream, "the run listing answered no total_count it can count by, which is what says whether a further page exists")
 	}
 	rows, total := runs.WorkflowRuns, *runs.TotalCount
-	items, passed, err := c.runsSince(ctx, op, rows, repo, &set)
+	items, passed, err := c.runsSince(ctx, op, addr.answer, rows, repo, &set)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
@@ -744,7 +745,7 @@ const runOrderSkew = time.Minute
 // or a negative number, or with no creation time under a bound, is refused: a Gitea
 // release before v28 sends no created_at, and holding it to a bound would read every
 // run as older.
-func (c *Client) runsSince(ctx context.Context, op string, rows []wireRun, repo forgeapi.RepoRef, set *forgeapi.ListSettings) (items []forgeapi.Run, passed bool, err error) {
+func (c *Client) runsSince(ctx context.Context, op string, answer *transport.Response, rows []wireRun, repo forgeapi.RepoRef, set *forgeapi.ListSettings) (items []forgeapi.Run, passed bool, err error) {
 	items = make([]forgeapi.Run, 0, len(rows))
 	floor := set.Since.Add(-runOrderSkew)
 	passed = set.SinceSet && len(rows) > 0
@@ -752,12 +753,12 @@ func (c *Client) runsSince(ctx context.Context, op string, rows []wireRun, repo 
 		run := c.normalizeRun(&rows[i], repo)
 		switch {
 		case run.Ref.ID <= 0:
-			return nil, false, c.refuseRun(ctx, op, "the run listing answered a run with no id, which is the run's identity")
+			return nil, false, c.refuseRun(ctx, op, answer, "the run listing answered a run with no id, which is the run's identity")
 		case run.Ref.Number < 0:
-			return nil, false, c.refuseRun(ctx, op, "the run listing answered a negative run number, which is no place in the repository's run sequence")
+			return nil, false, c.refuseRun(ctx, op, answer, "the run listing answered a negative run number, which is no place in the repository's run sequence")
 		case set.SinceSet && run.CreatedAt.IsZero():
-			return nil, false, c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRunUndated, forgeapi.KindUpstream,
-				http.StatusOK, "the run listing answered a run with no creation time, so it cannot be held to the since bound")
+			return nil, false, c.core.Fail(ctx, op, transport.REST(http.MethodGet),
+				answer, forgeapi.CodeRunUndated, forgeapi.KindUpstream, "the run listing answered a run with no creation time, so it cannot be held to the since bound")
 		}
 		if passed && !run.CreatedAt.Before(floor) {
 			passed = false
@@ -771,8 +772,8 @@ func (c *Client) runsSince(ctx context.Context, op string, rows []wireRun, repo 
 }
 
 // refuseRun is the failure a run row this family will not publish answers.
-func (c *Client) refuseRun(ctx context.Context, op, message string) error {
-	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation, forgeapi.KindUpstream, http.StatusOK, message)
+func (c *Client) refuseRun(ctx context.Context, op string, answer *transport.Response, message string) error {
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), answer, forgeapi.CodeValidation, forgeapi.KindUpstream, message)
 }
 
 // readRunPage reads the page a run walk stands at, at the limit [Client.pageLimit]
@@ -1186,7 +1187,7 @@ func (c *Client) labelIDs(ctx context.Context, op string, addr *address, names [
 	for _, row := range rows {
 		byName[row.Name] = row.ID
 	}
-	read := labelRead{repo: len(rows), limit: limit}
+	read := labelRead{answer: addr.answer, repo: len(rows), limit: limit}
 	missing := slices.IndexFunc(names, func(name string) bool { _, ok := byName[name]; return !ok })
 	if missing >= 0 && read.repo >= read.limit {
 		return nil, c.unresolvedLabel(ctx, op, names[missing], read)
@@ -1239,6 +1240,8 @@ func (c *Client) orgLabels(ctx context.Context, op string, addr *address, query 
 // labelRead is how many rows each label page the resolution read answered, at the
 // bound both were read at, and whether the owner's organization page was read.
 type labelRead struct {
+	// answer is the repository page's answer.
+	answer           *transport.Response
 	repo, org, limit int
 	orgFound         bool
 }
@@ -1260,7 +1263,7 @@ func (c *Client) unresolvedLabel(ctx context.Context, op, name string, read labe
 		code = forgeapi.CodeLabelPageTruncated
 		verdict = "and a page came back full, so its list continues past it"
 	}
-	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), code, forgeapi.KindUpstream, http.StatusOK,
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), read.answer, code, forgeapi.KindUpstream,
 		"no label named "+name+" on "+pages+", bounded at "+strconv.Itoa(read.limit)+", "+verdict)
 }
 
@@ -1294,7 +1297,7 @@ func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue for
 		return forgeapi.Issue{}, stale
 	}
 	if record.PullRequest != nil {
-		return forgeapi.Issue{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), "", forgeapi.KindNotFound, http.StatusOK,
+		return forgeapi.Issue{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), addr.answer, "", forgeapi.KindNotFound,
 			"number "+strconv.Itoa(issue.Number)+" is a pull request on this product, and this operation reads issues only")
 	}
 	return c.normalizeIssue(&record, repo), nil

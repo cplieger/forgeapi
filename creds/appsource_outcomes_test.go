@@ -23,16 +23,20 @@ func answering(reply appReply) func(int, appCall) appReply {
 // terminal: each reaches reconnect-required with a message naming which, and
 // the next call fails at once without a request.
 func TestAppSource_terminal_answers_need_a_human(t *testing.T) {
+	budget := http.Header{"X-Ratelimit-Remaining": {"5000"}, "X-Ratelimit-Resource": {"core"}}
 	for _, tc := range []struct {
-		name  string
-		reply appReply
-		kind  forgeapi.ErrorKind
-		names string
+		name      string
+		reply     appReply
+		kind      forgeapi.ErrorKind
+		names     string
+		pool      string
+		remaining int
 	}{
-		{"a 401", refusal(http.StatusUnauthorized, "A JSON web token could not be decoded", nil), forgeapi.KindUnauthorized, "rejected the App JWT"},
-		{"a 404", refusal(http.StatusNotFound, "Not Found", nil), forgeapi.KindNotFound, "no installation"},
-		{"a plain 403", refusal(http.StatusForbidden, "This installation has been suspended", nil), forgeapi.KindForbidden, "suspended or lacks a permission"},
-		{"a 422 whatever its message", refusal(http.StatusUnprocessableEntity, "Validation failed, or the endpoint has been spammed.", nil), forgeapi.KindUpstream, "repositories or permissions"},
+		{"a 401", refusal(http.StatusUnauthorized, "A JSON web token could not be decoded", nil), forgeapi.KindUnauthorized, "rejected the App JWT", "", forgeapi.BudgetRemainingUnknown},
+		{"a 404", refusal(http.StatusNotFound, "Not Found", nil), forgeapi.KindNotFound, "no installation", "", forgeapi.BudgetRemainingUnknown},
+		{"a plain 403", refusal(http.StatusForbidden, "This installation has been suspended", nil), forgeapi.KindForbidden, "suspended or lacks a permission", "", forgeapi.BudgetRemainingUnknown},
+		{"a 403 with budget left", refusal(http.StatusForbidden, "This installation has been suspended", budget), forgeapi.KindForbidden, "suspended or lacks a permission", "core", 5000},
+		{"a 422 whatever its message", refusal(http.StatusUnprocessableEntity, "Validation failed, or the endpoint has been spammed.", nil), forgeapi.KindUpstream, "repositories or permissions", "", forgeapi.BudgetRemainingUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -45,6 +49,10 @@ func TestAppSource_terminal_answers_need_a_human(t *testing.T) {
 				}
 				if !strings.Contains(fe.Message, tc.names) {
 					t.Errorf("Token() message = %q, want it to name %q", fe.Message, tc.names)
+				}
+				if fe.Remaining != tc.remaining || fe.Pool != tc.pool || fe.Secondary {
+					t.Errorf("Token() = remaining %d pool %q secondary %t, want the answer's own %d, %q and no secondary limit",
+						fe.Remaining, fe.Pool, fe.Secondary, tc.remaining, tc.pool)
 				}
 				if got := s.State(); got != forgeapi.CredReconnectRequired {
 					t.Errorf("State() = %v, want %v", got, forgeapi.CredReconnectRequired)
@@ -267,6 +275,9 @@ func TestAppSource_rate_limit_takes_the_wait_GitHub_states(t *testing.T) {
 				if fe := forgeError(t, err); fe.Pool != wantPool || !fe.Reset.Equal(wantReset) || fe.Remaining != tc.remaining || fe.Secondary != tc.secondary {
 					t.Errorf("Mint() held = reset %v, remaining %d, secondary %t, want the limiting answer's reset %v, remaining %d, secondary %t",
 						fe.Reset, fe.Remaining, fe.Secondary, wantReset, tc.remaining, tc.secondary)
+				}
+				if fe := forgeError(t, err); fe.Status != tc.status {
+					t.Errorf("Mint() held = status %d, want the limiting answer's %d: a held answer is no deferral", fe.Status, tc.status)
 				}
 			})
 		})
@@ -564,18 +575,23 @@ func TestAppSource_a_callers_cancel_spends_no_reprobe(t *testing.T) {
 // A refusal in none of the classes the source reads, such as a 400, would
 // meet a resend the same way: the source waits a minute before sending again,
 // doubling per consecutive one, and reads refresh-due, since nothing shows a
-// human is needed.
+// human is needed. The refusal, and the hold's answer after it, carry the 400's
+// status and its own remaining figure.
 func TestAppSource_an_unclassified_refusal_waits_before_sending_again(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		g := newFakeGitHub(t, answering(refusal(http.StatusBadRequest, "Problems parsing JSON", nil)))
+		budget := http.Header{"X-Ratelimit-Remaining": {"4000"}}
+		g := newFakeGitHub(t, answering(refusal(http.StatusBadRequest, "Problems parsing JSON", budget)))
 		s := appSource(t, g, creds.InstallationByID(42))
 		_, err := s.Token(t.Context())
-		if fe := forgeError(t, err); fe.Status != http.StatusBadRequest || fe.RetryAfter != time.Minute || fe.Code == forgeapi.CodeReconnectRequired {
-			t.Fatalf("Token() = %+v, want the 400 with a minute's RetryAfter", fe)
+		if fe := forgeError(t, err); fe.Status != http.StatusBadRequest || fe.RetryAfter != time.Minute || fe.Code == forgeapi.CodeReconnectRequired || fe.Remaining != 4000 {
+			t.Fatalf("Token() = %+v, want the 400 with a minute's RetryAfter and its remaining 4000", fe)
 		}
 		_, err = s.Token(t.Context())
 		if fe := forgeError(t, err); fe.Kind != forgeapi.KindUpstream || fe.RetryAfter != time.Minute || g.mints() != 1 {
 			t.Errorf("Token() at once after = %+v after %d requests, want an upstream refusal waiting a minute and no new request", fe, g.mints())
+		}
+		if fe := forgeError(t, err); fe.Status != http.StatusBadRequest || fe.Remaining != 4000 {
+			t.Errorf("Token() at once after = status %d remaining %d, want the 400's own status and remaining 4000", fe.Status, fe.Remaining)
 		}
 		if got := s.State(); got != forgeapi.CredRefreshDue {
 			t.Errorf("State() = %v, want %v", got, forgeapi.CredRefreshDue)

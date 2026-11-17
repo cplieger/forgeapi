@@ -373,8 +373,9 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// [CodeCapabilityUnsupported] sends nothing and still carries the family
 	// detection identified.
 	Family Family
-	// Status is the real HTTP status, and zero exactly where no request was
-	// made. A document error arriving at HTTP 200 keeps the 200.
+	// Status is the real HTTP status of the answer the failure reports, and
+	// zero exactly where it reports none. A document error arriving at HTTP 200
+	// keeps the 200.
 	Status int
 	// Kind is the class of failure.
 	Kind ErrorKind
@@ -397,10 +398,10 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// to say. The governor's deferral names the pool it held the read against.
 	Pool string
 	// Remaining is the remaining figure of the failing answer's own budget
-	// signal, read as [BudgetState.Remaining] is, [BudgetRemainingUnknown] where
-	// the answer carries none. The governor's deferral carries the held pool's.
-	// Every [KindRateLimited] error and every non-2xx answer the instance gave
-	// carries it; on any other error it is zero and states nothing.
+	// signal, read as [BudgetState.Remaining] is, on every error carrying a
+	// Status: [BudgetRemainingUnknown] where the answer carries none, as an OAuth
+	// endpoint's never does. The governor's deferral carries the held pool's. On
+	// any other error it is zero and states nothing.
 	Remaining int
 	// Reset is when the budget window the failing answer reports renews, read
 	// from that answer's own budget signal as [BudgetState.Reset] is: the zero

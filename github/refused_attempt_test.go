@@ -91,3 +91,38 @@ func TestARefusedDocumentAttemptDoesNotDegradeTheConnection(t *testing.T) {
 		t.Errorf("ReadPR after the refusal reached %v, want the one document request", got)
 	}
 }
+
+// A connection at its mutation reserve has the version-set read deferred: setup
+// answers the deferral rather than holding no pin for the connection's life.
+func TestConnectionCapsAnswersADeferredVersionsRead(t *testing.T) {
+	h := newHarness(t, map[string]string{metaRoute: `{}`, versionsRoute: servedVersions})
+	withWitness(h.instance)
+	for _, pair := range [][2]string{{"X-RateLimit-Resource", "core"}, {"X-RateLimit-Remaining", "10"}, {"X-RateLimit-Limit", "5000"}, {"X-RateLimit-Reset", "4102444800"}} {
+		h.instance.answerHeader(pair[0], pair[1])
+	}
+	_, err := h.client.ConnectionCaps(t.Context())
+	var fe *forgeapi.Error
+	if !asForgeError(err, &fe) || fe.Kind != forgeapi.KindRateLimited || fe.Status != 0 || fe.Pool != "core" {
+		t.Fatalf("ConnectionCaps with its pool at the reserve = %v, want the governor's deferral of the core pool", err)
+	}
+	if got := h.instance.arrived(); slices.Contains(got, versionsRoute) {
+		t.Errorf("ConnectionCaps at the reserve reached %v, want the version set held back", got)
+	}
+}
+
+// A metadata read deferred before any witness arrived asked nothing either, so the
+// deferral is answered, never an undetected family.
+func TestConnectionCapsAnswersADeferredMetadataRead(t *testing.T) {
+	h := newHarness(t, map[string]string{metaRoute: `{}`})
+	for _, pair := range [][2]string{{"X-RateLimit-Resource", "core"}, {"X-RateLimit-Remaining", "10"}, {"X-RateLimit-Limit", "5000"}, {"X-RateLimit-Reset", "4102444800"}} {
+		h.instance.answerHeader(pair[0], pair[1])
+	}
+	var fe *forgeapi.Error
+	if _, err := h.client.ConnectionCaps(t.Context()); !asForgeError(err, &fe) || fe.Code != forgeapi.CodeFamilyUndetected {
+		t.Fatalf("Setup: ConnectionCaps over an answer with no witness = %v, want code %q", err, forgeapi.CodeFamilyUndetected)
+	}
+	_, err := h.client.ConnectionCaps(t.Context())
+	if !asForgeError(err, &fe) || fe.Kind != forgeapi.KindRateLimited || fe.Status != 0 || fe.Code != "" {
+		t.Errorf("ConnectionCaps with its pool at the reserve = %v, want the governor's deferral", err)
+	}
+}

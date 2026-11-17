@@ -145,7 +145,7 @@ func (s *AppSource) mintOnce(ctx context.Context, ep *transport.Conn, op string)
 			return issued{sent: sent, answered: answered, expiry: expiry, token: newSecret(a.Token)}, resp.Status, nil
 		}
 	}
-	return issued{}, 0, malformed(ctx, ep, req, resp.Status, "GitHub answered the token request with no token or no future expiry")
+	return issued{}, 0, malformed(ctx, ep, req, resp, "GitHub answered the token request with no token or no future expiry")
 }
 
 // installation answers the installation ID, remembered or looked up.
@@ -175,20 +175,20 @@ func (s *AppSource) installationIn(ctx context.Context, ep *transport.Conn, req 
 	if s.install.by != selectOnly {
 		var one listed
 		if transport.Decode(resp.Body, &one) != nil || one.ID <= 0 {
-			return 0, malformed(ctx, ep, req, resp.Status, "GitHub answered the installation lookup with no installation ID")
+			return 0, malformed(ctx, ep, req, resp, "GitHub answered the installation lookup with no installation ID")
 		}
 		return one.ID, nil
 	}
 	var list []listed
 	if transport.Decode(resp.Body, &list) != nil {
-		return 0, malformed(ctx, ep, req, resp.Status, "GitHub answered the installation list with no list")
+		return 0, malformed(ctx, ep, req, resp, "GitHub answered the installation list with no list")
 	}
 	switch len(list) {
 	case 0:
 		return 0, terminal(ctx, ep, req, resp, forgeapi.KindNotFound, "the GitHub App has no installation: install it on the account the source serves")
 	case 1:
 		if list[0].ID <= 0 {
-			return 0, malformed(ctx, ep, req, resp.Status, "GitHub answered the installation list with no installation ID")
+			return 0, malformed(ctx, ep, req, resp, "GitHub answered the installation list with no installation ID")
 		}
 		return list[0].ID, nil
 	}
@@ -206,6 +206,9 @@ func (s *AppSource) ask(ctx context.Context, ep *transport.Conn, req *transport.
 	if err != nil {
 		f := &failure{err: err}
 		if fe, ok := errors.AsType[*forgeapi.Error](err); ok {
+			if fe.Status != 0 && resp != nil {
+				transport.AnswerFigures(fe, resp.Header, githublimit.Signal, githublimit.Pool)
+			}
 			f.status = fe.Status
 			if fe.Status >= http.StatusMultipleChoices && !fe.Retryable {
 				f.class = failRefused
@@ -229,10 +232,8 @@ func (s *AppSource) refused(ctx context.Context, ep *transport.Conn, req *transp
 		if s.set.Counters.RateLimited != nil {
 			s.set.Counters.RateLimited(forgeapi.FamilyGitHub)
 		}
-		fe := ep.Fail(ctx, req.Op, transport.REST(req.Method), "", forgeapi.KindRateLimited, resp.Status,
-			resp.Quote(joined("GitHub rate-limited the App's request", said)))
+		fe := answered(ctx, ep, req, resp, "", forgeapi.KindRateLimited, resp.Quote(joined("GitHub rate-limited the App's request", said)))
 		fe.Secondary = githublimit.Secondary(resp.Status, resp.Header, secondary)
-		transport.AnswerFigures(fe, resp.Header, githublimit.Signal, githublimit.Pool)
 		return &failure{err: fe, wait: limitWait(resp.Header, time.Now()), status: resp.Status, class: failLimited}
 	}
 	kind, why := forgeapi.KindUpstream, "GitHub refused the request as invalid: the grant's repositories or permissions are the likely cause"
@@ -249,15 +250,25 @@ func (s *AppSource) refused(ctx context.Context, ep *transport.Conn, req *transp
 
 // terminal is a refusal only a human can repair, on GitHub or on the host.
 func terminal(ctx context.Context, ep *transport.Conn, req *transport.Request, resp *transport.Response, kind forgeapi.ErrorKind, message string) *failure {
-	fe := ep.Fail(ctx, req.Op, transport.REST(req.Method), forgeapi.CodeReconnectRequired, kind, resp.Status, resp.Quote(message))
+	fe := answered(ctx, ep, req, resp, forgeapi.CodeReconnectRequired, kind, resp.Quote(message))
 	return &failure{err: fe, status: resp.Status, class: failEnded}
 }
 
 // malformed is a 2xx answer this package cannot read, which costs one more
 // request and no human can repair.
-func malformed(ctx context.Context, ep *transport.Conn, req *transport.Request, status int, message string) *failure {
-	fe := ep.Fail(ctx, req.Op, transport.REST(req.Method), forgeapi.CodeValidation, forgeapi.KindTransient, status, message)
-	return &failure{err: fe, status: status}
+func malformed(ctx context.Context, ep *transport.Conn, req *transport.Request, resp *transport.Response, message string) *failure {
+	fe := answered(ctx, ep, req, resp, forgeapi.CodeValidation, forgeapi.KindTransient, message)
+	return &failure{err: fe, status: resp.Status}
+}
+
+// answered is every failure the mint reaches on resp, GitHub's answer: it carries
+// that answer's status and its figures as the github client reads them, which the
+// source's own connection does not, since its governor must hold no mint. [ask]
+// reads the same figures onto a failure the connection mapped.
+func answered(ctx context.Context, ep *transport.Conn, req *transport.Request, resp *transport.Response, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
+	fe := ep.Fail(ctx, req.Op, transport.REST(req.Method), resp, code, kind, message)
+	transport.AnswerFigures(fe, resp.Header, githublimit.Signal, githublimit.Pool)
+	return fe
 }
 
 // settle applies a failure to the source's standing and answers the error the
@@ -285,25 +296,27 @@ func (s *AppSource) settle(f *failure) (forgeapi.CredState, error) {
 			wait = doubling(limitFirst, limitCeiling, s.limitN)
 			s.limitN++
 		}
-		h := hold{
-			until: now.Add(wait), kind: forgeapi.KindRateLimited,
-			message: "GitHub rate-limited the App source, so it sends nothing until the wait GitHub asked for has passed",
-		}
-		if fe, ok := errors.AsType[*forgeapi.Error](f.err); ok {
-			h.pool, h.remaining, h.reset, h.secondary = fe.Pool, fe.Remaining, fe.Reset, fe.Secondary
-		}
-		s.wake(f, now, &h)
+		s.wake(f, now, f.hold(now.Add(wait), forgeapi.KindRateLimited,
+			"GitHub rate-limited the App source, so it sends nothing until the wait GitHub asked for has passed"))
 	case failRefused:
-		s.wake(f, now, &hold{
-			until: now.Add(doubling(limitFirst, limitCeiling, s.refusedN)), kind: forgeapi.KindUpstream,
-			message: "GitHub refused the App's request with a status the source does not classify, so it waits before sending again",
-		})
+		s.wake(f, now, f.hold(now.Add(doubling(limitFirst, limitCeiling, s.refusedN)), forgeapi.KindUpstream,
+			"GitHub refused the App's request with a status the source does not classify, so it waits before sending again"))
 		s.refusedN++
 	}
 	if s.ended != nil {
 		return forgeapi.CredReconnectRequired, f.err
 	}
 	return forgeapi.CredRefreshDue, f.err
+}
+
+// hold is the wait f starts until that instant, answering kind and message with
+// the status and figures of the answer that started it, as f's own error did.
+func (f *failure) hold(until time.Time, kind forgeapi.ErrorKind, message string) *hold {
+	h := &hold{until: until, kind: kind, message: message, status: f.status}
+	if fe, ok := errors.AsType[*forgeapi.Error](f.err); ok {
+		h.pool, h.remaining, h.reset, h.secondary = fe.Pool, fe.Remaining, fe.Reset, fe.Secondary
+	}
+	return h
 }
 
 // wake extends the hold to h and states the wait in force on f's error. It

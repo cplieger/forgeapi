@@ -70,3 +70,26 @@ func TestARefusedDocumentAttemptDoesNotDegradeTheConnection(t *testing.T) {
 		t.Errorf("ReadPR after the refusal reached %v, want the one document request", got)
 	}
 }
+
+// A connection read the governor deferred sent nothing either, so detection answers
+// the deferral unchanged rather than an undetected family.
+func TestConnectionCapsAnswersADeferredReadUnchanged(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		"GET /api/v4/user": `{"username": "example-user", "name": "Example User"}`,
+		metadataRoute:      `{"version":"17.5.0"}`,
+	})
+	for _, pair := range [][2]string{{"RateLimit-Name", "throttle_authenticated_api"}, {"RateLimit-Remaining", "10"}, {"RateLimit-Limit", "2000"}, {"RateLimit-Reset", "4102444800"}} {
+		h.instance.answerHeader(pair[0], pair[1])
+	}
+	if _, err := h.client.Whoami(t.Context()); err != nil {
+		t.Fatalf("Setup: Whoami = %v", err)
+	}
+	_, err := h.client.ConnectionCaps(t.Context())
+	var fe *forgeapi.Error
+	if !asForgeError(err, &fe) || fe.Kind != forgeapi.KindRateLimited || fe.Status != 0 || fe.Code != "" {
+		t.Fatalf("ConnectionCaps with its pool at the reserve = %v, want the governor's deferral", err)
+	}
+	if fe.Pool != "throttle_authenticated_api" || fe.Remaining != 10 {
+		t.Errorf("ConnectionCaps' deferral = pool %q remaining %d, want the held pool's", fe.Pool, fe.Remaining)
+	}
+}

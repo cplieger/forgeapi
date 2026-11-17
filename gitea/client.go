@@ -24,6 +24,8 @@ type Client struct {
 	caps    *forgeapi.ConnectionCaps
 	swagger *swaggerDoc
 	foldAt  map[string]int
+	// versionAnswer is the answer the version body came on.
+	versionAnswer *transport.Response
 	// resolve is the connection's one resolution owner, a capacity-one channel
 	// so a caller waits for it under its own context (takeResolve). It is held
 	// across the version, swagger and settings READS, not only across the cache
@@ -36,8 +38,7 @@ type Client struct {
 	namedBy string
 	// rerunVerb is the last path segment of the re-run route the swagger
 	// declares, held with caps; empty where it declares none.
-	rerunVerb     string
-	versionStatus int
+	rerunVerb string
 	// maxItems is the instance's stated max_response_items, zero while the
 	// connection holds none.
 	maxItems int

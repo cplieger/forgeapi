@@ -69,23 +69,51 @@ type answer struct {
 	Interval              int64  `json:"interval"`
 }
 
+// reply is what an endpoint answered beside its body: the status, zero where none
+// answered, and the headers.
+type reply struct {
+	header http.Header
+	status int
+}
+
 // post sends one form to one endpoint of a connection and reads the answer. A body
 // that does not decode answers the zero answer, which no caller reads as a token. A
-// failure answers the status beside it where the instance answered one whose body
-// did not arrive, and zero where no status answered.
-func post(ctx context.Context, ep *transport.Conn, op, path string, form url.Values) (answer, int, error) {
+// failure answers the reply beside it where the instance answered one whose body
+// did not arrive, and the zero reply where no status answered.
+func post(ctx context.Context, ep *transport.Conn, op, path string, form url.Values) (answer, reply, error) {
 	resp, err := ep.PostForm(ctx, op, path, form)
+	if resp == nil {
+		return answer{}, reply{}, err
+	}
+	r := reply{header: resp.Header, status: resp.Status}
 	if err != nil {
-		if resp != nil {
-			return answer{}, resp.Status, err
-		}
-		return answer{}, 0, err
+		return answer{}, r, err
 	}
 	var a answer
 	if decodeErr := transport.Decode(resp.Body, &a); decodeErr != nil {
-		return answer{}, resp.Status, nil
+		return answer{}, r, nil
 	}
-	return a, resp.Status, nil
+	return a, r, nil
+}
+
+// endpointFailure is every failure of family's OAuth endpoints this package
+// builds, r being the reply it was reached on: it carries that reply's status,
+// [forgeapi.BudgetRemainingUnknown], since an endpoint's answers state no budget
+// figure, and on a throttle the wait its Retry-After asks for. On the zero reply
+// it carries no status and no figure.
+func endpointFailure(family forgeapi.Family, r reply, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
+	fe := &forgeapi.Error{
+		Code: code, Family: family, Status: r.status, Kind: kind,
+		Retryable: transport.Retryable(kind, r.status), Message: message,
+	}
+	if r.status == 0 {
+		return fe
+	}
+	transport.AnswerFigures(fe, r.header, nil, nil)
+	if kind == forgeapi.KindRateLimited {
+		fe.RetryAfter = transport.RetryAfter(r.header)
+	}
+	return fe
 }
 
 // granted reports whether an answer is a token.
@@ -147,23 +175,17 @@ func seconds(n int64) time.Duration {
 }
 
 // unreadable is the refusal of a token answer [answer.readable] does not admit.
-func unreadable(family forgeapi.Family, status int) *forgeapi.Error {
-	return &forgeapi.Error{
-		Code: forgeapi.CodeValidation, Family: family, Status: status, Kind: forgeapi.KindUpstream,
-		Retryable: transport.Retryable(forgeapi.KindUpstream, status),
-		Message:   "the OAuth endpoint answered a token whose lifetime states neither a rotating nor a static credential",
-	}
+func unreadable(family forgeapi.Family, r reply) *forgeapi.Error {
+	return endpointFailure(family, r, forgeapi.CodeValidation, forgeapi.KindUpstream,
+		"the OAuth endpoint answered a token whose lifetime states neither a rotating nor a static credential")
 }
 
 // tokenless is the refusal of a success answer that carries no token this package
 // can read: a body that does not decode or did not arrive, or one with no access
 // token.
-func tokenless(family forgeapi.Family, status int) *forgeapi.Error {
-	return &forgeapi.Error{
-		Code: forgeapi.CodeValidation, Family: family, Status: status, Kind: forgeapi.KindUpstream,
-		Retryable: transport.Retryable(forgeapi.KindUpstream, status),
-		Message:   "the OAuth endpoint answered a success that carries no token this package can read",
-	}
+func tokenless(family forgeapi.Family, r reply) *forgeapi.Error {
+	return endpointFailure(family, r, forgeapi.CodeValidation, forgeapi.KindUpstream,
+		"the OAuth endpoint answered a success that carries no token this package can read")
 }
 
 // documentedErrors are the error members RFC 6749 section 5.2, RFC 8628 section 3.5
@@ -182,20 +204,12 @@ var documentedErrors = map[string]bool{
 // this package acts on. A throttle, a timeout or a server failure is worth another
 // attempt; anything else names the documented error member the instance sent, so
 // an operator reads what it said.
-func unanswered(family forgeapi.Family, status int, a *answer) *forgeapi.Error {
+func unanswered(family forgeapi.Family, r reply, a *answer) *forgeapi.Error {
 	switch {
-	case status == http.StatusTooManyRequests:
-		return &forgeapi.Error{
-			Family: family, Status: status, Kind: forgeapi.KindRateLimited,
-			Retryable: transport.Retryable(forgeapi.KindRateLimited, status),
-			Message:   "the OAuth endpoint answered too many requests",
-		}
-	case transport.Retryable(forgeapi.KindUnknown, status):
-		return &forgeapi.Error{
-			Family: family, Status: status, Kind: forgeapi.KindTransient,
-			Retryable: transport.Retryable(forgeapi.KindTransient, status),
-			Message:   "the OAuth endpoint answered a timeout or a server failure",
-		}
+	case r.status == http.StatusTooManyRequests:
+		return endpointFailure(family, r, "", forgeapi.KindRateLimited, "the OAuth endpoint answered too many requests")
+	case transport.Retryable(forgeapi.KindUnknown, r.status):
+		return endpointFailure(family, r, "", forgeapi.KindTransient, "the OAuth endpoint answered a timeout or a server failure")
 	}
 	message := "the OAuth endpoint answered no token"
 	switch {
@@ -204,8 +218,5 @@ func unanswered(family forgeapi.Family, status int, a *answer) *forgeapi.Error {
 	case a.Error != "":
 		message = "the OAuth endpoint answered an error member no OAuth document defines"
 	}
-	return &forgeapi.Error{
-		Code: forgeapi.CodeValidation, Family: family, Status: status, Kind: forgeapi.KindUpstream,
-		Retryable: transport.Retryable(forgeapi.KindUpstream, status), Message: message,
-	}
+	return endpointFailure(family, r, forgeapi.CodeValidation, forgeapi.KindUpstream, message)
 }

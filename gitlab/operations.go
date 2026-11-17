@@ -106,7 +106,7 @@ func (c *Client) ownedProjects(ctx context.Context, op string, set *forgeapi.Lis
 		return c.userProjects(ctx, op, owner, query, set, walk)
 	}
 	if owner.group == "" {
-		return forgeapi.Page[forgeapi.Repository]{}, c.ownerUnresolved(ctx, op)
+		return forgeapi.Page[forgeapi.Repository]{}, c.ownerUnresolved(ctx, op, owner.lookup)
 	}
 	query.Set("include_subgroups", "true")
 	query.Set("with_shared", "false")
@@ -122,7 +122,7 @@ func (c *Client) ownedProjects(ctx context.Context, op string, set *forgeapi.Lis
 // userProjects reads one page of the owner's personal namespace.
 func (c *Client) userProjects(ctx context.Context, op string, owner ownerRoutes, query url.Values, set *forgeapi.ListSettings, walk restWalk) (forgeapi.Page[forgeapi.Repository], error) {
 	if owner.user == "" {
-		return forgeapi.Page[forgeapi.Repository]{}, c.ownerUnresolved(ctx, op)
+		return forgeapi.Page[forgeapi.Repository]{}, c.ownerUnresolved(ctx, op, owner.lookup)
 	}
 	return c.projectPage(ctx, op, "/users/"+owner.user+"/projects", query, set, walk)
 }
@@ -131,6 +131,9 @@ func (c *Client) userProjects(ctx context.Context, op string, owner ownerRoutes,
 // escaped :id and the user route's :user_id, each empty where no such namespace can
 // hold the name.
 type ownerRoutes struct {
+	// lookup is the answer the routes were resolved on, nil where the name alone
+	// addressed them.
+	lookup      *transport.Response
 	group, user string
 }
 
@@ -152,18 +155,18 @@ func (c *Client) ownerRoutes(ctx context.Context, op, owner string) (ownerRoutes
 		return ownerRoutes{}, err
 	}
 	if result.Partial {
-		return ownerRoutes{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream,
-			result.Status, "the OwnerLookup document answered in part: "+result.Refusal)
+		return ownerRoutes{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
+			result.Answer, "", forgeapi.KindUpstream, "the OwnerLookup document answered in part: "+result.Refusal)
 	}
 	group, groupRead := globalID(payload.Group)
 	user, userRead := globalID(payload.User)
 	if !groupRead || !userRead {
-		return ownerRoutes{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status, errGlobalIDUnreadable)
+		return ownerRoutes{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Answer, errGlobalIDUnreadable)
 	}
 	if group == "" && user == "" {
-		return ownerRoutes{}, c.ownerUnresolved(ctx, op)
+		return ownerRoutes{}, c.ownerUnresolved(ctx, op, result.Answer)
 	}
-	return ownerRoutes{group: group, user: user}, nil
+	return ownerRoutes{lookup: result.Answer, group: group, user: user}, nil
 }
 
 // globalID is the numeric id a node's global id ends in ("gid://gitlab/Group/42"),
@@ -188,16 +191,20 @@ func gidNumber(gid string) (int64, bool) {
 	return id, true
 }
 
-// ownerUnresolved is the answer for an owner no namespace the route needs holds.
-func (c *Client) ownerUnresolved(ctx context.Context, op string) error {
-	return c.core.Fail(ctx, op, transport.Document(http.MethodPost), forgeapi.CodeOwnerUnresolved, forgeapi.KindNotFound,
-		http.StatusOK, "no namespace this list reads holds that owner")
+// ownerUnresolved is the answer for an owner no namespace the route needs holds,
+// reached on lookup, the owner lookup's answer, or on no exchange where it is nil.
+func (c *Client) ownerUnresolved(ctx context.Context, op string, lookup *transport.Response) error {
+	var ex transport.Exchange
+	if lookup != nil {
+		ex = transport.Document(http.MethodPost)
+	}
+	return c.core.Fail(ctx, op, ex, lookup, forgeapi.CodeOwnerUnresolved, forgeapi.KindNotFound, "no namespace this list reads holds that owner")
 }
 
 // projectPage reads one page of a project listing route.
 func (c *Client) projectPage(ctx context.Context, op, route string, query url.Values, set *forgeapi.ListSettings, walk restWalk) (forgeapi.Page[forgeapi.Repository], error) {
 	var rows []restProject
-	header, err := c.readListed(ctx, op, route, query, set, &rows)
+	resp, err := c.readListed(ctx, op, route, query, set, &rows)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.Repository](err); ok {
 			return page, nil
@@ -208,7 +215,7 @@ func (c *Client) projectPage(ctx context.Context, op, route string, query url.Va
 	for i := range rows {
 		items = append(items, normalizeRepo(&rows[i]))
 	}
-	next := walk.next(header)
+	next := walk.next(headerOf(resp))
 	return forgeapi.Page[forgeapi.Repository]{
 		Items:   items,
 		Next:    next,
@@ -283,14 +290,14 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	if payload.Project == nil {
-		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound, http.StatusOK,
+		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound,
 			"the document resolved no project for this selector")
 	}
 	c.recordPermissions(payload.Project)
 	rows := payload.Project.MergeRequests
 	if rows == nil {
-		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errMergeRequestsNull)
+		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Answer, errMergeRequestsNull)
 	}
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
@@ -368,7 +375,7 @@ func (c *Client) degradedPullPage(ctx context.Context, op string, repo forgeapi.
 		return bounded, nil
 	}
 	var rows []restMergeRequest
-	header, err := c.readJSON(ctx, op, projectRoute(repo, "/merge_requests"), query, &rows)
+	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/merge_requests"), query, &rows)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
 			return page, nil
@@ -379,7 +386,7 @@ func (c *Client) degradedPullPage(ctx context.Context, op string, repo forgeapi.
 	for i := range rows {
 		items = append(items, c.normalizeRESTPull(&rows[i], repo, restDegraded))
 	}
-	next := walk.next(header)
+	next := walk.next(headerOf(resp))
 	return forgeapi.Page[forgeapi.PullRequest]{
 		Items:   items,
 		Next:    next,
@@ -415,7 +422,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	}
 	query.Set(keyLabelDetails, "true")
 	var rows []restMergeRequest
-	header, err := c.readListed(ctx, op, route, query, &set, &rows)
+	resp, err := c.readListed(ctx, op, route, query, &set, &rows)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
 			return page, nil
@@ -429,7 +436,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	if err := c.resolveForks(ctx, op, rows, items); err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	next := walk.next(header)
+	next := walk.next(headerOf(resp))
 	return forgeapi.Page[forgeapi.PullRequest]{
 		Items:   items,
 		Next:    next,
@@ -553,23 +560,24 @@ func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.
 		return c.degradedRead(ctx, op, repo, pr)
 	}
 	var payload docPayload
-	if _, err := c.execute(ctx, op, prRead, map[string]any{
+	result, err := c.execute(ctx, op, prRead, map[string]any{
 		varFullPath: repo.Selector,
 		"iid":       strconv.Itoa(pr.Number),
 		"reviews":   reviews,
-	}, &payload); err != nil {
+	}, &payload)
+	if err != nil {
 		return mergeRequestRead{}, err
 	}
 	if payload.Project == nil {
-		return mergeRequestRead{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound, http.StatusOK,
+		return mergeRequestRead{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound,
 			"the document resolved no project for this selector")
 	}
 	c.recordPermissions(payload.Project)
 	node := payload.Project.MergeRequest
 	if node == nil {
-		return mergeRequestRead{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-			forgeapi.CodePRNotFound, forgeapi.KindNotFound, http.StatusOK,
+		return mergeRequestRead{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodePRNotFound, forgeapi.KindNotFound,
 			"the document resolved the project and no merge request with that number")
 	}
 	return mergeRequestRead{
@@ -710,7 +718,7 @@ func (c *Client) rerunTarget(ctx context.Context, op string, repo forgeapi.RepoR
 	}
 	ex := transport.Document(http.MethodPost)
 	refuse := func(code string, kind forgeapi.ErrorKind, message string) error {
-		return c.core.Fail(ctx, op, ex, code, kind, result.Status, message)
+		return c.core.Fail(ctx, op, ex, result.Answer, code, kind, message)
 	}
 	var node *docMergeRequest
 	switch {
@@ -737,7 +745,7 @@ func (c *Client) rerunTarget(ctx context.Context, op string, repo forgeapi.RepoR
 		target.Project, projectRead = gidNumber(p.Project.ID)
 	}
 	if !idRead || !projectRead {
-		return transport.RunTarget{}, c.core.FailBody(ctx, op, ex, result.Status, errPipelineIDUnreadable)
+		return transport.RunTarget{}, c.core.FailBody(ctx, op, ex, result.Answer, errPipelineIDUnreadable)
 	}
 	return target, nil
 }
@@ -745,7 +753,8 @@ func (c *Client) rerunTarget(ctx context.Context, op string, repo forgeapi.RepoR
 // restRerunTarget is [Client.rerunTarget] on a connection whose documents are refused.
 func (c *Client) restRerunTarget(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, pin string) (transport.RunTarget, error) {
 	var record restMergeRequest
-	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/merge_requests/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
+	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/merge_requests/"+strconv.Itoa(pr.Number)), nil, &record)
+	if err != nil {
 		return transport.RunTarget{}, err
 	}
 	p := record.HeadPipeline
@@ -758,7 +767,7 @@ func (c *Client) restRerunTarget(ctx context.Context, op string, repo forgeapi.R
 		state = pipelineState(p.Status)
 	}
 	if r := pipelineRefusal(record.SHA, pin, state); r != nil {
-		return transport.RunTarget{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), r.code, r.kind, http.StatusOK, r.message)
+		return transport.RunTarget{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, r.code, r.kind, r.message)
 	}
 	target := transport.RunTarget{ID: p.ID}
 	if p.ProjectID != 0 && (record.TargetProjectID == nil || *record.TargetProjectID != p.ProjectID) {
@@ -837,10 +846,10 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 
 // readPipelines is [Client.ListRuns]' read of a project's pipelines. It answers the
 // headers beside the rows, because the listing's next page rides there.
-func (c *Client) readPipelines(ctx context.Context, op string, repo forgeapi.RepoRef, query url.Values) ([]restPipeline, http.Header, error) {
+func (c *Client) readPipelines(ctx context.Context, op string, repo forgeapi.RepoRef, query url.Values) ([]restPipeline, *transport.Response, error) {
 	var pipelines []restPipeline
-	header, err := c.readJSON(ctx, op, projectRoute(repo, "/pipelines"), query, &pipelines)
-	return pipelines, header, err
+	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/pipelines"), query, &pipelines)
+	return pipelines, resp, err
 }
 
 // ListRuns implements [forgeapi.Checks].
@@ -867,18 +876,18 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 	if bounded, ok := c.unpagedList[forgeapi.Run](walk.here()); ok {
 		return bounded, nil
 	}
-	rows, header, err := c.readPipelines(ctx, op, repo, query)
+	rows, resp, err := c.readPipelines(ctx, op, repo, query)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.Run](err); ok {
 			return page, nil
 		}
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	items, err := c.pipelinesSince(ctx, op, rows, repo, &set)
+	items, err := c.pipelinesSince(ctx, op, resp, rows, repo, &set)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	next := walk.next(header)
+	next := walk.next(headerOf(resp))
 	return forgeapi.Page[forgeapi.Run]{
 		Items:   items,
 		Next:    next,
@@ -889,16 +898,16 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 // pipelinesSince normalizes one page's pipelines and drops those created before the
 // call's since bound. A row with no id or a negative iid, or with no creation time
 // under a bound, is refused rather than published or read as older.
-func (c *Client) pipelinesSince(ctx context.Context, op string, rows []restPipeline, repo forgeapi.RepoRef, set *forgeapi.ListSettings) ([]forgeapi.Run, error) {
+func (c *Client) pipelinesSince(ctx context.Context, op string, answer *transport.Response, rows []restPipeline, repo forgeapi.RepoRef, set *forgeapi.ListSettings) ([]forgeapi.Run, error) {
 	items := make([]forgeapi.Run, 0, len(rows))
 	for i := range rows {
 		switch {
 		case rows[i].ID <= 0:
-			return nil, c.refusePipeline(ctx, op, "the pipeline listing answered a pipeline with no id, which is the pipeline's identity")
+			return nil, c.refusePipeline(ctx, op, answer, "the pipeline listing answered a pipeline with no id, which is the pipeline's identity")
 		case rows[i].IID < 0:
-			return nil, c.refusePipeline(ctx, op, "the pipeline listing answered a negative iid, which is no place in the project's pipeline sequence")
+			return nil, c.refusePipeline(ctx, op, answer, "the pipeline listing answered a negative iid, which is no place in the project's pipeline sequence")
 		case set.SinceSet && rows[i].CreatedAt.IsZero():
-			return nil, c.refusePipeline(ctx, op, "the pipeline listing answered a pipeline with no creation time, so it cannot be held to the since bound")
+			return nil, c.refusePipeline(ctx, op, answer, "the pipeline listing answered a pipeline with no creation time, so it cannot be held to the since bound")
 		case set.SinceSet && rows[i].CreatedAt.Before(set.Since):
 			continue
 		}
@@ -908,8 +917,8 @@ func (c *Client) pipelinesSince(ctx context.Context, op string, rows []restPipel
 }
 
 // refusePipeline is the failure a pipeline row this family will not publish answers.
-func (c *Client) refusePipeline(ctx context.Context, op, message string) error {
-	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation, forgeapi.KindUpstream, http.StatusOK, message)
+func (c *Client) refusePipeline(ctx context.Context, op string, answer *transport.Response, message string) error {
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), answer, forgeapi.CodeValidation, forgeapi.KindUpstream, message)
 }
 
 // MergePR implements [forgeapi.Merges].
@@ -1065,7 +1074,7 @@ func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr 
 	case "success", "error":
 		return nil
 	}
-	return c.core.Fail(ctx, op, transport.REST(http.MethodPost), "", forgeapi.KindUpstream, resp.Status,
+	return c.core.Fail(ctx, op, transport.REST(http.MethodPost), resp, "", forgeapi.KindUpstream,
 		"the cancel answered status "+strconv.Quote(resp.Quote(answer.Status))+", which says neither that it disarmed the auto-merge nor that none was armed")
 }
 
@@ -1120,12 +1129,12 @@ func (c *Client) foldStatus(ctx context.Context, op string, repo forgeapi.RepoRe
 			keyPerPage: {strconv.Itoa(maxStatusPageItems)},
 		}
 		var answered []restStatus
-		header, err := c.readJSON(ctx, op, path, query, &answered)
+		resp, err := c.readJSON(ctx, op, path, query, &answered)
 		if err != nil {
 			return forgeapi.CommitChecks{}, err
 		}
 		rows = append(rows, answered...)
-		_, truncated = nextPage(header)
+		_, truncated = nextPage(headerOf(resp))
 		if !truncated {
 			break
 		}
@@ -1282,7 +1291,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 // where the call addressed none, and the continuation the next-page header names.
 func (c *Client) readIssuePage(ctx context.Context, op, route string, query url.Values, set *forgeapi.ListSettings, repo forgeapi.RepoRef, walk restWalk) (forgeapi.Page[forgeapi.Issue], error) {
 	var rows []restIssue
-	header, err := c.readListed(ctx, op, route, query, set, &rows)
+	resp, err := c.readListed(ctx, op, route, query, set, &rows)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.Issue](err); ok {
 			return page, nil
@@ -1293,7 +1302,7 @@ func (c *Client) readIssuePage(ctx context.Context, op, route string, query url.
 	for i := range rows {
 		items = append(items, c.normalizeIssue(&rows[i], repo))
 	}
-	next := walk.next(header)
+	next := walk.next(headerOf(resp))
 	return forgeapi.Page[forgeapi.Issue]{
 		Items:   items,
 		Next:    next,
@@ -1384,7 +1393,7 @@ func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts .
 		return bounded, nil
 	}
 	var rows []restRelease
-	header, err := c.readJSON(ctx, op, projectRoute(repo, "/releases"), query, &rows)
+	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/releases"), query, &rows)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.Release](err); ok {
 			return page, nil
@@ -1395,7 +1404,7 @@ func (c *Client) ListReleases(ctx context.Context, repo forgeapi.RepoRef, opts .
 	for i := range rows {
 		items = append(items, normalizeRelease(&rows[i]))
 	}
-	next := walk.next(header)
+	next := walk.next(headerOf(resp))
 	return forgeapi.Page[forgeapi.Release]{
 		Items:   items,
 		Next:    next,
@@ -1449,14 +1458,14 @@ func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...
 		return bounded, nil
 	}
 	var rows []restLabel
-	header, err := c.readJSON(ctx, op, projectRoute(repo, "/labels"), query, &rows)
+	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/labels"), query, &rows)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.Label](err); ok {
 			return page, nil
 		}
 		return forgeapi.Page[forgeapi.Label]{}, err
 	}
-	next := walk.next(header)
+	next := walk.next(headerOf(resp))
 	return forgeapi.Page[forgeapi.Label]{
 		Items:   normalizeLabels(rows),
 		Next:    next,
@@ -1500,7 +1509,8 @@ func labelRoute(repo forgeapi.RepoRef, target forgeapi.LabelTarget) (string, err
 func (c *Client) checkDefined(ctx context.Context, op string, repo forgeapi.RepoRef, names []string) error {
 	query := url.Values{keyPage: {"1"}, keyPerPage: {strconv.Itoa(maxLabelPageItems)}}
 	var rows []restLabel
-	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/labels"), query, &rows); err != nil {
+	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/labels"), query, &rows)
+	if err != nil {
 		return err
 	}
 	defined := make(map[string]bool, len(rows))
@@ -1515,7 +1525,7 @@ func (c *Client) checkDefined(ctx context.Context, op string, repo forgeapi.Repo
 		if len(rows) >= maxLabelPageItems {
 			code, read = forgeapi.CodeLabelPageTruncated, "which came back full, so the list continues past it"
 		}
-		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), code, forgeapi.KindUpstream, http.StatusOK,
+		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, code, forgeapi.KindUpstream,
 			"no label named "+name+" on the first page of this project's labels, bounded at "+
 				strconv.Itoa(maxLabelPageItems)+", "+read)
 	}

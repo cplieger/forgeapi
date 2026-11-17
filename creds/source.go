@@ -37,13 +37,13 @@ const (
 func ended(rec *Record, st standing) error {
 	switch st {
 	case standLapsed:
-		return reconnect(rec, 0, "the refresh token is past its own expiry")
+		return reconnect(rec, reply{}, "the refresh token is past its own expiry")
 	case standSpent:
-		return reconnect(rec, 0, "the stored credential is spent: the instance rotated it and the pair it issued was lost")
+		return reconnect(rec, reply{}, "the stored credential is spent: the instance rotated it and the pair it issued was lost")
 	case standRefused:
-		return reconnect(rec, 0, "the product refused a refresh of the stored credential")
+		return reconnect(rec, reply{}, "the product refused a refresh of the stored credential")
 	}
-	return reconnect(rec, 0, "no stored credential can be handed over or renewed")
+	return reconnect(rec, reply{}, "no stored credential can be handed over or renewed")
 }
 
 // maxTurns bounds how many times one Token call reads the record again after a
@@ -280,7 +280,8 @@ func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string
 	}
 
 	rot.owner.setBusy(true)
-	next, status, v, err := s.exchange(ctx, &cur)
+	next, r, v, err := s.exchange(ctx, &cur)
+	status := r.status
 	rot.owner.setBusy(false)
 	if v != rotated && s.replaced(&cur) {
 		return "", true, nil
@@ -288,7 +289,7 @@ func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string
 	switch v {
 	case refused:
 		s.mark(rot, &cur, UsabilityReconnectRequired, status, "the refresh was answered terminally")
-		return "", false, reconnect(&cur, status, "the product refused the refresh token")
+		return "", false, reconnect(&cur, r, "the product refused the refresh token")
 	case unspent:
 		s.outcome(&cur, forgeapi.CredRefreshDue, status, "the refresh failed")
 		return keep(&cur, err)
@@ -297,7 +298,7 @@ func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string
 		return "", false, err
 	case misaddressed:
 		s.mark(rot, &cur, UsabilityReconnectRequired, 0, "the record's web base URL is not an origin and a path")
-		return "", false, reconnect(&cur, 0, "the record's web base URL is not an origin and a path")
+		return "", false, reconnect(&cur, reply{}, "the record's web base URL is not an origin and a path")
 	}
 	return s.storeRotated(rot, &cur, &next, status)
 }
@@ -408,37 +409,37 @@ const (
 // The request runs on a context the caller cannot cancel, bounded by the
 // connection's operation deadline: a refresh the instance has processed has
 // already spent the old pair, and the answer is the only copy of the new one.
-func (s *StoredSource) exchange(ctx context.Context, cur *Record) (next Record, status int, v verdict, err error) {
+func (s *StoredSource) exchange(ctx context.Context, cur *Record) (next Record, r reply, v verdict, err error) {
 	ends, _ := endpointsOf(cur.Family)
 	conn := s.conn
 	conn.WebBaseURL = cur.WebBaseURL
 	ep, err := transport.OpenEndpoint(&conn, &s.set, cur.Family)
 	if fe, ok := errors.AsType[*forgeapi.Error](err); ok && fe.Code == forgeapi.CodeConnectionInvalid {
-		return Record{}, 0, misaddressed, err
+		return Record{}, reply{}, misaddressed, err
 	}
 	if err != nil {
-		return Record{}, 0, unspent, err
+		return Record{}, reply{}, unspent, err
 	}
 	defer ep.Close()
 	form := url.Values{formClientID: {cur.ClientID}, "grant_type": {refreshGrantType}, "refresh_token": {cur.RefreshToken}}
-	a, status, err := post(context.WithoutCancel(ctx), ep, "Token", ends.grant, form)
+	a, r, err := post(context.WithoutCancel(ctx), ep, "Token", ends.grant, form)
 	switch {
-	case err != nil && status != 0 && a.succeeded(status):
+	case err != nil && r.status != 0 && a.succeeded(r.status):
 		// A success whose body did not arrive: the instance issued a pair, which
 		// spent the stored one, and none of it can be read.
-		return Record{}, status, spent, tokenless(cur.Family, status)
+		return Record{}, r, spent, tokenless(cur.Family, r)
 	case err != nil:
-		return Record{}, status, unspent, err
-	case a.granted(status) && !a.readable():
-		return Record{}, status, spent, unreadable(cur.Family, status)
-	case a.granted(status):
-		return minted(cur, &a, time.Now()), status, rotated, nil
-	case a.succeeded(status):
-		return Record{}, status, spent, tokenless(cur.Family, status)
+		return Record{}, r, unspent, err
+	case a.granted(r.status) && !a.readable():
+		return Record{}, r, spent, unreadable(cur.Family, r)
+	case a.granted(r.status):
+		return minted(cur, &a, time.Now()), r, rotated, nil
+	case a.succeeded(r.status):
+		return Record{}, r, spent, tokenless(cur.Family, r)
 	case a.Error == errBadRefreshToken, a.Error == errInvalidGrant:
-		return Record{}, status, refused, nil
+		return Record{}, r, refused, nil
 	}
-	return Record{}, status, unspent, unanswered(cur.Family, status, &a)
+	return Record{}, r, unspent, unanswered(cur.Family, r, &a)
 }
 
 // keep is what a refresh that failed before the instance issued anything hands
@@ -474,14 +475,10 @@ func (s *StoredSource) outcome(rec *Record, reached forgeapi.CredState, status i
 }
 
 // reconnect is the refusal Token answers once the machine is reconnect-required.
-// status is the instance's where a terminal answer reached it, and zero where the
-// verdict was the stored record's alone.
-func reconnect(rec *Record, status int, message string) error {
-	return &forgeapi.Error{
-		Code: forgeapi.CodeReconnectRequired, Family: rec.Family, Status: status,
-		Kind: forgeapi.KindUnauthorized, Retryable: transport.Retryable(forgeapi.KindUnauthorized, status),
-		Message: message,
-	}
+// r is the instance's reply where a terminal answer reached it, and the zero reply
+// where the verdict was the stored record's alone.
+func reconnect(rec *Record, r reply, message string) error {
+	return endpointFailure(rec.Family, r, forgeapi.CodeReconnectRequired, forgeapi.KindUnauthorized, message)
 }
 
 // hostOf is a web base URL's host, for a log line, and empty where it does not

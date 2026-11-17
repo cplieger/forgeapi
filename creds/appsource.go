@@ -69,10 +69,10 @@ type AppSource struct {
 	instance string
 	renew    renewal
 	conn     forgeapi.Connection
-	wait     hold
 	install  Installation
 	grant    AppGrant
 	set      forgeapi.Settings
+	wait     hold
 	mu       sync.Mutex
 	id       int64
 	endedN   int
@@ -106,6 +106,7 @@ type hold struct {
 	pool      string
 	kind      forgeapi.ErrorKind
 	remaining int
+	status    int
 	secondary bool
 }
 
@@ -329,8 +330,8 @@ func (s *AppSource) known() (int64, bool) {
 }
 
 // held is what a call answers before the instant the source sends nothing
-// until: the terminal refusal while one stands, else the hold's own failure
-// with the time left. It answers nil once that instant has passed.
+// until: the terminal refusal while one stands, else the hold's own failure,
+// with its answer's status and figures and the time left. It answers nil once that instant has passed.
 func (s *AppSource) held(op string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -341,8 +342,8 @@ func (s *AppSource) held(op string, now time.Time) error {
 		return copyOf(s.ended)
 	}
 	return &forgeapi.Error{
-		Op: op, Family: forgeapi.FamilyGitHub, Kind: s.wait.kind,
-		Retryable: transport.Retryable(s.wait.kind, 0), Message: s.wait.message,
+		Op: op, Family: forgeapi.FamilyGitHub, Status: s.wait.status, Kind: s.wait.kind,
+		Retryable: transport.Retryable(s.wait.kind, s.wait.status), Message: s.wait.message,
 		RetryAfter: s.wait.until.Sub(now), Pool: s.wait.pool, Remaining: s.wait.remaining,
 		Reset: s.wait.reset, Secondary: s.wait.secondary,
 	}

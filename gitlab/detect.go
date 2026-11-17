@@ -51,15 +51,15 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 		return *caps, nil
 	}
 	var meta restMetadata
-	header, err := c.readJSON(ctx, op, "/metadata", nil, &meta)
+	resp, err := c.readJSON(ctx, op, "/metadata", nil, &meta)
 	if sentinel := transport.ContextSentinel(err); sentinel != nil {
 		return forgeapi.ConnectionCaps{}, sentinel
 	}
-	if transport.IsRefused(err) {
+	if transport.IsRefused(err) || transport.IsDeferred(err) {
 		return forgeapi.ConnectionCaps{}, err
 	}
-	if header.Get(headerMeta) == "" {
-		return forgeapi.ConnectionCaps{}, c.undetected(ctx, op, err)
+	if headerOf(resp).Get(headerMeta) == "" {
+		return forgeapi.ConnectionCaps{}, c.undetected(ctx, op, resp, err)
 	}
 	rerun, ev := rerunCapability(&meta, err)
 	var version string
@@ -116,16 +116,16 @@ func rerunCapability(meta *restMetadata, err error) (forgeapi.Support, forgeapi.
 // undetected is the refusal a connection whose family cannot be established answers.
 // It carries the real status where a request was made and answered, because the
 // request WAS made and identified no family, which is what separates this code from
-// the refusals reached before anything was sent.
-func (c *Client) undetected(ctx context.Context, op string, err error) *forgeapi.Error {
-	status := http.StatusOK
+// the refusals reached before anything was sent: err's own where the read failed,
+// else resp's.
+func (c *Client) undetected(ctx context.Context, op string, resp *transport.Response, err error) *forgeapi.Error {
+	const message = "no witness of this family on the instance: the metadata response carries no " + headerMeta +
+		" header, which this product sends on every response including a refusal"
 	var fe *forgeapi.Error
 	if asForgeError(err, &fe) {
-		status = fe.Status
+		return c.core.FailOn(ctx, op, transport.REST(http.MethodGet), fe, forgeapi.CodeFamilyUndetected, forgeapi.KindUnknown, message)
 	}
-	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeFamilyUndetected, forgeapi.KindUnknown, status,
-		"no witness of this family on the instance: the metadata response carries no "+headerMeta+
-			" header, which this product sends on every response including a refusal")
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, forgeapi.CodeFamilyUndetected, forgeapi.KindUnknown, message)
 }
 
 func (c *Client) cachedCaps() *forgeapi.ConnectionCaps {

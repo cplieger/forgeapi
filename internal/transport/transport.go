@@ -1147,7 +1147,7 @@ func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *ht
 	}
 	body, readErr := httpclient.ReadLimitedBody(resp.Body, bodyLimit(req))
 	if readErr != nil {
-		return nil, c.bodyError(ctx, req, resp.StatusCode, readErr, started)
+		return nil, c.bodyError(ctx, req, out, readErr, started)
 	}
 	out.Body = body
 	if x.Answered() {
@@ -1552,22 +1552,46 @@ func (c *Conn) fail(op, code string, kind forgeapi.ErrorKind, status int, messag
 
 // Fail builds a failure the family reached after a request: it names the operation
 // and the family, so it carries a diagnostic id, and the line that id names is
-// recorded here rather than left to the caller.
+// recorded here rather than left to the caller. It carries answer's status and
+// figures ([Conn.answered]), none where answer is nil because none arrived.
 //
 // The exchange is the one the family reached this failure ON, which only the family
 // knows: the response is already in its hand and this core never saw which of the
 // two arms answered it.
-func (c *Conn) Fail(ctx context.Context, op string, ex Exchange, code string, kind forgeapi.ErrorKind, status int, message string) *forgeapi.Error {
-	fe := c.fail(op, code, kind, status, message)
+func (c *Conn) Fail(ctx context.Context, op string, ex Exchange, answer *Response, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
+	fe := c.answered(op, code, kind, answer, message)
 	c.record(ctx, op, ex, fe)
+	return fe
+}
+
+// FailOn is [Conn.Fail] for a failure the family reached on cause, an earlier
+// failure of the same exchange: it carries cause's status and figures, which
+// cause took from its own answer where one arrived.
+func (c *Conn) FailOn(ctx context.Context, op string, ex Exchange, cause *forgeapi.Error, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
+	fe := c.fail(op, code, kind, cause.Status, message)
+	fe.Pool, fe.Remaining, fe.Reset, fe.Secondary = cause.Pool, cause.Remaining, cause.Reset, cause.Secondary
+	c.record(ctx, op, ex, fe)
+	return fe
+}
+
+// answered is [Conn.fail] for a failure reached on answer, the instance's answer:
+// it carries that answer's status and its own figures ([AnswerFigures]), read by
+// this connection's readers, so no failure built from an answer can carry a status
+// without them. A nil answer is a failure no answer reached, with no status.
+func (c *Conn) answered(op, code string, kind forgeapi.ErrorKind, answer *Response, message string) *forgeapi.Error {
+	if answer == nil {
+		return c.fail(op, code, kind, 0, message)
+	}
+	fe := c.fail(op, code, kind, answer.Status, message)
+	AnswerFigures(fe, answer.Header, c.signal, c.pool)
 	return fe
 }
 
 // FailBody is what a response body that decoded but is not an answer earns. cause is
 // the non-nil sentinel naming the check that failed, which the line carries as its
 // error; the returned message is [bodyFailure]'s whatever the check.
-func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, status int, cause error) *forgeapi.Error {
-	fe := c.bodyFailure(op, status)
+func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, answer *Response, cause error) *forgeapi.Error {
+	fe := c.bodyFailure(op, answer)
 	c.emit(ctx, &Request{Op: op}, familyEntry(ctx, ex, fe, cause.Error()))
 	return fe
 }
@@ -1577,7 +1601,7 @@ func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, status int,
 // since a decode error can quote an instance string whole, and the body's content
 // type and length beside it, never the body.
 func (c *Conn) FailDecode(ctx context.Context, op string, ex Exchange, resp *Response, cause error) *forgeapi.Error {
-	fe := c.bodyFailure(op, resp.Status)
+	fe := c.bodyFailure(op, resp)
 	e := familyEntry(ctx, ex, fe, decodeText(resp, cause))
 	e.header, e.answer = resp.Header, resp
 	c.emit(ctx, &Request{Op: op}, e)
@@ -1587,7 +1611,7 @@ func (c *Conn) FailDecode(ctx context.Context, op string, ex Exchange, resp *Res
 // failDecode is [Conn.FailDecode] for [Conn.Do]'s own decode into [Request.Into], whose
 // line is the exchange's one line, with that request's attempt, retry and duration.
 func (c *Conn) failDecode(ctx context.Context, req *Request, resp *Response, cause error, started time.Time) *forgeapi.Error {
-	fe := c.bodyFailure(req.Op, resp.Status)
+	fe := c.bodyFailure(req.Op, resp)
 	c.emit(ctx, req, &entry{
 		header: resp.Header, answer: resp, ex: exchange(req), code: fe.Code, diag: fe.DiagID,
 		cause: decodeText(resp, cause), sent: requestSlot(ctx).since(started),
@@ -1603,8 +1627,8 @@ func (c *Conn) failDecode(ctx context.Context, req *Request, resp *Response, cau
 // status is the real one always, and it is immediately wrong on a creation, which
 // answers 201. The code is the validation one, so a consumer branching on it is
 // handed the class a response this library will not accept already carries.
-func (c *Conn) bodyFailure(op string, status int) *forgeapi.Error {
-	return c.fail(op, forgeapi.CodeValidation, forgeapi.KindUpstream, status, "response body did not decode")
+func (c *Conn) bodyFailure(op string, answer *Response) *forgeapi.Error {
+	return c.answered(op, forgeapi.CodeValidation, forgeapi.KindUpstream, answer, "response body did not decode")
 }
 
 // decodeText is a decode error as a line carries it. A nil cause is a caller's bug,
@@ -1754,10 +1778,9 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 		verdict = c.mapper(req.Op, resp.Status, resp.Header, member)
 	}
 	kind, code := verdict.Kind, verdict.Code
-	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
+	fe := c.answered(req.Op, code, kind, resp, resp.Quote(answer.text(code)))
 	fe.Needs = resp.Quote(verdict.Needs) // upstream text, made safe as the message is
 	fe.Secondary = kind == forgeapi.KindRateLimited && verdict.Secondary
-	AnswerFigures(fe, resp.Header, c.signal, c.pool)
 	if kind == forgeapi.KindRateLimited {
 		fe.RetryAfter = httpclient.ParseRetryAfter(resp.Header.Get("Retry-After"))
 		if c.counters.RateLimited != nil {

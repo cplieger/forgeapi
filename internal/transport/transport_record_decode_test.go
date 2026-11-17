@@ -121,7 +121,7 @@ func TestABodyFailureCarriesTheCheckThatFailed(t *testing.T) {
 	var buf bytes.Buffer
 	c := openTestConn(t, forgeapi.Connection{WebBaseURL: "http://forge.example"}, forgeapi.WithLogger(recordingLogger(&buf)))
 	check := errors.New("rows are null")
-	fe := c.FailBody(Call(t.Context(), "ListThings"), "ListThings", REST(http.MethodGet), http.StatusOK, check)
+	fe := c.FailBody(Call(t.Context(), "ListThings"), "ListThings", REST(http.MethodGet), &Response{Status: http.StatusOK}, check)
 	if fe.Message != "response body did not decode" {
 		t.Errorf("FailBody = message %q, want response body did not decode", fe.Message)
 	}

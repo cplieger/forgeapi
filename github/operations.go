@@ -102,7 +102,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	items := make([]forgeapi.Repository, 0, len(rows))
 	for i := range rows {
 		if rows[i].FullName == "" {
-			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp.Status, errFullNameEmpty)
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.REST(http.MethodGet), resp, errFullNameEmpty)
 		}
 		items = append(items, normalizeRepo(&rows[i]))
 	}
@@ -142,22 +142,22 @@ func (c *Client) ownedRepos(ctx context.Context, op string, set *forgeapi.ListSe
 	}
 	if payload.Owner == nil {
 		if result.RootFailure != "" {
-			return forgeapi.Page[forgeapi.Repository]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-				"", forgeapi.KindUpstream, result.Status,
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+				"", forgeapi.KindUpstream,
 				"the RepoOwned document could not resolve the owner: "+result.RootFailure)
 		}
-		return forgeapi.Page[forgeapi.Repository]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-			forgeapi.CodeOwnerUnresolved, forgeapi.KindNotFound, result.Status,
+		return forgeapi.Page[forgeapi.Repository]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeOwnerUnresolved, forgeapi.KindNotFound,
 			"the instance resolves no user or organization for this owner")
 	}
 	rows := payload.Owner.Repositories
 	if rows == nil {
-		return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status, errRepositoriesNull)
+		return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Answer, errRepositoriesNull)
 	}
 	items := make([]forgeapi.Repository, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
 		if rows.Nodes[i].NameWithOwner == "" {
-			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Status, errNameWithOwnerEmpty)
+			return forgeapi.Page[forgeapi.Repository]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Answer, errNameWithOwnerEmpty)
 		}
 		items = append(items, c.normalizeOwnedRepo(&rows.Nodes[i]))
 	}
@@ -214,13 +214,13 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	if payload.Repository == nil {
-		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound, http.StatusOK,
+		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound,
 			"the document resolved no repository for this selector")
 	}
 	rows := payload.Repository.PullRequests
 	if rows == nil {
-		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errPullRequestsNull)
+		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Answer, errPullRequestsNull)
 	}
 	canonical, successor := documentRepo(payload.Repository, repo)
 	at := result.placed(pullListPath, true, func(i int) bool { return i < len(rows.Nodes) })
@@ -362,7 +362,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	if payload.Search == nil {
-		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errSearchNull)
+		return forgeapi.Page[forgeapi.PullRequest]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Answer, errSearchNull)
 	}
 	rows := payload.Search
 	at := result.placed(searchPath, true, func(i int) bool {
@@ -372,7 +372,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	for i := range at.refused {
 		refused[rows.Nodes[i]] = true
 	}
-	nodes, err := c.searchRows(ctx, op, rows.Nodes, (*docSearchPull).typename, typePullRequest, rows.IssueCount, at.unplaced())
+	nodes, err := c.searchRows(ctx, op, &result, rows.Nodes, (*docSearchPull).typename, typePullRequest, rows.IssueCount, at.unplaced())
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
@@ -404,9 +404,9 @@ func (n *docSearchIssue) typename() string { return n.Typename }
 // type, is a row the document did not answer. Beside the envelope errors that null a
 // node it is omitted, and the page carries the document's partial marker; with no
 // error to account for it, the page is malformed and is refused.
-func (c *Client) searchRows[N any](ctx context.Context, op string, nodes []*N, typeOf func(*N) string, want string, total int, partial bool) ([]*N, error) {
+func (c *Client) searchRows[N any](ctx context.Context, op string, result *docResult, nodes []*N, typeOf func(*N) string, want string, total int, partial bool) ([]*N, error) {
 	if total < 0 {
-		return nil, c.core.Fail(ctx, op, transport.Document(http.MethodPost), forgeapi.CodeValidation, forgeapi.KindUpstream, http.StatusOK,
+		return nil, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer, forgeapi.CodeValidation, forgeapi.KindUpstream,
 			"the search answered an issueCount below zero, which counts nothing")
 	}
 	rows := make([]*N, 0, len(nodes))
@@ -416,7 +416,7 @@ func (c *Client) searchRows[N any](ctx context.Context, op string, nodes []*N, t
 			continue
 		}
 		if !partial {
-			return nil, c.core.Fail(ctx, op, transport.Document(http.MethodPost), forgeapi.CodeValidation, forgeapi.KindUpstream, http.StatusOK,
+			return nil, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer, forgeapi.CodeValidation, forgeapi.KindUpstream,
 				"the search answered a row that is not a "+want+" with no error beside it to say why")
 		}
 	}
@@ -505,10 +505,10 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
 	if payload.Search == nil {
-		return forgeapi.Page[forgeapi.Issue]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errSearchNull)
+		return forgeapi.Page[forgeapi.Issue]{}, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Answer, errSearchNull)
 	}
 	rows := payload.Search
-	nodes, err := c.searchRows(ctx, op, rows.Nodes, (*docSearchIssue).typename, typeIssue, rows.IssueCount, result.Partial)
+	nodes, err := c.searchRows(ctx, op, &result, rows.Nodes, (*docSearchIssue).typename, typeIssue, rows.IssueCount, result.Partial)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
@@ -557,7 +557,7 @@ func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.
 		return forgeapi.PullRequest{}, err
 	}
 	if read.successor != nil {
-		return forgeapi.PullRequest{}, c.stale(ctx, op, http.MethodGet, http.StatusOK, read.successor)
+		return forgeapi.PullRequest{}, c.stale(ctx, op, http.MethodGet, read.answer, read.successor)
 	}
 	return read.item, nil
 }
@@ -570,6 +570,7 @@ func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.
 // this read serves declare different carriers for it: one publishes it on its own
 // answer and the other has nowhere to put it and refuses instead.
 type pullRead struct {
+	answer    *transport.Response
 	successor *forgeapi.RepoRef
 	item      forgeapi.PullRequest
 	merged    forgeapi.Support
@@ -622,7 +623,7 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	if execErr != nil {
 		return pullRead{}, execErr
 	}
-	node, err := c.pullNode(ctx, op, &payload)
+	node, err := c.pullNode(ctx, op, &result, &payload)
 	if err != nil {
 		return pullRead{}, err
 	}
@@ -643,7 +644,7 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	if !parts.reviews {
 		item.Action.Approvals, item.Action.ChangesRequested = forgeapi.CountUnknown, forgeapi.CountUnknown
 	}
-	return pullRead{item: item, merged: supportOf(node.Merged)}, nil
+	return pullRead{answer: result.Answer, item: item, merged: supportOf(node.Merged)}, nil
 }
 
 // The paths the pull-request and commit documents answer their rows or their node at.
@@ -659,15 +660,15 @@ const repositoryField = "repository"
 // pullNode is the pull request one document read resolved, with the two absence
 // answers the envelope separates: a null repository is invisible, and a resolved
 // repository with no pull request is a number that does not exist.
-func (c *Client) pullNode(ctx context.Context, op string, payload *docPayload) (*docPullRequest, error) {
+func (c *Client) pullNode(ctx context.Context, op string, result *docResult, payload *docPayload) (*docPullRequest, error) {
 	if payload.Repository == nil {
-		return nil, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound, http.StatusOK,
+		return nil, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound,
 			"the document resolved no repository for this selector")
 	}
 	if payload.Repository.PullRequest == nil {
-		return nil, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-			forgeapi.CodePRNotFound, forgeapi.KindNotFound, http.StatusOK,
+		return nil, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodePRNotFound, forgeapi.KindNotFound,
 			"the document resolved the repository and no pull request with that number")
 	}
 	return payload.Repository.PullRequest, nil
@@ -695,7 +696,7 @@ func (c *Client) followContexts(ctx context.Context, op string, vars map[string]
 			return out, err
 		}
 		at.add(result.placed(pullPath, false, nil))
-		node, err := c.pullNode(ctx, op, &payload)
+		node, err := c.pullNode(ctx, op, &result, &payload)
 		if err != nil {
 			return out, err
 		}
@@ -764,10 +765,12 @@ func (c *Client) degradedRead(ctx context.Context, op string, repo forgeapi.Repo
 	var record restPull
 	var moved rename
 	path := repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number))
-	if _, err := c.readMovedJSON(ctx, op, path, nil, &record, &moved); err != nil {
+	resp, err := c.readMovedJSON(ctx, op, path, nil, &record, &moved)
+	if err != nil {
 		return pullRead{}, err
 	}
 	return pullRead{
+		answer:    resp,
 		item:      c.normalizeRESTPull(&record, repo),
 		successor: moved.to,
 		merged:    supportOf(record.Merged),
@@ -918,16 +921,16 @@ func (c *Client) rerunTarget(ctx context.Context, op string, repo forgeapi.RepoR
 		}
 		head = pulled
 	}
-	read := func(page int) ([]restWorkflowRun, error) {
+	read := func(page int) ([]restWorkflowRun, *transport.Response, error) {
 		query := url.Values{keyPerPage: {strconv.Itoa(maxRunPageItems)}, keyPage: {strconv.Itoa(page)}, "head_sha": {head}}
 		runs, resp, err := c.readRuns(ctx, op, repo, query, &moved)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if moved.to != nil {
-			return nil, c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+			return nil, nil, c.stale(ctx, op, http.MethodGet, resp, moved.to)
 		}
-		return runs.Runs, nil
+		return runs.Runs, resp, nil
 	}
 	pick := func(r *restWorkflowRun) (onHead, rerunnable bool) {
 		return r.ID != 0 && r.HeadSHA == head, c.runVerdict(r) == forgeapi.CheckFailing || member(r.Conclusion) == "cancelled"
@@ -948,10 +951,10 @@ func (c *Client) pullHead(ctx context.Context, op string, repo forgeapi.RepoRef,
 		return "", err
 	}
 	if moved.to != nil {
-		return "", c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+		return "", c.stale(ctx, op, http.MethodGet, resp, moved.to)
 	}
 	if record.Head == nil || record.Head.SHA == "" {
-		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeMissingSHA, forgeapi.KindUpstream, http.StatusOK,
+		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, forgeapi.CodeMissingSHA, forgeapi.KindUpstream,
 			"the pull request answered no head commit")
 	}
 	return record.Head.SHA, nil
@@ -1021,7 +1024,7 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 		}
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	kept, err := c.keptRuns(ctx, op, runs.Runs, &set, resp.Status)
+	kept, err := c.keptRuns(ctx, op, runs.Runs, &set, resp)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
@@ -1038,16 +1041,16 @@ func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...fo
 // keptRuns is one page's runs less those created before the call's since bound. A row
 // with no id or a negative number, or with no creation time under a bound, is refused
 // rather than published or read as older.
-func (c *Client) keptRuns(ctx context.Context, op string, rows []restWorkflowRun, set *forgeapi.ListSettings, status int) ([]restWorkflowRun, error) {
+func (c *Client) keptRuns(ctx context.Context, op string, rows []restWorkflowRun, set *forgeapi.ListSettings, answer *transport.Response) ([]restWorkflowRun, error) {
 	kept := make([]restWorkflowRun, 0, len(rows))
 	for i := range rows {
 		switch {
 		case rows[i].ID <= 0:
-			return nil, c.refuseRun(ctx, op, status, "the run listing answered a run with no id, which is the run's identity")
+			return nil, c.refuseRun(ctx, op, answer, "the run listing answered a run with no id, which is the run's identity")
 		case rows[i].RunNumber < 0:
-			return nil, c.refuseRun(ctx, op, status, "the run listing answered a negative run number, which is no place in the repository's run sequence")
+			return nil, c.refuseRun(ctx, op, answer, "the run listing answered a negative run number, which is no place in the repository's run sequence")
 		case set.SinceSet && rows[i].CreatedAt.IsZero():
-			return nil, c.refuseRun(ctx, op, status, "the run listing answered a run with no creation time, so it cannot be held to the since bound")
+			return nil, c.refuseRun(ctx, op, answer, "the run listing answered a run with no creation time, so it cannot be held to the since bound")
 		case set.SinceSet && rows[i].CreatedAt.Before(set.Since):
 			continue
 		}
@@ -1065,8 +1068,8 @@ func (c *Client) normalizeRuns(rows []restWorkflowRun, repo forgeapi.RepoRef) []
 }
 
 // refuseRun is the failure a run row this family will not publish answers.
-func (c *Client) refuseRun(ctx context.Context, op string, status int, message string) error {
-	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation, forgeapi.KindUpstream, status, message)
+func (c *Client) refuseRun(ctx context.Context, op string, answer *transport.Response, message string) error {
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), answer, forgeapi.CodeValidation, forgeapi.KindUpstream, message)
 }
 
 // MergePR implements [forgeapi.Merges].
@@ -1142,7 +1145,7 @@ var mergeableNow = []string{"clean", "has_hooks", "unstable"}
 // a repository that answers from another address is the stale refusal a write gets.
 func (c *Client) autoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, head, method string) (forgeapi.MergeOutcome, error) {
 	var record restPull
-	if err := c.readRepoJSON(ctx, opMergePR, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
+	if _, err := c.readRepoJSON(ctx, opMergePR, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
 	if slices.Contains(mergeableNow, record.MergeableState) {
@@ -1158,8 +1161,8 @@ func (c *Client) autoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgea
 		return forgeapi.MergeOutcome{}, err
 	}
 	if answer.Enable == nil {
-		return forgeapi.MergeOutcome{}, c.core.Fail(ctx, opMergePR, transport.Document(http.MethodPost),
-			forgeapi.CodeNotMergeable, forgeapi.KindNotMergeable, result.Status,
+		return forgeapi.MergeOutcome{}, c.core.Fail(ctx, opMergePR, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeNotMergeable, forgeapi.KindNotMergeable,
 			"the forge refused to arm the merge: "+result.Refusal)
 	}
 	state := forgeapi.MergeOutcomeEnqueued
@@ -1193,7 +1196,7 @@ func (c *Client) mergeNow(ctx context.Context, repo forgeapi.RepoRef, pr forgeap
 		return forgeapi.MergeOutcome{}, c.core.FailDecode(ctx, op, transport.REST(http.MethodPut), resp, err)
 	}
 	if resp.Status == http.StatusConflict {
-		return c.inFlight(ctx, &answer)
+		return c.inFlight(ctx, resp, &answer)
 	}
 	outcome := forgeapi.MergeOutcome{
 		State:         c.mergeOutcome(&answer),
@@ -1210,11 +1213,11 @@ func (c *Client) mergeNow(ctx context.Context, repo forgeapi.RepoRef, pr forgeap
 // request is pending. Its body names that merge's handle, so it is the
 // already-in-flight outcome; a 409 naming no handle is a shape no capture witnesses,
 // answered as the plain conflict. The split is the body's structure, never its message.
-func (c *Client) inFlight(ctx context.Context, answer *restMergeAnswer) (forgeapi.MergeOutcome, error) {
+func (c *Client) inFlight(ctx context.Context, resp *transport.Response, answer *restMergeAnswer) (forgeapi.MergeOutcome, error) {
 	handle := handleOf(answer)
 	if handle == "" {
-		return forgeapi.MergeOutcome{}, c.core.Fail(ctx, opMergePR, transport.REST(http.MethodPut), "",
-			forgeapi.KindConflict, http.StatusConflict, "the merge route answered 409 naming no merge in flight")
+		return forgeapi.MergeOutcome{}, c.core.Fail(ctx, opMergePR, transport.REST(http.MethodPut), resp, "",
+			forgeapi.KindConflict, "the merge route answered 409 naming no merge in flight")
 	}
 	return forgeapi.MergeOutcome{
 		State:         forgeapi.MergeOutcomeInFlight,
@@ -1329,7 +1332,7 @@ func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr 
 		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
 	}
 	var record restPull
-	if err := c.readRepoJSON(ctx, op, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
+	if _, err := c.readRepoJSON(ctx, op, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
 		return err
 	}
 	if record.AutoMerge == nil {
@@ -1346,12 +1349,12 @@ func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr 
 		if reason == "" {
 			reason = "a null payload beside no error"
 		}
-		return c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream, result.Status,
+		return c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer, "", forgeapi.KindUpstream,
 			"the forge refused to cancel the auto-merge: "+reason)
 	case answer.Disable.PullRequest == nil:
 		c.unmapped("auto-merge disarm answer (document)", "no pull request on the disarm's payload")
 	case answer.Disable.PullRequest.AutoMergeRequest != nil:
-		return c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream, result.Status,
+		return c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer, "", forgeapi.KindUpstream,
 			"the forge answered the cancel with the auto-merge still armed")
 	}
 	return nil
@@ -1409,14 +1412,14 @@ func (c *Client) documentStatus(ctx context.Context, op string, repo forgeapi.Re
 		return forgeapi.CommitChecks{}, execErr
 	}
 	if payload.Repository == nil {
-		return forgeapi.CommitChecks{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound, http.StatusOK,
+		return forgeapi.CommitChecks{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound,
 			"the document resolved no repository for this selector")
 	}
 	commit := payload.Repository.Object
 	if commit == nil {
-		return forgeapi.CommitChecks{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost),
-			forgeapi.CodeRefInvalid, forgeapi.KindNotFound, http.StatusOK,
+		return forgeapi.CommitChecks{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeRefInvalid, forgeapi.KindNotFound,
 			"the document resolved the repository and no commit at that reference")
 	}
 	folded := c.foldRollup(commit.StatusCheckRollup)
@@ -1454,7 +1457,7 @@ func (c *Client) followCommitContexts(ctx context.Context, op string, vars map[s
 		}
 		at.add(result.placed(commitPath, false, nil))
 		if payload.Repository == nil || payload.Repository.Object == nil {
-			return out, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), http.StatusOK, errCommitNull)
+			return out, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Answer, errCommitNull)
 		}
 		page := c.foldRollup(payload.Repository.Object.StatusCheckRollup)
 		out = merged(&out, &page)
@@ -1587,7 +1590,7 @@ func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue for
 		return forgeapi.Issue{}, err
 	}
 	if record.PullRequest != nil {
-		return forgeapi.Issue{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), "", forgeapi.KindNotFound, resp.Status,
+		return forgeapi.Issue{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, "", forgeapi.KindNotFound,
 			"number "+strconv.Itoa(issue.Number)+" is a pull request on this product, and this operation reads issues only")
 	}
 	return c.normalizeIssue(&record, home), nil
@@ -1610,7 +1613,7 @@ func (c *Client) issueHome(ctx context.Context, op string, repo forgeapi.RepoRef
 		return forgeapi.RepoRef{}, stale
 	}
 	if moved.to != nil {
-		return forgeapi.RepoRef{}, c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+		return forgeapi.RepoRef{}, c.stale(ctx, op, http.MethodGet, resp, moved.to)
 	}
 	return repo, nil
 }
@@ -1800,7 +1803,8 @@ func labelItem(repo forgeapi.RepoRef, target forgeapi.LabelTarget) (int, error) 
 func (c *Client) checkDefined(ctx context.Context, op string, repo forgeapi.RepoRef, names []string) error {
 	query := url.Values{keyPage: {"1"}, keyPerPage: {strconv.Itoa(restPerPageMax)}}
 	var rows []restLabel
-	if err := c.readRepoJSON(ctx, op, repoRoute(repo, "/labels"), query, &rows); err != nil {
+	resp, err := c.readRepoJSON(ctx, op, repoRoute(repo, "/labels"), query, &rows)
+	if err != nil {
 		return err
 	}
 	defined := make(map[string]bool, len(rows))
@@ -1809,7 +1813,7 @@ func (c *Client) checkDefined(ctx context.Context, op string, repo forgeapi.Repo
 	}
 	for _, name := range names {
 		if !defined[name] {
-			return c.unresolvedLabel(ctx, op, name, len(rows))
+			return c.unresolvedLabel(ctx, op, resp, name, len(rows))
 		}
 	}
 	return nil
@@ -1817,12 +1821,12 @@ func (c *Client) checkDefined(ctx context.Context, op string, repo forgeapi.Repo
 
 // unresolvedLabel is the refusal of a name the label page lacks, under the code the
 // page earns: a full page may continue past it, a short one is the whole list.
-func (c *Client) unresolvedLabel(ctx context.Context, op, name string, rows int) *forgeapi.Error {
+func (c *Client) unresolvedLabel(ctx context.Context, op string, answer *transport.Response, name string, rows int) *forgeapi.Error {
 	code, read := forgeapi.CodeValidation, "which was the whole list"
 	if rows >= restPerPageMax {
 		code, read = forgeapi.CodeLabelPageTruncated, "which came back full, so the list continues past it"
 	}
-	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), code, forgeapi.KindUpstream, http.StatusOK,
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), answer, code, forgeapi.KindUpstream,
 		"no label named "+name+" on the first page of this repository's labels, bounded at "+
 			strconv.Itoa(restPerPageMax)+", "+read)
 }
@@ -1856,7 +1860,7 @@ func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target
 			removed = append(removed, name)
 		case !found:
 			var record struct{}
-			if err := c.readRepoJSON(ctx, op, item, nil, &record); err != nil {
+			if _, err := c.readRepoJSON(ctx, op, item, nil, &record); err != nil {
 				return transport.AfterRemovals(err, removed)
 			}
 			found = true

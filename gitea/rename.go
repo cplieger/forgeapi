@@ -17,11 +17,12 @@ import (
 type address struct {
 	// successor is the repository a followed hop named, nil while none has.
 	successor *forgeapi.RepoRef
+	// answer is the call's last answer read through this address, the one that
+	// named the successor where one has.
+	answer *transport.Response
 	// named is the repository the caller passed, the zero reference on a list whose
 	// rows each name their own.
 	named forgeapi.RepoRef
-	// status is what the read that named the successor answered.
-	status int
 }
 
 // current is the repository the call's next request addresses.
@@ -45,19 +46,22 @@ func (a *address) route(rest string) string {
 // read the hop from, so it is the transport failure, and a retry names the move.
 func (c *Client) readAt(ctx context.Context, op string, a *address, rest string, query url.Values, out any) error {
 	resp, err := c.get(ctx, op, a.route(rest), query, 0, out)
+	if a.successor == nil {
+		a.answer = resp
+	}
 	if resp == nil || !resp.Redirected || transport.ContextSentinel(err) != nil {
 		return err
 	}
 	to := c.repoAt(resp.Ended)
 	switch {
 	case to == nil:
-		return c.stale(ctx, op, resp.Status, nil)
+		return c.stale(ctx, op, resp, nil)
 	case to.ID == a.current().Encode():
 		return err
 	case err != nil:
-		return c.stale(ctx, op, resp.Status, to)
+		return c.stale(ctx, op, resp, to)
 	}
-	a.successor, a.status = to, resp.Status
+	a.successor, a.answer = to, resp
 	return nil
 }
 
@@ -67,7 +71,7 @@ func (c *Client) moved(ctx context.Context, op string, a *address) error {
 	if a.successor == nil {
 		return nil
 	}
-	return c.stale(ctx, op, a.status, a.successor)
+	return c.stale(ctx, op, a.answer, a.successor)
 }
 
 // repoAt is the repository an absolute address names on this connection, nil where it
@@ -112,12 +116,12 @@ func (c *Client) nameRefusedSuccessor(a *address, resp *transport.Response, err 
 
 // stale is the refusal of a read whose repository moved, carrying the successor where
 // the redirect's location named one; without one the remedy is relisting.
-func (c *Client) stale(ctx context.Context, op string, status int, to *forgeapi.RepoRef) error {
+func (c *Client) stale(ctx context.Context, op string, answer *transport.Response, to *forgeapi.RepoRef) error {
 	reason := "this repository answered from another address, which on this family is a rename or a transfer, and the redirect's location names no repository this family addresses, so re-point by listing the repositories again"
 	if to != nil {
 		reason = "this repository answered from another address, which on this family is a rename or a transfer; the successor named here is the repository the redirect's location names, so re-point the reference that was stored"
 	}
-	fe := c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeRepoRefStale, forgeapi.KindNotFound, status, reason)
+	fe := c.core.Fail(ctx, op, transport.REST(http.MethodGet), answer, forgeapi.CodeRepoRefStale, forgeapi.KindNotFound, reason)
 	fe.Successor = to
 	return fe
 }

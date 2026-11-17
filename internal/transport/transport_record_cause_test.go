@@ -215,14 +215,16 @@ func TestAFamilyFailureReadsTheLastRequestOfItsOperation(t *testing.T) {
 	var buf bytes.Buffer
 	c := openTestConn(t, forgeapi.Connection{WebBaseURL: srv.URL}, forgeapi.WithRetries(2), forgeapi.WithLogger(recordingLogger(&buf)))
 	ctx := Call(t.Context(), "ListThings")
-	if _, err := c.Do(ctx, &Request{Op: "ListThings", Method: http.MethodGet, Path: "/things"}); err != nil {
+	first, err := c.Do(ctx, &Request{Op: "ListThings", Method: http.MethodGet, Path: "/things"})
+	if err != nil {
 		t.Fatalf("the first request, answered after one 502 = %v, want nil", err)
 	}
-	c.Fail(ctx, "ListThings", REST(http.MethodGet), forgeapi.CodeValidation, forgeapi.KindUpstream, http.StatusOK, "rows are null")
-	if _, err := c.Do(ctx, &Request{Op: "ListThings", Method: http.MethodGet, Path: "/things", Page: 2}); err != nil {
+	c.Fail(ctx, "ListThings", REST(http.MethodGet), first, forgeapi.CodeValidation, forgeapi.KindUpstream, "rows are null")
+	second, err := c.Do(ctx, &Request{Op: "ListThings", Method: http.MethodGet, Path: "/things", Page: 2})
+	if err != nil {
 		t.Fatalf("the second request = %v, want nil", err)
 	}
-	c.FailBody(ctx, "ListThings", REST(http.MethodGet), http.StatusOK, errors.New("rows are null"))
+	c.FailBody(ctx, "ListThings", REST(http.MethodGet), second, errors.New("rows are null"))
 	lines := records(t, &buf)
 	if len(lines) != 4 {
 		t.Fatalf("the operation recorded %d line(s), want 4 (two requests, two failures): %v", len(lines), lines)

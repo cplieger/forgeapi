@@ -99,19 +99,18 @@ func (c *Client) unpagedList[T any](resume forgeapi.Cursor) (forgeapi.Page[T], b
 // the error because two of this product's facts ride there rather than in the body:
 // the continuation for a paged list and the budget signal. [transport.Conn.Do]
 // states when the read cache revalidates the read.
-func (c *Client) readJSON(ctx context.Context, op, path string, query url.Values, out any) (http.Header, error) {
+func (c *Client) readJSON(ctx context.Context, op, path string, query url.Values, out any) (*transport.Response, error) {
 	return c.readListed(ctx, op, path, query, nil, out)
 }
 
 // readListed is readJSON for a list an owner can scope: under one, the route is the
 // owner's, and this product answers 404 for an owner it does not resolve.
-func (c *Client) readListed(ctx context.Context, op, path string, query url.Values, set *forgeapi.ListSettings, out any) (http.Header, error) {
+func (c *Client) readListed(ctx context.Context, op, path string, query url.Values, set *forgeapi.ListSettings, out any) (*transport.Response, error) {
 	req := &transport.Request{Op: op, Method: http.MethodGet, EscapedPath: path, Query: query, Page: pageIn(query), Into: out}
 	if set != nil && set.OwnerSet {
 		req.OwnerStatus = http.StatusNotFound
 	}
-	resp, err := c.do(ctx, req)
-	return headerOf(resp), err
+	return c.do(ctx, req)
 }
 
 // do sends one request through the core, REST and document alike, and records a
@@ -280,7 +279,7 @@ func (c *Client) scopedRoute(ctx context.Context, op string, set *forgeapi.ListS
 		return "", err
 	}
 	if owner.group == "" {
-		return "", c.ownerUnresolved(ctx, op)
+		return "", c.ownerUnresolved(ctx, op, owner.lookup)
 	}
 	return "/groups/" + owner.group + "/" + collection, nil
 }
