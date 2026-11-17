@@ -7,14 +7,13 @@ import (
 	"github.com/cplieger/forgeapi/v3"
 )
 
-// TestAPullRequestNamesTheRepositoryItsHeadLivesIn holds ADR-0104 on this family: the
-// swagger's PullRequest.head is a PRBranchInfo whose repo names the repository the
-// head branch lives in, the addressed one for a pull request opened inside it, a
-// fork's for one opened from a fork, and null for a deleted fork (measured on
-// codeberg.org, where such a row carries repo_id -1). Sameness is the answer's own:
-// a list that followed a rename keeps Repo the addressed name while head and base
-// both name the repository's current one, and that pull request is still opened
-// inside its repository.
+// TestAPullRequestNamesTheRepositoryItsHeadLivesIn holds SourceRepo on this family to
+// the swagger's PullRequest.head.repo, the repository the head branch lives in: the
+// addressed one for a pull request opened inside it, a fork's for one opened from a
+// fork, and null for a deleted fork (measured on codeberg.org, where such a row
+// carries repo_id -1). Sameness is the answer's own: a list that followed a rename
+// keeps Repo the addressed name while head and base both name the repository's
+// current one, and that pull request is still opened inside its repository.
 func TestAPullRequestNamesTheRepositoryItsHeadLivesIn(t *testing.T) {
 	c := newHarness(t, nil).client
 	repo := testRef()

@@ -34,7 +34,7 @@ import (
 var workingDocumentTokens = []string{
 	"ARCHITECTURE" + ".md",
 	"DESIGN" + ".md",
-	"ADR-00",
+	"ADR" + "-",
 	"_scratch",
 	"forge-audit",
 	"spike/",
@@ -42,6 +42,7 @@ var workingDocumentTokens = []string{
 	"fixes" + ".md",
 	"plan-" + "cutover",
 	"PLAN" + ".md",
+	"BRIEF" + ".md",
 	"investigate" + "-",
 	"review-" + "phase",
 	"history/",

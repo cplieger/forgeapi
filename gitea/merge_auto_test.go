@@ -54,10 +54,10 @@ func mergeAnsweringByForm(t *testing.T, bare, flagged int, opts ...forgeapi.Opti
 	return newHarnessOver(t, in, time.Now, opts...), forms
 }
 
-// TestAutoMergeAsksTheInstanceToMergeWhenChecksSucceed holds `AutoMerge` to ADR-0103's
-// Decision on this family, a merge asked to wait completes now where its requirements
-// are met and is armed otherwise: the merge form without the flag goes first, its 405
-// is the route's not-mergeable-now answer, and the form carrying
+// TestAutoMergeAsksTheInstanceToMergeWhenChecksSucceed holds `AutoMerge` on this family
+// to its rule, a merge asked to wait completes now where its requirements are met and
+// is armed otherwise: the merge form without the flag goes first, its 405 is the
+// route's not-mergeable-now answer, and the form carrying
 // merge_when_checks_succeed follows, whose 201 is the scheduled merge, measured on
 // Gitea 28.0.0, Forgejo 16.0.5 and Forgejo 15.0.9 alike, which reads as enqueued.
 func TestAutoMergeAsksTheInstanceToMergeWhenChecksSucceed(t *testing.T) {
@@ -75,8 +75,8 @@ func TestAutoMergeAsksTheInstanceToMergeWhenChecksSucceed(t *testing.T) {
 	}
 }
 
-// TestAnAutoMergeOnAPullRequestMergeableNowMergesIt holds the other arm of ADR-0103's
-// Decision: where the flagless form merges, the merge is done and the flag that would
+// TestAnAutoMergeOnAPullRequestMergeableNowMergesIt holds the other arm of that rule:
+// where the flagless form merges, the merge is done and the flag that would
 // schedule it is never sent, so Forgejo, which holds a scheduled merge for the next
 // commit status, never waits on one.
 func TestAnAutoMergeOnAPullRequestMergeableNowMergesIt(t *testing.T) {

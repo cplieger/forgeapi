@@ -7,10 +7,11 @@ import (
 	"github.com/cplieger/forgeapi/v3"
 )
 
-// TestAPullRequestNamesTheRepositoryItsHeadLivesIn holds ADR-0104 on this product's
-// two arms: the documents' nullable PullRequest.headRepository and the REST record's
-// head.repo, which name the addressed repository for a pull request opened inside it,
-// the fork for one opened from a fork, and null for a deleted fork.
+// TestAPullRequestNamesTheRepositoryItsHeadLivesIn holds SourceRepo, the repository
+// the head lives in, on this product's two arms: the documents' nullable
+// PullRequest.headRepository and the REST record's head.repo, which name the
+// addressed repository for a pull request opened inside it, the fork for one opened
+// from a fork, and null for a deleted fork.
 func TestAPullRequestNamesTheRepositoryItsHeadLivesIn(t *testing.T) {
 	c := newHarness(t, nil).client
 	repo := testRef()

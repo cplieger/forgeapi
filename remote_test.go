@@ -173,10 +173,9 @@ func TestParseRemoteOwnerAndNameJoinToPath(t *testing.T) {
 	}
 }
 
-// TestParseRemoteMarotteCases holds the rules marotte's Git panel reads a remote
-// by: the remote-helper form refused, the web origin with its port, and no web
-// origin for an ssh or scp remote.
-func TestParseRemoteMarotteCases(t *testing.T) {
+// TestParseRemoteHelperFormsAndWebOrigins holds the remote-helper form refused, the
+// web origin with its port, and no web origin for an ssh or scp remote.
+func TestParseRemoteHelperFormsAndWebOrigins(t *testing.T) {
 	tests := []struct {
 		name, raw     string
 		ok            bool
