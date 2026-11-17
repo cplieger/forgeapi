@@ -198,7 +198,9 @@ func docHeadPipeline(project int, status string) string {
 func TestTheReRunRetriesThePipelineGitLabMatchesToTheHead(t *testing.T) {
 	const other = "0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293"
 	const forkRetryRoute = "POST /api/v4/projects/99/pipelines/77/retry"
+	const matchedRetryRoute = "POST /api/v4/projects/" + testEncoded + "/pipelines/78/retry"
 	failed := docHeadPipeline(1, "FAILED")
+	matched := `{"id": "gid://gitlab/Ci::Pipeline/78", "status": "FAILED", "project": {"id": "gid://gitlab/Project/1"}}`
 	for _, test := range []struct {
 		name, pin, answer, retry, code string
 		kind                           forgeapi.ErrorKind
@@ -206,8 +208,9 @@ func TestTheReRunRetriesThePipelineGitLabMatchesToTheHead(t *testing.T) {
 		{name: "the_merge_requests_own_failed_pipeline", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, failed), retry: retryRoute},
 		{name: "no_pin_takes_the_merge_requests_head", answer: rerunHeadAnswer(testHeadSHA, failed), retry: retryRoute},
 		{name: "a_canceled_pipeline", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, docHeadPipeline(1, "CANCELED")), retry: retryRoute},
-		{name: "a_merged_results_pipeline_gitlab_matched_to_the_head_by_its_source_sha", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, failed), retry: retryRoute},
-		{name: "another_merge_requests_pipeline_on_the_same_sha_retried_since_gitlab_matched_it_to_this_head", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, failed), retry: retryRoute},
+		// GitLab matches a merged results pipeline, or another merge request's on the
+		// same sha, on the server; the client retries the id it names, not a head row.
+		{name: "a_pipeline_gitlab_matched_that_is_no_row_on_the_head", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, matched), retry: matchedRetryRoute},
 		{name: "a_fork_pipeline_in_the_forks_project", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, docHeadPipeline(99, "FAILED")), retry: forkRetryRoute},
 		{name: "a_pipeline_naming_no_project", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, docHeadPipeline(0, "FAILED")), retry: retryRoute},
 		{name: "an_earlier_heads_merged_results_pipeline_gitlab_answers_null", pin: testHeadSHA, answer: rerunHeadAnswer(testHeadSHA, "null"), code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict},
@@ -223,13 +226,14 @@ func TestTheReRunRetriesThePipelineGitLabMatchesToTheHead(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := newHarness(t, map[string]string{
-				metadataRoute:  metadataBody,
-				documentRoute:  docAcceptanceAnswer,
-				rerunDocRoute:  test.answer,
-				readRoute:      headPipelineBody,
-				pipelinesRoute: pipelinesBody,
-				retryRoute:     `{}`,
-				forkRetryRoute: `{}`,
+				metadataRoute:     metadataBody,
+				documentRoute:     docAcceptanceAnswer,
+				rerunDocRoute:     test.answer,
+				readRoute:         headPipelineBody,
+				pipelinesRoute:    pipelinesBody,
+				retryRoute:        `{}`,
+				forkRetryRoute:    `{}`,
+				matchedRetryRoute: `{}`,
 			})
 			h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
 			if _, err := h.client.ConnectionCaps(t.Context()); err != nil {

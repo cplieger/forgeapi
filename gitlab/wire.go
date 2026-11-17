@@ -774,9 +774,12 @@ func (c *Client) normalizeRESTPull(r *restMergeRequest, repo forgeapi.RepoRef, p
 		repo = referencedRepo(r.References, sigil)
 	}
 	author, kind := restAuthor(r.Author)
+	// head_pipeline is the STORED pipeline, kept after a push until one of the new
+	// head exists (lib/api/entities/merge_request.rb), and the payload carries no
+	// source_sha, so only a pipeline on the head's own sha speaks for the head.
 	checks := forgeapi.CheckUnknown
-	if r.HeadPipeline != nil {
-		checks = c.checkState("pipeline status (rest)", r.HeadPipeline.Status)
+	if p := r.HeadPipeline; p != nil && r.SHA != "" && p.SHA == r.SHA {
+		checks = c.checkState("pipeline status (rest)", p.Status)
 	}
 	// The reason is discarded on every path; the lookup still counts a member the
 	// tables do not carry.

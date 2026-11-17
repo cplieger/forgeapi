@@ -828,10 +828,8 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
-// readPipelines is the one read of a project's pipelines, which the re-run and the run
-// listing share: the re-run filters it by the head it pins, and the listing pages it
-// with no head filter at all. It answers the headers beside the rows, because the
-// listing's continuation rides there.
+// readPipelines is [Client.ListRuns]' read of a project's pipelines. It answers the
+// headers beside the rows, because the listing's next page rides there.
 func (c *Client) readPipelines(ctx context.Context, op string, repo forgeapi.RepoRef, query url.Values) ([]restPipeline, http.Header, error) {
 	var pipelines []restPipeline
 	header, err := c.readJSON(ctx, op, projectRoute(repo, "/pipelines"), query, &pipelines)
@@ -840,12 +838,11 @@ func (c *Client) readPipelines(ctx context.Context, op string, repo forgeapi.Rep
 
 // ListRuns implements [forgeapi.Checks].
 //
-// A run is a pipeline, the row the re-run resolves its pipeline from: its state is
-// the status folded through the merge request's head-pipeline table, its branch the
-// ref as this product spells it, a refs/ path on the pipelines a merge request or a
-// workload starts, and its name the pipeline's own, empty unless configured. It is
-// not gated on [forgeapi.CapRerunChecks], the re-run verb's, since every project
-// carries the route.
+// A run is a pipeline: its state is the status folded through the merge request's
+// head-pipeline table, its branch the ref as this product spells it, a refs/ path on
+// the pipelines a merge request or a workload starts, and its name the pipeline's
+// own, empty unless configured. It is not gated on [forgeapi.CapRerunChecks], the
+// re-run verb's, since every project carries the route.
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error) {
 	const op = "ListRuns"
 	ctx = transport.Call(ctx, op)

@@ -429,7 +429,7 @@ var Table = []Entry{
 			{
 				Field: "Items[].Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold",
+				Says:  "headPipeline.status scalar, no fold; CheckUnknown where the documents are refused, since a REST list row carries no head_pipeline",
 			},
 			{
 				Field: "Items[].Action.ChecksPassing .. ChecksTotal",
@@ -917,7 +917,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold",
+				Says:  "headPipeline.status scalar, no fold; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a merged results one included, since that payload carries no source_sha to match it by",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -1306,7 +1306,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran",
+				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -1487,7 +1487,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran",
+				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -2062,7 +2062,7 @@ var Table = []Entry{
 	{
 		Method:    "Checks.ListRuns",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects/{id}/pipelines, the route the re-run resolves its pipeline on, with the page bound as its page size and no head filter",
+		Exercises: "GET /api/v4/projects/{id}/pipelines, with the page bound as its page size and no head filter",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
