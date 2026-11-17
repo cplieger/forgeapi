@@ -509,6 +509,12 @@ func TestSignalReadsTheStructuredRateLimitHeader(t *testing.T) {
 			if remaining != test.remaining {
 				t.Errorf("signal(%q) = remaining %d, want %d", test.raw, remaining, test.remaining)
 			}
+			if test.seconds == 0 {
+				if !reset.IsZero() {
+					t.Errorf("signal(%q) = reset %v, want the zero time: the header states no window", test.raw, reset)
+				}
+				return
+			}
 			if got := time.Until(reset).Round(time.Second); got != time.Duration(test.seconds)*time.Second {
 				t.Errorf("signal(%q) = reset in %v, want %v", test.raw, got, time.Duration(test.seconds)*time.Second)
 			}

@@ -382,6 +382,17 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	Message string
 	// RetryAfter is the wait upstream asked for, zero when it named none.
 	RetryAfter time.Duration
+	// Reset is when the budget window the failing answer reports renews, read
+	// from that answer's own budget signal as [BudgetState.Reset] is: the zero
+	// time where the answer carries none, as Gitea's never does, and where no
+	// answer arrived.
+	Reset time.Time
+	// Secondary reports a GitHub secondary rate limit: a 403 or 429 carrying
+	// Retry-After or GitHub's secondary-limit message, whatever its remaining
+	// figure reads
+	// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits).
+	// Only the GitHub family sets it.
+	Secondary bool
 	// DiagID is a per-failure random identifier, [DiagIDLength] characters,
 	// carried in the user-visible error and in every log line for that
 	// operation; never a session identifier or a lookup key, and not stable

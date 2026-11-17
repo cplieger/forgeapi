@@ -282,15 +282,22 @@ func newHarnessOver(t *testing.T, in *instance, opts ...forgeapi.Option) *harnes
 // request, which is how an error-mapping cell is driven end to end.
 func newRefusingHarness(t *testing.T, status int) *harness {
 	t.Helper()
+	return newAnsweringHarness(t, status, nil, `{"message":"refused"}`)
+}
+
+// newAnsweringHarness is [newRefusingHarness] answering header and body.
+func newAnsweringHarness(t *testing.T, status int, header http.Header, body string) *harness {
+	t.Helper()
 	in := newInstance()
 	in.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		in.mu.Lock()
 		in.requests = append(in.requests, r.Method+" "+r.URL.EscapedPath())
 		in.tokens = append(in.tokens, r.Header.Get("Authorization"))
 		in.mu.Unlock()
+		maps.Copy(w.Header(), header)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		if _, err := w.Write([]byte(`{"message":"refused"}`)); err != nil {
+		if _, err := w.Write([]byte(body)); err != nil {
 			t.Errorf("Setup: writing the refusal: %v", err)
 		}
 	}))

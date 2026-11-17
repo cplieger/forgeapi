@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/githublimit"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
@@ -225,12 +225,14 @@ func (s *AppSource) ask(ctx context.Context, ep *transport.Conn, req *transport.
 // https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app
 func (s *AppSource) refused(ctx context.Context, ep *transport.Conn, req *transport.Request, resp *transport.Response) *failure {
 	said := githubMessage(resp.Body)
-	if rateLimited(resp.Status, resp.Header, said) {
+	if secondary := githublimit.SecondaryMessage(said); githublimit.Limited(resp.Status, resp.Header, secondary) {
 		if s.set.Counters.RateLimited != nil {
 			s.set.Counters.RateLimited(forgeapi.FamilyGitHub)
 		}
 		fe := ep.Fail(ctx, req.Op, transport.REST(req.Method), "", forgeapi.KindRateLimited, resp.Status,
 			resp.Quote(joined("GitHub rate-limited the App's request", said)))
+		_, fe.Reset, _ = githublimit.Signal(resp.Header)
+		fe.Secondary = githublimit.Secondary(resp.Status, resp.Header, secondary)
 		return &failure{err: fe, wait: limitWait(resp.Header, time.Now()), status: resp.Status, class: failLimited}
 	}
 	kind, why := forgeapi.KindUpstream, "GitHub refused the request as invalid: the grant's repositories or permissions are the likely cause"
@@ -322,22 +324,6 @@ func outcomeText(class failClass) string {
 	return "the mint failed"
 }
 
-// rateLimited reports whether a refusal is GitHub's quota rather than a
-// permission: a 429, or a 403 carrying Retry-After, the remaining budget at
-// zero, or the secondary limit's message:
-// https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit
-func rateLimited(status int, header http.Header, said string) bool {
-	switch status {
-	case http.StatusTooManyRequests:
-		return true
-	case http.StatusForbidden:
-		remaining, err := strconv.Atoi(strings.TrimSpace(header.Get("X-RateLimit-Remaining")))
-		return header.Get("Retry-After") != "" || (err == nil && remaining <= 0) ||
-			strings.Contains(strings.ToLower(said), "secondary rate limit")
-	}
-	return false
-}
-
 // limitWait is the wait a rate limit states: Retry-After, else the primary
 // window's reset where the remaining budget is zero, capped at an hour; zero
 // where it states neither. A reset already passed, or a Retry-After of 0, also
@@ -347,15 +333,11 @@ func limitWait(header http.Header, now time.Time) time.Duration {
 	if wait := transport.RetryAfter(header); wait > 0 {
 		return min(wait, statedCeiling)
 	}
-	remaining, err := strconv.Atoi(strings.TrimSpace(header.Get("X-RateLimit-Remaining")))
-	if err != nil || remaining > 0 {
+	remaining, reset, ok := githublimit.Signal(header)
+	if !ok || remaining > 0 || reset.IsZero() {
 		return 0
 	}
-	reset, err := strconv.ParseInt(strings.TrimSpace(header.Get("X-RateLimit-Reset")), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return min(max(time.Unix(reset, 0).Sub(now), 0), statedCeiling)
+	return min(max(reset.Sub(now), 0), statedCeiling)
 }
 
 // githubMessage is the message member of a GitHub refusal, empty where the

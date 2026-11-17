@@ -3190,10 +3190,13 @@ var Table = []Entry{
 //
 // Header is the response header that makes the status a throttle, empty where
 // the status alone does, and Value the value it carries, empty where any does.
+// Message is the phrase the refusal's message member carries that makes the
+// status a throttle, matched in any case, empty where no message does.
 type Throttle struct {
 	Product Product
 	Header  string
 	Value   string
+	Message string
 	Says    string
 	Status  int
 }
@@ -3208,6 +3211,10 @@ var Throttles = []Throttle{
 		Product: GitHub, Status: 403, Header: "Retry-After",
 		Says: "a secondary limit, whatever X-RateLimit-Remaining reads, " +
 			"as [GitHub documents it](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)",
+	},
+	{
+		Product: GitHub, Status: 403, Message: "secondary rate limit",
+		Says: "a secondary limit, whatever X-RateLimit-Remaining reads, where the answer carries no Retry-After",
 	},
 	{Product: GitHub, Status: 429, Says: "a primary or a secondary limit"},
 	{Product: GitLab, Status: 429, Says: "a rate limit"},

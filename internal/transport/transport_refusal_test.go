@@ -270,9 +270,10 @@ func TestACapabilityRefusalSaysWhetherTheInstanceLacksItOrNothingCouldTell(t *te
 	}
 }
 
-// A message member the family lists reaches its mapper as that class, matched whole
-// after trimming space; any other message, a near miss included, reaches it as none.
-func TestOnlyAListedRefusalMessageReachesTheMapperAsItsClass(t *testing.T) {
+// A refusal's message member reaches the family's class function trimmed of space,
+// and the mapper as the class that function names; a message it names no class for,
+// a near miss included, reaches the mapper as none.
+func TestOnlyAClassedRefusalMessageReachesTheMapperAsItsClass(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		body string
@@ -295,7 +296,9 @@ func TestOnlyAListedRefusalMessageReachesTheMapperAsItsClass(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			opts := testOptions()
-			opts.MessageClasses = map[string]string{"Resource not accessible": "resource"}
+			opts.MessageClass = func(message string) string {
+				return map[string]string{"Resource not accessible": "resource"}[message]
+			}
 			opts.Mapper = func(_ string, _ int, _ http.Header, member Member) Verdict {
 				got = member.Class
 				return Verdict{Kind: forgeapi.KindForbidden}

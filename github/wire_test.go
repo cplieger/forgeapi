@@ -456,26 +456,6 @@ func TestTheFoldsWorstStateWins(t *testing.T) {
 	}
 }
 
-// TestTheBudgetSignalIsReadFromTheResponseHeaders holds the signal reader to the two
-// headers this product sends on both surfaces, and to answering NOTHING where the
-// response carried none, which is what keeps the neutral value honest on a connection
-// that has sent nothing.
-func TestTheBudgetSignalIsReadFromTheResponseHeaders(t *testing.T) {
-	header := http.Header{}
-	header.Set("X-RateLimit-Remaining", "4990")
-	header.Set("X-RateLimit-Reset", "1790000000")
-	remaining, reset, ok := signal(header)
-	if !ok || remaining != 4990 {
-		t.Errorf("signal(the recorded headers) = %d, %v, want 4990 and a window", remaining, ok)
-	}
-	if reset.IsZero() || reset.Unix() != 1790000000 {
-		t.Errorf("signal(the recorded headers) = reset %v, want the epoch second the header names", reset)
-	}
-	if _, _, ok := signal(http.Header{}); ok {
-		t.Error("signal(no headers) reported a figure, want none: a connection that has sent nothing has no budget to report")
-	}
-}
-
 // TestTheErrorMappingReadsTheHeadersAndTheOperation holds the three cells of this
 // family's mapping that turn on something other than the status. A mapper that read the
 // status alone would pass every other row of this table, which is why these three are
@@ -724,12 +704,13 @@ func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 			continue
 		}
 		for _, op := range []string{"ListRuns", opMergePR} {
-			t.Run(strconv.Itoa(th.Status)+"_"+th.Header+"_"+op, func(t *testing.T) {
+			t.Run(strconv.Itoa(th.Status)+"_"+th.Header+"_"+strings.ReplaceAll(th.Message, " ", "_")+"_"+op, func(t *testing.T) {
 				header := http.Header{}
 				if th.Header != "" {
 					header.Set(th.Header, cmp.Or(th.Value, "60"))
 				}
-				if got := mapping(op, th.Status, header, "", false); got.Kind != forgeapi.KindRateLimited || got.Code != "" || got.Needs != "" {
+				class := messageClass("You have exceeded a " + th.Message + ".")
+				if got := mapping(op, th.Status, header, class, false); got.Kind != forgeapi.KindRateLimited || got.Code != "" || got.Needs != "" {
 					t.Errorf("mapping(%q, %d, %v) = %+v, want %v: %s", op, th.Status, header, got, forgeapi.KindRateLimited, th.Says)
 				}
 			})

@@ -169,8 +169,8 @@ func TestAppSource_rate_limit_sets_the_not_before_instant(t *testing.T) {
 		counted := 0
 		s := appSource(t, g, creds.InstallationByID(42), forgeapi.WithCounters(forgeapi.Counters{RateLimited: func(forgeapi.Family) { counted++ }}))
 		_, err := s.Token(t.Context())
-		if fe := forgeError(t, err); fe.Kind != forgeapi.KindRateLimited || fe.RetryAfter != time.Minute || fe.Code != "" {
-			t.Fatalf("Token() = %+v, want rate-limited with a minute's RetryAfter", fe)
+		if fe := forgeError(t, err); fe.Kind != forgeapi.KindRateLimited || fe.RetryAfter != time.Minute || fe.Code != "" || !fe.Secondary {
+			t.Fatalf("Token() = %+v, want a secondary rate limit with a minute's RetryAfter", fe)
 		}
 		if got := s.State(); got != forgeapi.CredRefreshDue {
 			t.Errorf("State() while rate-limited = %v, want %v", got, forgeapi.CredRefreshDue)
@@ -206,24 +206,28 @@ func TestAppSource_rate_limit_sets_the_not_before_instant(t *testing.T) {
 }
 
 // A wait GitHub states is the one in force: Retry-After, else the primary
-// window's reset where nothing remains; a 429 is a limit as a 403 is.
+// window's reset where nothing remains; a 429 is a limit as a 403 is. The
+// answer's own reset and its secondary mark ride the error.
 func TestAppSource_rate_limit_takes_the_wait_GitHub_states(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		status int
-		header func(now time.Time) http.Header
-		want   time.Duration
+		name      string
+		status    int
+		header    func(now time.Time) http.Header
+		want      time.Duration
+		reset     time.Duration
+		secondary bool
 	}{
-		{"a 403 with Retry-After", http.StatusForbidden, func(time.Time) http.Header { return http.Header{"Retry-After": {"30"}} }, 30 * time.Second},
-		{"a 429 with Retry-After", http.StatusTooManyRequests, func(time.Time) http.Header { return http.Header{"Retry-After": {"90"}} }, 90 * time.Second},
-		{"a 429 stating nothing", http.StatusTooManyRequests, func(time.Time) http.Header { return nil }, time.Minute},
+		{"a 403 with Retry-After", http.StatusForbidden, func(time.Time) http.Header { return http.Header{"Retry-After": {"30"}} }, 30 * time.Second, 0, true},
+		{"a 429 with Retry-After", http.StatusTooManyRequests, func(time.Time) http.Header { return http.Header{"Retry-After": {"90"}} }, 90 * time.Second, 0, true},
+		{"a 429 stating nothing", http.StatusTooManyRequests, func(time.Time) http.Header { return nil }, time.Minute, 0, false},
 		{"a 403 with the primary budget spent", http.StatusForbidden, func(now time.Time) http.Header {
 			return http.Header{"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {strconv.FormatInt(now.Add(10*time.Minute).Unix(), 10)}}
-		}, 10 * time.Minute},
-		{"a Retry-After past an hour", http.StatusForbidden, func(time.Time) http.Header { return http.Header{"Retry-After": {"86400"}} }, time.Hour},
+		}, 10 * time.Minute, 10 * time.Minute, false},
+		{"a Retry-After past an hour", http.StatusForbidden, func(time.Time) http.Header { return http.Header{"Retry-After": {"86400"}} }, time.Hour, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
 				g := newFakeGitHub(t, func(int, appCall) appReply {
 					return refusal(tc.status, "API rate limit exceeded", tc.header(time.Now()))
 				})
@@ -231,6 +235,13 @@ func TestAppSource_rate_limit_takes_the_wait_GitHub_states(t *testing.T) {
 				_, err := s.Token(t.Context())
 				if fe := forgeError(t, err); fe.Kind != forgeapi.KindRateLimited || fe.RetryAfter != tc.want || !fe.Retryable {
 					t.Errorf("Token() = %+v, want rate-limited and retryable with RetryAfter %v", fe, tc.want)
+				}
+				wantReset := time.Time{}
+				if tc.reset > 0 {
+					wantReset = time.Unix(start.Add(tc.reset).Unix(), 0)
+				}
+				if fe := forgeError(t, err); !fe.Reset.Equal(wantReset) || fe.Secondary != tc.secondary {
+					t.Errorf("Token() = reset %v, secondary %t, want reset %v, secondary %t", fe.Reset, fe.Secondary, wantReset, tc.secondary)
 				}
 				time.Sleep(tc.want - time.Second)
 				if _, err := s.Mint(t.Context()); g.mints() != 1 {

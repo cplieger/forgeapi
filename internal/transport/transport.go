@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -87,8 +86,7 @@ type errorMapper func(op string, status int, header http.Header, member Member) 
 
 // Member is the machine-readable part of a refusal's body: RFC 6750's error code
 // and the scope it names, each empty where the body carries none, and Class, the
-// family's name for a message member it lists in [Options.MessageClasses], empty for
-// any other message.
+// family's name for the message member as [Options.MessageClass] answers it.
 type Member struct {
 	Error string
 	Scope string
@@ -96,12 +94,14 @@ type Member struct {
 }
 
 // Verdict is a family's reading of one refusal: the code and kind the caller
-// branches on, and what the forge says the call needs, which becomes
-// [forgeapi.Error.Needs].
+// branches on, what the forge says the call needs, which becomes
+// [forgeapi.Error.Needs], and whether a rate limit is GitHub's secondary one,
+// which becomes [forgeapi.Error.Secondary].
 type Verdict struct {
-	Code  string
-	Needs string
-	Kind  forgeapi.ErrorKind
+	Code      string
+	Needs     string
+	Kind      forgeapi.ErrorKind
+	Secondary bool
 }
 
 // budgetSignal is how a family reads its product's budget signal off a response. It
@@ -133,7 +133,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	logger     *slog.Logger
 	credential forgeapi.CredentialSource
 	mapper     errorMapper
-	classes    map[string]string
+	class      func(message string) string
 	signal     budgetSignal
 	pool       budgetPool
 	apiBase    *url.URL
@@ -169,11 +169,11 @@ type Options struct {
 	PoolParent    budgetParent
 	DeriveAPIBase func(web *url.URL) string
 	Clock         func() time.Time
-	// MessageClasses maps each message member a product answers a stated cause with,
-	// matched whole after trimming space, to the class its mapper reads in
-	// [Member.Class]; no other message text reaches the mapper.
-	MessageClasses map[string]string
-	Family         forgeapi.Family
+	// MessageClass names the class of a refusal's message member, trimmed of
+	// space, that its mapper reads in [Member.Class], empty for a message it does
+	// not read; no other message text reaches the mapper. Nil reads none.
+	MessageClass func(message string) string
+	Family       forgeapi.Family
 	// FreeNotModified says the product bills nothing for a not-modified answer to
 	// an authorized conditional request, as its spec.Revalidations row states.
 	FreeNotModified bool
@@ -247,7 +247,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		logger:     loggerOf(set),
 		credential: set.Credential,
 		mapper:     opts.Mapper,
-		classes:    maps.Clone(opts.MessageClasses),
+		class:      opts.MessageClass,
 		signal:     opts.Signal,
 		pool:       opts.Pool,
 		apiBase:    apiBase,
@@ -1726,13 +1726,17 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 	answer := readRefusal(resp.Body)
 	verdict := Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeOwnerUnresolved}
 	if req.OwnerStatus == 0 || resp.Status != req.OwnerStatus {
-		member := Member{Error: answer.Error, Scope: answer.Scope, Class: c.classes[strings.TrimSpace(answer.instanceText())]}
+		member := Member{Error: answer.Error, Scope: answer.Scope, Class: c.classOf(answer.instanceText())}
 		verdict = c.mapper(req.Op, resp.Status, resp.Header, member)
 	}
 	kind, code := verdict.Kind, verdict.Code
 	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
 	fe.Needs = resp.Quote(verdict.Needs) // upstream text, made safe as the message is
+	if c.signal != nil {
+		_, fe.Reset, _ = c.signal(resp.Header)
+	}
 	if kind == forgeapi.KindRateLimited {
+		fe.Secondary = verdict.Secondary
 		fe.RetryAfter = httpclient.ParseRetryAfter(resp.Header.Get("Retry-After"))
 		if c.counters.RateLimited != nil {
 			c.counters.RateLimited(c.family)
@@ -1740,6 +1744,15 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 	}
 	c.log(ctx, req, exchange(req), resp.Status, code, fe.DiagID, kind, resp.Header, started, fe.Message, false)
 	return fe
+}
+
+// classOf is the family's class for a refusal's message member, empty where the
+// family reads none.
+func (c *Conn) classOf(message string) string {
+	if c.class == nil {
+		return ""
+	}
+	return c.class(strings.TrimSpace(message))
 }
 
 // refusal is the part of a refusal's body this package reads: the instance's own

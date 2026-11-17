@@ -51,6 +51,7 @@ Every operation reports these answers as `KindRateLimited`, with `RetryAfter` se
 | --- | --- | --- | --- |
 | GitHub | 403 | `X-RateLimit-Remaining: 0` | the primary or a secondary limit spent, with no budget left in the window |
 | GitHub | 403 | `Retry-After`, any value | a secondary limit, whatever X-RateLimit-Remaining reads, as [GitHub documents it](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) |
+| GitHub | 403 | none: a message carrying "secondary rate limit" | a secondary limit, whatever X-RateLimit-Remaining reads, where the answer carries no Retry-After |
 | GitHub | 429 | none: the status alone | a primary or a secondary limit |
 | GitLab | 429 | none: the status alone | a rate limit |
 | Gitea | 403 | `RateLimit-Remaining: 0` | a rate limit with no budget left in the window |

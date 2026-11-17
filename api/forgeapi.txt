@@ -230,6 +230,8 @@ type Error struct {
 	Retryable bool
 	Message string
 	RetryAfter time.Duration
+	Reset time.Time
+	Secondary bool
 	DiagID string
 	Successor *RepoRef
 	Capability Capability

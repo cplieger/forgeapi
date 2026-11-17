@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/githublimit"
 	"github.com/cplieger/forgeapi/v3/internal/githubroot"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
@@ -81,13 +82,13 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 	// can read off a response.
 	client := &Client{}
 	core, err := transport.Open(conn, &settings, transport.Options{
-		Mapper:         client.mapper,
-		Signal:         signal,
-		Pool:           pool,
-		DeriveAPIBase:  githubroot.API,
-		Clock:          clock,
-		Family:         forgeapi.FamilyGitHub,
-		MessageClasses: messageClasses,
+		Mapper:        client.mapper,
+		Signal:        githublimit.Signal,
+		Pool:          pool,
+		DeriveAPIBase: githubroot.API,
+		Clock:         clock,
+		Family:        forgeapi.FamilyGitHub,
+		MessageClass:  messageClass,
 		// A not-modified answer to an authorized conditional request bills
 		// nothing here, which the transport checks per request:
 		// spec.Revalidations owns the fact.

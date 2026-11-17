@@ -780,14 +780,15 @@ func statusState(s *wireStatus) string {
 // rather than branching on the product marker, because reading a signal where it
 // exists is cheaper and more honest than a second product branch: one of the two
 // products sends a structured rate-limit header on every response and the other
-// sends nothing at all.
+// sends nothing at all. The reset is the zero time where the header states no
+// window.
 func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 	raw := header.Get("RateLimit")
 	if raw == "" {
 		return 0, time.Time{}, false
 	}
 	var seconds int
-	var haveRemaining bool
+	var haveRemaining, haveWindow bool
 	for part := range strings.SplitSeq(raw, ";") {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok {
@@ -801,11 +802,14 @@ func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 		case "r":
 			remaining, haveRemaining = n, true
 		case "t":
-			seconds = n
+			seconds, haveWindow = n, true
 		}
 	}
 	if !haveRemaining {
 		return 0, time.Time{}, false
+	}
+	if !haveWindow {
+		return remaining, time.Time{}, true
 	}
 	return remaining, time.Now().Add(time.Duration(seconds) * time.Second), true
 }
