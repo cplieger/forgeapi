@@ -27,6 +27,8 @@ A request that never got an answer fails with one of four codes, and `Error.Retr
 - `CodeTLSRefused` is a certificate that did not verify, a peer that does not speak TLS, or a fatal alert from the peer during the handshake. It is not retryable. Every fatal alert counts, an `internal_error` from an overloaded peer included, because Go reports alerts only as text.
 - `CodePrivateAddressRefused` and `CodeRedirectPortRefused` are a dial whose address or port the connection's policy refused, as they are for a redirect hop. Neither is retryable.
 
+An attempt your own attempt observer refused was never sent, and fails with `CodeAttemptRefused` instead, as [Request prices and the budget](request-prices.md#refusing-an-attempt) describes.
+
 A proxy that refuses the `CONNECT` for a destination reaches you as `CodeUnreachable`, because Go's HTTP stack reports that refusal as untyped text. A body over the library's bound fails with `CodeResponseTooLarge`, carrying the status the instance answered with.
 
 ## Detecting the family
@@ -42,6 +44,8 @@ The one optional role, `Releases`, is reached by type assertion on a `Core`. A f
 ## Repository identifiers
 
 A `RepoRef` comes from what the forge answered and is never built by hand. It is derived from the family's own canonical selector and carries the family with it. `RepoRef.Encode` and `DecodeRepoRef` round-trip an identifier through a store.
+
+`ParseRemote` reads a git remote, in its URL or scp form, as the `Remote` it names, so every spelling of one repository answers one `Remote.Key`, the host and path joined by `/`. `Owner` and `Name` split the path at its last `/`. `WebOrigin` is the origin an `http` or `https` remote carries, with its port, and is empty for an ssh or scp remote. It answers false for a local path, a remote past 2,048 bytes, git's `<transport>::<address>` helper form and a remote it cannot name canonically. It reads only the string, so it cannot tell which family serves the host. To learn that, pass the instance's web origin to `families.Open` as `Connection.WebBaseURL`.
 
 ## Options
 
