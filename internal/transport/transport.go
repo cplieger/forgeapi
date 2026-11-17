@@ -1244,7 +1244,7 @@ func (c *Conn) admitRead(ctx context.Context, req *Request) bool {
 			return true
 		}
 	}
-	_, ok := c.gov.admit(req.Op)
+	ok := c.gov.admit(req.Op)
 	return ok
 }
 

@@ -313,7 +313,7 @@ func (b *memBackend) Load(key string) (Record, bool, error) {
 	return rec, ok, nil
 }
 
-func (b *memBackend) Keys() ([]string, error) { return nil, nil }
+func (*memBackend) Keys() ([]string, error) { return nil, nil }
 
 func (b *memBackend) Put(key string, rec Record) error {
 	b.mu.Lock()

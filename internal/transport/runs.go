@@ -22,15 +22,15 @@ type RunTarget struct {
 // head pinned where pin is not empty, or a refusal sent before any write.
 type RerunResolver func(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, pin string) (RunTarget, error)
 
-// MaxRunPages is the most pages a re-run's resolving read walks for a run that
+// maxRunPages is the most pages a re-run's resolving read walks for a run that
 // failed. The GitHub, Gitea and Forgejo prices for
 // [forgeapi.PullRequests.RerunFailedChecks] in internal/spec count this many reads.
-const MaxRunPages = 3
+const maxRunPages = 3
 
 // PickRun walks a re-run's resolving read from page 1, each page read by read at
 // size rows, and answers the first row on which pick reports both that it carries
 // the head and that it failed or was cancelled. A page shorter than size ends the
-// walk, and so does page [MaxRunPages]. With no such row it refuses before any
+// walk, and so does page [maxRunPages]. With no such row it refuses before any
 // write: [forgeapi.CodeRunPageTruncated] after a full last page, else
 // [forgeapi.CodeStaleHead] for a pin no row carried, else
 // [forgeapi.CodeRunNotFailed], each naming the row by noun.
@@ -40,7 +40,7 @@ func PickRun[T any](
 ) (T, error) {
 	var zero T
 	carried := false
-	for page := 1; page <= MaxRunPages; page++ {
+	for page := 1; page <= maxRunPages; page++ {
 		rows, err := read(page)
 		if err != nil {
 			return zero, err
@@ -57,7 +57,7 @@ func PickRun[T any](
 		}
 	}
 	return zero, c.Fail(ctx, op, REST(http.MethodGet), forgeapi.CodeRunPageTruncated, forgeapi.KindUpstream, http.StatusOK,
-		"no "+noun+" on the first "+strconv.Itoa(MaxRunPages)+" pages of this head's, read at "+strconv.Itoa(size)+
+		"no "+noun+" on the first "+strconv.Itoa(maxRunPages)+" pages of this head's, read at "+strconv.Itoa(size)+
 			" rows each, failed or was cancelled, and the last came back full, so the list continues past it")
 }
 

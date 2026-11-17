@@ -174,15 +174,15 @@ func (g *governor) price(cost int) {
 	g.lastCost = cost
 }
 
-// admit reports whether one further read may be issued, and why not when it may
-// not. A read that would cross the mutation reserve is DEFERRED rather than
+// admit reports whether one further read may be issued. A read that would cross the mutation reserve is DEFERRED rather than
 // issued, so a cycle of reads never spends what the merge the user is about to
 // click will need. The pools held are the one op's last answer drew on, else the
 // unnamed pool, and the parent that pool overlaps ([forgeapi.WithMutationReserve]
 // owns why). A deferral publishes the pool it held, so the published figure is
 // the budget that stopped the read.
-func (g *governor) admit(op string) (forgeapi.PartialReason, bool) {
-	return g.admitWithin(op, g.reserve)
+func (g *governor) admit(op string) bool {
+	_, ok := g.admitWithin(op, g.reserve)
+	return ok
 }
 
 // admitWithin is [governor.admit] holding reserve of each pool rather than the

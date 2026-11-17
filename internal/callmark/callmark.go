@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 )
 
-// MaxActionReads bounds one action's reads past the reserve, so a poller holding
+// maxActionReads bounds one action's reads past the reserve, so a poller holding
 // one long-lived marked context cannot spend the reserve its writes need.
-const MaxActionReads = 20
+const maxActionReads = 20
 
 type writeKey struct{}
 
@@ -28,7 +28,7 @@ func IsWrite(ctx context.Context) bool {
 	return marked
 }
 
-// WithActionReads gives ctx a bound of n reads, clamped to 1..[MaxActionReads],
+// WithActionReads gives ctx a bound of n reads, clamped to 1..[maxActionReads],
 // shared by every request and goroutine under the returned context. A ctx that
 // already carries a bound is returned unchanged, so a nested call cannot raise it.
 func WithActionReads(ctx context.Context, n int) context.Context {
@@ -36,7 +36,7 @@ func WithActionReads(ctx context.Context, n int) context.Context {
 		return ctx
 	}
 	left := &atomic.Int64{}
-	left.Store(int64(min(max(n, 1), MaxActionReads)))
+	left.Store(int64(min(max(n, 1), maxActionReads)))
 	return context.WithValue(ctx, actionKey{}, left)
 }
 

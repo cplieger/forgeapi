@@ -12,8 +12,8 @@ func taken(t *testing.T, take func() bool) int {
 	n := 0
 	for take() {
 		n++
-		if n > MaxActionReads {
-			t.Fatalf("the bound gave more than %d reads", MaxActionReads)
+		if n > maxActionReads {
+			t.Fatalf("the bound gave more than %d reads", maxActionReads)
 		}
 	}
 	return n
