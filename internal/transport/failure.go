@@ -44,11 +44,18 @@ func failureOf(err error) (code string, kind forgeapi.ErrorKind) {
 // is kept. A *forgeapi.Error this library produced below the call, such as the
 // redirect policy's inside net/http's *url.Error, is recovered rather than
 // rebuilt, so a containment refusal stays permanent and a stale reference keeps
-// its successor.
+// its successor. An attempt the attempt hook refused is answered first, since the
+// hook's own error may itself be a *forgeapi.Error.
 func (c *Conn) transportError(ctx context.Context, req *Request, err error, started time.Time) error {
 	if ctxErr := ctx.Err(); ctxErr != nil && contextSentinel(err) != nil {
 		c.log(ctx, req, exchange(req), 0, "", "", forgeapi.KindUnknown, nil, started, ctxErr.Error(), true)
 		return ctxErr
+	}
+	if refused, ok := errors.AsType[*refusedAttemptError](err); ok {
+		fe := c.fail(req.Op, forgeapi.CodeAttemptRefused, forgeapi.KindUnknown, 0, causeText(refused.err))
+		fe.Refusal = refused.err
+		c.log(ctx, req, exchange(req), 0, fe.Code, fe.DiagID, fe.Kind, nil, started, fe.Message, true)
+		return fe
 	}
 	if own, ok := errors.AsType[*forgeapi.Error](err); ok {
 		if own.Op == "" {

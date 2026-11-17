@@ -492,9 +492,10 @@ func WithRequestObserver(wrap func(next http.RoundTripper) http.RoundTripper) Op
 
 // WithAttemptObserver installs a hook inside the retry layer, called once per
 // attempt, so a retried request shows as more than one call. Its shape, its
-// containment and its effect on the read cache are [WithRequestObserver]'s: the
-// hook must pass the request on, and a second WithAttemptObserver replaces the
-// first.
+// containment and its read-cache effect are [WithRequestObserver]'s, and a second
+// one replaces the first, but it may answer an error without passing the attempt
+// on: nothing is sent or retried, and the call answers [CodeAttemptRefused]
+// holding that error in [Error.Refusal].
 //
 // Default: none.
 func WithAttemptObserver(wrap func(next http.RoundTripper) http.RoundTripper) Option {

@@ -86,6 +86,7 @@ const CodeAlreadyEnqueued = "already_enqueued"
 const CodeAnonymousRefused = "anonymous_refused"
 const CodeAppGrantInvalid = "app_grant_invalid"
 const CodeAppKeyInvalid = "app_key_invalid"
+const CodeAttemptRefused = "attempt_refused"
 const CodeBranchCannotMerge = "branch_cannot_merge"
 const CodeBudgetInvalid = "budget_invalid"
 const CodeCapabilityUnsupported = "capability_unsupported"
@@ -240,8 +241,10 @@ type Error struct {
 	Capability Capability
 	Evidence Evidence
 	Needs string
+	Refusal error
 }
 func (e *Error) Error() string
+func (e *Error) Unwrap() error
 type ErrorKind int
 func (k ErrorKind) String() string
 type Evidence struct {

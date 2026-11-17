@@ -240,7 +240,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 	// above the cache guard ([httpcache.Guard]), which must see a request as
 	// either hook passes it on.
 	if set.AttemptObserver != nil {
-		base = set.AttemptObserver(base)
+		base = hookAttempts(base, set.AttemptObserver)
 	}
 
 	c := &Conn{
@@ -534,8 +534,8 @@ func opFrom(req *http.Request) string {
 	return op
 }
 
-// retryCheck retries a transport failure [Retryable] calls retryable, and the
-// gateway statuses. It does not retry:
+// retryCheck retries a transport failure [Retryable] calls retryable, save the
+// attempt hook's refusal, and the gateway statuses. It does not retry:
 //   - a 429: the default sleeps its retry-after, so a throttle would reach the
 //     caller as a deadline rather than a rate-limited error with its duration;
 //   - a 408 or another 5xx, which the instance answered after reading the
@@ -547,6 +547,9 @@ func retryCheck(ctx context.Context, resp *http.Response, err error) (bool, erro
 		return false, ctx.Err()
 	}
 	if err != nil {
+		if _, refused := errors.AsType[*refusedAttemptError](err); refused {
+			return false, nil
+		}
 		if own, ok := errors.AsType[*forgeapi.Error](err); ok {
 			return own.Retryable, nil
 		}

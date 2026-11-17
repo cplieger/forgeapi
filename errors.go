@@ -236,6 +236,13 @@ const (
 	// reaches it.
 	CodeCapabilityUnsupported = "capability_unsupported"
 
+	// CodeAttemptRefused is an attempt the [WithAttemptObserver] hook answered
+	// with an error of its own instead of passing it on: nothing was sent for it,
+	// and it is never retried. [Error.Refusal] holds the hook's error, which
+	// errors.As reaches through the *Error. Kind is [KindUnknown] and Retryable
+	// false, since what the refusal means is the hook's to say.
+	CodeAttemptRefused = "attempt_refused"
+
 	// CodeFamilyUndetected is a connection whose forge family detection could
 	// not establish. It carries the status where one arrived, and
 	// [FamilyUnknown] always. The remedy is a corrected instance URL.
@@ -323,6 +330,7 @@ func Codes() []string {
 		CodeRefInvalid,
 		CodeHeaderReserved,
 		CodeCapabilityUnsupported,
+		CodeAttemptRefused,
 		CodeFamilyUndetected,
 		CodeReconnectRequired,
 		CodeGrantDenied,
@@ -343,8 +351,8 @@ const DiagIDLength = 13
 // Every operation here and in every family package answers nil, a *Error, or
 // context.Canceled or context.DeadlineExceeded unchanged where its context
 // ended, the library's own per-operation deadline included. Recover this type
-// with errors.As on a *Error. It wraps nothing, so no dependency's error type
-// reaches the surface; branch on Code and Kind, never on Message.
+// with errors.As on a *Error. It wraps only [Error.Refusal], never a
+// dependency's error; branch on Code and Kind, never on Message.
 type Error struct { //nolint:govet // fieldalignment: field order here is declared order, which api/forgeapi.txt records
 	// Op is the role method that failed, spelled as the method that names it,
 	// such as "ListPRs" or "MergePR": the eighteen operations, "ConnectionCaps",
@@ -425,6 +433,10 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// such as a permission or a scope list; empty where its answer names
 	// nothing. It is carried on [CodeScopeInsufficient].
 	Needs string
+	// Refusal is the error a [WithAttemptObserver] hook answered in place of
+	// sending an attempt, carried on [CodeAttemptRefused] and nil everywhere
+	// else. [Error.Unwrap] answers it.
+	Refusal error
 }
 
 // Error renders the operation, code, status and message. The separator after
@@ -448,6 +460,10 @@ func (e *Error) Error() string {
 	}
 	return b.String()
 }
+
+// Unwrap answers [Error.Refusal], so errors.Is and errors.As reach an attempt
+// hook's own error; it is nil on every other code.
+func (e *Error) Unwrap() error { return e.Refusal }
 
 // localError builds a refusal reached before any operation began: no
 // operation, family, status or diagnostic id exists to report.

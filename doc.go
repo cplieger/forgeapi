@@ -5,8 +5,8 @@
 // Every operation in this package and in every family package answers nil, a
 // [*Error], or an unchanged context.Canceled or context.DeadlineExceeded. Recover
 // the pointer form with errors.As and branch on [Error.Code] and [Error.Kind],
-// never on [Error.Message]. [Error] wraps nothing. Every enumeration's zero value
-// is its unknown member, except [MergeIntent]'s.
+// never on [Error.Message]. [Error] wraps only [Error.Refusal]. Every enumeration's
+// zero value is its unknown member, except [MergeIntent]'s.
 //
 // A role method's doc ends with a "Per forge:" block generated from one table:
 // per product, the route, its request price and the capability that can refuse
