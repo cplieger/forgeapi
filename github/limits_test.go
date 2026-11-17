@@ -212,3 +212,31 @@ func TestBudgetStatePools(t *testing.T) {
 		}
 	}
 }
+
+// TestPoolOfAfterAnswer holds PoolOf to the X-RateLimit-Resource the request's
+// operation last drew on, empty while its first attempt is in flight.
+func TestPoolOfAfterAnswer(t *testing.T) {
+	var h *harness
+	var attempt *http.Request
+	var during string
+	h = newHarness(t, map[string]string{reposRoute: `[]`}, forgeapi.WithAttemptObserver(func(next http.RoundTripper) http.RoundTripper {
+		return roundTrip(func(r *http.Request) (*http.Response, error) {
+			attempt, during = r, h.client.PoolOf(r)
+			return next.RoundTrip(r)
+		})
+	}))
+	h.instance.answerHeaders(reposRoute, headerPairs("X-RateLimit-Remaining", "4990", "X-RateLimit-Limit", "5000",
+		"X-RateLimit-Reset", "1890000000", "X-RateLimit-Resource", "core"))
+	if _, err := h.client.ListRepos(t.Context()); err != nil {
+		t.Fatalf("Setup: ListRepos = %v", err)
+	}
+	if attempt == nil {
+		t.Fatal("Setup: no attempt reached the hook")
+	}
+	if during != "" {
+		t.Errorf("PoolOf before the operation's first answer = %q, want empty", during)
+	}
+	if got := h.client.PoolOf(attempt); got != "core" {
+		t.Errorf("PoolOf after the answer = %q, want core", got)
+	}
+}

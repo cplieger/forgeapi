@@ -1,6 +1,7 @@
 package github
 
 import (
+	"net/http"
 	"sync"
 	"time"
 
@@ -186,6 +187,13 @@ func (c *Client) isDegraded() bool {
 // is its last exchange. RotationCursor is empty: a list's folded verdict is exact
 // here. No I/O; safe concurrently.
 func (c *Client) BudgetState() forgeapi.BudgetState { return c.core.BudgetState() }
+
+// PoolOf is the X-RateLimit-Resource (core, graphql, search) the operation req
+// belongs to last drew on, for a request this client built as its hooks and wire
+// transport receive it: empty before that operation's first answer named a pool,
+// and for any other request. The governor holds the operation's next read against
+// this pool. No I/O; safe concurrently.
+func (c *Client) PoolOf(req *http.Request) string { return c.core.PoolOf(req) }
 
 // Close implements [forgeapi.Core]: it releases this client's pool, the idle
 // connections of the transport the library built for the connection, at once,

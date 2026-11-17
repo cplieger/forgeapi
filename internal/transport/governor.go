@@ -153,6 +153,13 @@ func (g *governor) observe(op string, header http.Header, signal budgetSignal, p
 	}
 }
 
+// poolOf is the pool op's last answer drew on, empty before one did.
+func (g *governor) poolOf(op string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.drawn[op]
+}
+
 func (g *governor) parentOf(name string) string {
 	if g.parent == nil {
 		return ""

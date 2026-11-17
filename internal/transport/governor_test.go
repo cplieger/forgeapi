@@ -713,3 +713,54 @@ func TestBudgetStatePools(t *testing.T) {
 		t.Errorf("Pools once search's window renewed = %v, want core alone: only an answer reports the renewed figure", renewed)
 	}
 }
+
+// TestPoolOfAfterAnswer holds PoolOf to the pool a request's operation last drew
+// on: empty while its first attempt is in flight, the answer's pool after, kept
+// per operation, and empty for a request this library never built.
+func TestPoolOfAfterAnswer(t *testing.T) {
+	var c *Conn
+	var attempts []*http.Request
+	var during []string
+	observe := forgeapi.WithAttemptObserver(func(next http.RoundTripper) http.RoundTripper {
+		return roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			attempts = append(attempts, r)
+			during = append(during, c.PoolOf(r))
+			return next.RoundTrip(r)
+		})
+	})
+	c, _ = pooledConn(t, map[string][3]string{
+		"/main":   {"main", "1990", "2000"},
+		"/narrow": {"narrow", "500", "1000"},
+	}, 10, nil, observe)
+	if err := readOp(t, c, "ListPRs", "/main"); err != nil {
+		t.Fatalf("Setup: ListPRs = %v, want nil", err)
+	}
+	if err := readOp(t, c, "ListRepos", "/narrow"); err != nil {
+		t.Fatalf("Setup: ListRepos = %v, want nil", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("Setup: %d attempts reached the hook, want 2", len(attempts))
+	}
+	if during[0] != "" {
+		t.Errorf("PoolOf(ListPRs) before its first answer = %q, want empty", during[0])
+	}
+	if during[1] != "" {
+		t.Errorf("PoolOf(ListRepos) before its first answer = %q, want empty: another operation's answer places only that operation", during[1])
+	}
+	if got := c.PoolOf(attempts[0]); got != "main" {
+		t.Errorf("PoolOf(ListPRs) after its answer = %q, want main", got)
+	}
+	if got := c.PoolOf(attempts[1]); got != "narrow" {
+		t.Errorf("PoolOf(ListRepos) after its answer = %q, want narrow", got)
+	}
+	foreign, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://forge.example/main", http.NoBody)
+	if err != nil {
+		t.Fatalf("Setup: NewRequest = %v", err)
+	}
+	if got := c.PoolOf(foreign); got != "" {
+		t.Errorf("PoolOf(a request this library never built) = %q, want empty", got)
+	}
+	if got := c.PoolOf(nil); got != "" {
+		t.Errorf("PoolOf(nil) = %q, want empty", got)
+	}
+}

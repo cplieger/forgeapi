@@ -847,6 +847,17 @@ func (c *Conn) BudgetState() forgeapi.BudgetState {
 	return state
 }
 
+// PoolOf is the pool req's operation last drew on, by the name the product's
+// answer gave it: empty before an answer named one, on a product whose figure is
+// the whole service's, and for a request this library did not build.
+func (c *Conn) PoolOf(req *http.Request) string {
+	op := opFrom(req)
+	if op == "" {
+		return ""
+	}
+	return c.gov.poolOf(op)
+}
+
 // Logger is the injected logger, for the family's own lines.
 func (c *Conn) Logger() *slog.Logger { return c.logger }
 

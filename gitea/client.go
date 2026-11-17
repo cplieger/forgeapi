@@ -1,6 +1,7 @@
 package gitea
 
 import (
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -155,6 +156,11 @@ func (c *Client) foldPosition(list string) (int, bool) {
 // call; the folded-status work is bounded by [forgeapi.Budget]'s per-interval caps,
 // whose rotation [forgeapi.BudgetState.RotationCursor] holds. No I/O; safe concurrently.
 func (c *Client) BudgetState() forgeapi.BudgetState { return c.core.BudgetState() }
+
+// PoolOf is the pool the operation req belongs to last drew on, which on this
+// family is always empty, the whole service: Forgejo reports its one figure under
+// no pool name and Gitea reports none. No I/O; safe concurrently.
+func (c *Client) PoolOf(req *http.Request) string { return c.core.PoolOf(req) }
 
 // Close implements [forgeapi.Core]: it releases this client's pool, the idle
 // connections of the transport the library built for the connection, at once,

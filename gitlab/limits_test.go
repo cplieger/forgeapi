@@ -145,3 +145,36 @@ func TestBudgetStatePools(t *testing.T) {
 		}
 	}
 }
+
+// TestPoolOfAfterAnswer holds PoolOf to the RateLimit-Name the request's
+// operation last drew on, empty while its first attempt is in flight.
+func TestPoolOfAfterAnswer(t *testing.T) {
+	var h *harness
+	var attempt *http.Request
+	var during string
+	h = newHarness(t, map[string]string{labelsRoute: `[]`}, forgeapi.WithAttemptObserver(func(next http.RoundTripper) http.RoundTripper {
+		return roundTrip(func(r *http.Request) (*http.Response, error) {
+			attempt, during = r, h.client.PoolOf(r)
+			return next.RoundTrip(r)
+		})
+	}))
+	for _, pair := range [][2]string{{"RateLimit-Name", "throttle_authenticated_api"}, {"RateLimit-Remaining", "1990"}, {"RateLimit-Limit", "2000"}, {"RateLimit-Reset", "1890000060"}} {
+		h.instance.answerHeader(pair[0], pair[1])
+	}
+	if _, err := h.client.ListLabels(t.Context(), testRef()); err != nil {
+		t.Fatalf("Setup: ListLabels = %v", err)
+	}
+	if attempt == nil {
+		t.Fatal("Setup: no attempt reached the hook")
+	}
+	if during != "" {
+		t.Errorf("PoolOf before the operation's first answer = %q, want empty", during)
+	}
+	if got := h.client.PoolOf(attempt); got != "throttle_authenticated_api" {
+		t.Errorf("PoolOf after the answer = %q, want throttle_authenticated_api", got)
+	}
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

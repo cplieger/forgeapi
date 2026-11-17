@@ -137,3 +137,30 @@ func TestBudgetStatePools(t *testing.T) {
 		}
 	})
 }
+
+// TestPoolOfAfterAnswer holds PoolOf to the unnamed pool on this family: a
+// Forgejo answer's figure is the whole service's, so a request's operation draws
+// on no named pool before or after it.
+func TestPoolOfAfterAnswer(t *testing.T) {
+	var h *harness
+	var attempt *http.Request
+	h = newHarness(t, map[string]string{labelsRoute: `[]`}, forgeapi.WithAttemptObserver(func(next http.RoundTripper) http.RoundTripper {
+		return roundTrip(func(r *http.Request) (*http.Response, error) {
+			attempt = r
+			return next.RoundTrip(r)
+		})
+	}))
+	h.instance.answerHeader("RateLimit", `"baseline";r=7;t=600`)
+	if _, err := h.client.ListLabels(t.Context(), testRef()); err != nil {
+		t.Fatalf("Setup: ListLabels = %v", err)
+	}
+	if attempt == nil {
+		t.Fatal("Setup: no attempt reached the hook")
+	}
+	if got := h.client.BudgetState().Pools; len(got) != 1 {
+		t.Fatalf("Setup: Pools = %v, want the answer's one figure", got)
+	}
+	if got := h.client.PoolOf(attempt); got != "" {
+		t.Errorf("PoolOf after a Forgejo answer = %q, want empty, the whole service", got)
+	}
+}
