@@ -507,7 +507,11 @@ func renderThrottles(out *strings.Builder) {
 			case th.Header != "":
 				header = "`" + th.Header + "`, any value"
 			}
-			fmt.Fprintf(out, "| %s | %d | %s | %s |\n", product, th.Status, header, th.Says)
+			status := strconv.Itoa(th.Status)
+			if th.Document {
+				status += ", a document's errors and no data"
+			}
+			fmt.Fprintf(out, "| %s | %s | %s | %s |\n", product, status, header, th.Says)
 		}
 	}
 }

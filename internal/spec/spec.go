@@ -3199,6 +3199,9 @@ type Throttle struct {
 	Message string
 	Says    string
 	Status  int
+	// Document reports an answer to a GraphQL document carrying errors and no
+	// data, whose Message rides an envelope error's message.
+	Document bool
 }
 
 // Throttles is every rate-limit answer the families map.
@@ -3217,6 +3220,23 @@ var Throttles = []Throttle{
 		Says: "a secondary limit, whatever X-RateLimit-Remaining reads, where the answer carries no Retry-After",
 	},
 	{Product: GitHub, Status: 429, Says: "a primary or a secondary limit"},
+	{
+		Product: GitHub, Status: 200, Document: true, Header: "X-RateLimit-Remaining", Value: "0",
+		Says: "a document's primary or secondary limit spent, with no budget left in the window " +
+			"([GraphQL rate limits](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#exceeding-the-rate-limit))",
+	},
+	{
+		Product: GitHub, Status: 200, Document: true, Header: "Retry-After",
+		Says: "a document's secondary limit, whatever X-RateLimit-Remaining reads",
+	},
+	{
+		Product: GitHub, Status: 200, Document: true, Message: "secondary rate limit",
+		Says: "a document's secondary limit, whatever X-RateLimit-Remaining reads",
+	},
+	{
+		Product: GitHub, Status: 403, Document: true, Message: "secondary rate limit",
+		Says: "a document's secondary limit, its message in the envelope's errors",
+	},
 	{Product: GitLab, Status: 429, Says: "a rate limit"},
 	{
 		Product: Gitea, Status: 403, Header: "RateLimit", Value: "r=0",

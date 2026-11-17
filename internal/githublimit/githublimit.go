@@ -61,8 +61,7 @@ func Limited(status int, header http.Header, said bool) bool {
 	case http.StatusTooManyRequests:
 		return true
 	case http.StatusForbidden:
-		remaining, _, ok := Signal(header)
-		return Secondary(status, header, said) || (ok && remaining <= 0)
+		return quota(header, said)
 	}
 	return false
 }
@@ -74,5 +73,27 @@ func Secondary(status int, header http.Header, said bool) bool {
 	if status != http.StatusForbidden && status != http.StatusTooManyRequests {
 		return false
 	}
+	return secondary(header, said)
+}
+
+// DocumentLimited is [Limited] and [Secondary] for a document answer carrying
+// errors and no data, which GitHub answers a limit with at 200 too: a primary
+// limit with the remaining figure at zero, a secondary limit with its message
+// (https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#exceeding-the-rate-limit).
+func DocumentLimited(status int, header http.Header, said bool) (limited, isSecondary bool) {
+	if status != http.StatusOK {
+		return Limited(status, header, said), Secondary(status, header, said)
+	}
+	return quota(header, said), secondary(header, said)
+}
+
+// quota reports a refusal that is a secondary limit or whose remaining figure
+// is at zero.
+func quota(header http.Header, said bool) bool {
+	remaining, _, ok := Signal(header)
+	return secondary(header, said) || (ok && remaining <= 0)
+}
+
+func secondary(header http.Header, said bool) bool {
 	return said || header.Get("Retry-After") != ""
 }

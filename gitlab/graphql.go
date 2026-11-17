@@ -279,7 +279,7 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	var env envelope
 	decodeErr := transport.Decode(body, &env)
 	decoded := decodeErr == nil
-	if err != nil && (!decoded || len(env.Errors) == 0) {
+	if err != nil && (!decoded || len(env.Errors) == 0 || transport.IsThrottled(err)) {
 		c.degradeOn(err)
 		return docResult{}, err
 	}

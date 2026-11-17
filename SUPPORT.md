@@ -53,6 +53,10 @@ Every operation reports these answers as `KindRateLimited`, with `RetryAfter` se
 | GitHub | 403 | `Retry-After`, any value | a secondary limit, whatever X-RateLimit-Remaining reads, as [GitHub documents it](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) |
 | GitHub | 403 | none: a message carrying "secondary rate limit" | a secondary limit, whatever X-RateLimit-Remaining reads, where the answer carries no Retry-After |
 | GitHub | 429 | none: the status alone | a primary or a secondary limit |
+| GitHub | 200, a document's errors and no data | `X-RateLimit-Remaining: 0` | a document's primary or secondary limit spent, with no budget left in the window ([GraphQL rate limits](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#exceeding-the-rate-limit)) |
+| GitHub | 200, a document's errors and no data | `Retry-After`, any value | a document's secondary limit, whatever X-RateLimit-Remaining reads |
+| GitHub | 200, a document's errors and no data | none: a message carrying "secondary rate limit" | a document's secondary limit, whatever X-RateLimit-Remaining reads |
+| GitHub | 403, a document's errors and no data | none: a message carrying "secondary rate limit" | a document's secondary limit, its message in the envelope's errors |
 | GitLab | 429 | none: the status alone | a rate limit |
 | Gitea | 403 | `RateLimit: r=0` | a rate limit with no budget left in the window, the structured header's r parameter at 0 |
 | Gitea | 429 | none: the status alone | a rate limit |

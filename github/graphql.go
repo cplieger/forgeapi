@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/githublimit"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
@@ -538,7 +539,7 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	var env envelope
 	decodeErr := transport.Decode(body, &env)
 	decoded := decodeErr == nil
-	if err != nil && (!decoded || len(env.Errors) == 0) {
+	if err != nil && (!decoded || len(env.Errors) == 0 || transport.IsThrottled(err)) {
 		c.degradeOn(err)
 		return docResult{}, err
 	}
@@ -547,6 +548,9 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	}
 	onlyNotFound, rootFailure := doc.absenceOf(env.Errors)
 	if len(env.Errors) > 0 && !env.carriesData() {
+		if limited := c.documentLimit(ctx, op, doc, resp, env.Errors); limited != nil {
+			return docResult{}, limited
+		}
 		if !onlyNotFound {
 			return docResult{}, c.refuseDocument(ctx, op, doc, resp, env.Errors)
 		}
@@ -594,6 +598,26 @@ func (c *Client) refuseDocument(ctx context.Context, op string, doc document, re
 	c.markDegraded()
 	return c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream, resp.Status,
 		resp.Quote("the "+doc.name+" document was refused: "+errs[0].Message))
+}
+
+// documentLimit is the rate limit an envelope carrying errors and no data is, read
+// as [githublimit.DocumentLimited] reads it with any envelope error's message, nil
+// where it is none. It degrades nothing, since a throttle is not the document's.
+func (c *Client) documentLimit(ctx context.Context, op string, doc document, resp *transport.Response, errs []docError) *forgeapi.Error {
+	said := slices.ContainsFunc(errs, func(e docError) bool { return githublimit.SecondaryMessage(e.Message) })
+	limited, secondary := githublimit.DocumentLimited(resp.Status, resp.Header, said)
+	if !limited {
+		return nil
+	}
+	c.countEnvelope(errs)
+	if counters := c.core.Counters(); counters.RateLimited != nil {
+		counters.RateLimited(forgeapi.FamilyGitHub)
+	}
+	fe := c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindRateLimited, resp.Status,
+		resp.Quote("the "+doc.name+" document was rate-limited: "+errs[0].Message))
+	fe.Secondary, fe.RetryAfter = secondary, transport.RetryAfter(resp.Header)
+	transport.AnswerFigures(fe, resp.Header, githublimit.Signal, githublimit.Pool)
+	return fe
 }
 
 // countEnvelope records one document's envelope errors by the discriminator this

@@ -700,7 +700,7 @@ func TestA403NamingWhatTheCredentialLacksIsTheScopeRefusal(t *testing.T) {
 // merge, whose own 403 cell would otherwise read a throttle as a permission.
 func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 	for _, th := range spec.Throttles {
-		if th.Product != spec.GitHub {
+		if th.Product != spec.GitHub || th.Document {
 			continue
 		}
 		for _, op := range []string{"ListRuns", opMergePR} {
