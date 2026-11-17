@@ -548,10 +548,11 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 // repository with no pull request is [forgeapi.CodePRNotFound], a null repository
 // is [forgeapi.CodeRepoOrPRNotVisible], and the degraded REST path reports the
 // union because there the status is all there is.
-func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
+func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error) {
 	const op = "ReadPR"
 	ctx = transport.Call(ctx, op)
-	read, err := c.readPull(ctx, op, repo, pr, true)
+	set := forgeapi.ResolveRead(opts...)
+	read, err := c.readPull(ctx, op, repo, pr, pullParts{fold: true, reviews: set.Reviews})
 	if err != nil {
 		return forgeapi.PullRequest{}, err
 	}
@@ -577,11 +578,9 @@ type pullRead struct {
 // readPull is the single-pull-request read three operations share: the document where
 // this connection's documents work, and the REST record where they do not.
 //
-// fold says whether the caller wants the complete check fold, which is what separates
-// the read that RETURNS checks from the merge-state read that returns none: following
-// the contexts connection's pages costs a request each, so the operation that publishes
-// no checks does not pay for them.
-func (c *Client) readPull(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, fold bool) (pullRead, error) {
+// parts says what the caller wants beyond the record, which is what separates the read
+// that RETURNS checks and reviews from the merge-state read that returns neither.
+func (c *Client) readPull(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, parts pullParts) (pullRead, error) {
 	if err := checkRepo(repo); err != nil {
 		return pullRead{}, err
 	}
@@ -596,18 +595,28 @@ func (c *Client) readPull(ctx context.Context, op string, repo forgeapi.RepoRef,
 	// would spend the refusal plus the REST read where the row publishes an exact
 	// price, and that contradiction is what the sibling GraphQL family's own table row
 	// rules out. Every later call takes the REST arm from the start.
-	return c.documentRead(ctx, op, repo, pr, fold)
+	return c.documentRead(ctx, op, repo, pr, parts)
+}
+
+// pullParts is what a single-pull-request read asks for beyond the record. fold is the
+// complete check fold: following the contexts connection's pages costs a request each,
+// so the operation that publishes no checks does not pay for them. reviews is the
+// review selection, which [forgeapi.WithReviews] can leave out of the document.
+type pullParts struct {
+	fold    bool
+	reviews bool
 }
 
 // documentRead is the single-pull-request document read, with the complete fold
-// following the contexts connection's pages up to the published bound. The read
-// that follows is the one that returns reviews, so the merge-state read selects none.
-func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, follow bool) (pullRead, error) {
+// following the contexts connection's pages up to the published bound where parts
+// asks for it, and the review selection where parts asks for it, so the merge-state
+// read selects neither.
+func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, parts pullParts) (pullRead, error) {
 	owner, name, err := ownerName(repo)
 	if err != nil {
 		return pullRead{}, err
 	}
-	vars := map[string]any{varOwner: owner, varName: name, "number": pr.Number, "checksAfter": nil, varReviews: follow}
+	vars := map[string]any{varOwner: owner, varName: name, "number": pr.Number, "checksAfter": nil, varReviews: parts.reviews}
 	var payload docPayload
 	result, execErr := c.execute(ctx, op, prRead, vars, &payload)
 	if execErr != nil {
@@ -621,7 +630,7 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	item := c.normalizeDocPull(node, canonical)
 	folded := c.foldRollup(rollupOf(node))
 	at := result.placed(pullPath, false, nil)
-	if follow {
+	if parts.fold {
 		followed, followErr := c.followContexts(ctx, op, vars, &folded, &at)
 		if followErr != nil {
 			return pullRead{}, followErr
@@ -630,7 +639,10 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	}
 	c.applyFold(&item, &folded)
 	c.markRead(&item, &at)
-	c.markReviewsCut(&item, node.Reviews, follow)
+	c.markReviewsCut(&item, node.Reviews, parts.reviews)
+	if !parts.reviews {
+		item.Action.Approvals, item.Action.ChangesRequested = forgeapi.CountUnknown, forgeapi.CountUnknown
+	}
 	return pullRead{item: item, merged: supportOf(node.Merged)}, nil
 }
 
@@ -1288,7 +1300,7 @@ func (c *Client) mergeOutcome(answer *restMergeAnswer) forgeapi.MergeOutcomeStat
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error) {
 	const op = "MergeStatus"
 	ctx = transport.Call(ctx, op)
-	read, err := c.readPull(ctx, op, repo, pr, false)
+	read, err := c.readPull(ctx, op, repo, pr, pullParts{})
 	if err != nil {
 		return forgeapi.MergeStatus{}, err
 	}

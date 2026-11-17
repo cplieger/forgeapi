@@ -67,6 +67,26 @@ func TestWithReviews_records_the_last_value_named(t *testing.T) {
 	}
 }
 
+func TestResolveRead_reads_reviews_unless_the_last_option_says_not(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		opts []forgeapi.ReadOption
+		want bool
+	}{
+		{name: "none", want: true},
+		{name: "nil", opts: []forgeapi.ReadOption{nil}, want: true},
+		{name: "false", opts: []forgeapi.ReadOption{forgeapi.WithReviews(false)}, want: false},
+		{name: "false_then_true", opts: []forgeapi.ReadOption{forgeapi.WithReviews(false), forgeapi.WithReviews(true)}, want: true},
+		{name: "true_then_false", opts: []forgeapi.ReadOption{forgeapi.WithReviews(true), forgeapi.WithReviews(false)}, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := forgeapi.ResolveRead(test.opts...); got.Reviews != test.want {
+				t.Errorf("ResolveRead(%s) = reviews %t, want %t", test.name, got.Reviews, test.want)
+			}
+		})
+	}
+}
+
 func TestResolveList_applies_the_last_of_repeated_options(t *testing.T) {
 	got, err := forgeapi.ResolveList(
 		forgeapi.WithPageBound(5),

@@ -10,7 +10,7 @@ On GitLab, an owner named by digits alone costs one more request on every page o
 
 A label write's price grows with the names it carries. Where a block says "plus one per label name", the call sends one request for each distinct name, and "plus up to one per label name" means only the names the item carries cost a request. `AddLabels` and a GitLab `RemoveLabels` send every name in one request.
 
-On Gitea and Forgejo, `ListPRs` reads each row's reviews with one request beside its folded status, so a row costs 2 requests, and `ReadPR` adds one review read. Pass `WithReviews(false)` to keep one request per row. Every row then answers `Approvals` and `ChangesRequested` as `CountUnknown`. On GitHub and GitLab a list reads the counts in its own request or not at all, so `WithReviews(false)` saves no request there.
+On Gitea and Forgejo, `ListPRs` reads each row's reviews with one request beside its folded status, so a row costs 2 requests, and `ReadPR` adds one review read. Pass `WithReviews(false)` to keep one request per row and to drop the review read from `ReadPR`. Every pull request then answers `Approvals` and `ChangesRequested` as `CountUnknown`. On GitHub and GitLab a list or a read takes the counts in its own request or not at all, so `WithReviews(false)` saves no request there.
 
 On GitHub, the run route serves one created filter through a result window of 1,000 runs, ending with the whole page that reaches it. A `ListRuns` walk under `WithSince` that goes past the window costs more pages than its runs fill. Each page still costs what the block states. But each time the walk narrows its created range, it reads the runs of one second twice, so it pays once more for the pages those runs fill.
 

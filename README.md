@@ -59,7 +59,7 @@ The `github`, `gitlab` and `gitea` packages each hold one client, and `gitea` se
 - `Releases` sits outside `Core`, and all three clients implement it. Reach it from a `Core` with a type assertion such as `rel, ok := client.(forgeapi.Releases)`.
 - The writes are `CreatePR`, `ClosePR`, `ReopenPR`, `MergePR`, `CancelAutoMerge`, `RerunFailedChecks`, `RerunFailedRun`, `CreateIssue`, `CloseIssue`, `ReopenIssue`, `AddLabels`, `RemoveLabels` and `CreateRelease`. Every other operation reads.
 - `Checks.CommitStatus` returns a commit's combined check verdict. `Checks.ListRuns` lists GitHub Actions runs, GitLab pipelines, and Gitea and Forgejo Actions runs.
-- `Connection` describes an instance, `RepoRef` and `PRRef` address a repository and a pull request, and `Option` and `ListOption` configure a client and a list call.
+- `Connection` describes an instance, `RepoRef` and `PRRef` address a repository and a pull request, and `Option`, `ListOption` and `ReadOption` configure a client, a list call and a single read.
 - Every list answers a `Page` with a `Next` cursor, and [Pages and continuations](docs/pagination.md) covers short pages and resuming.
 - `ActionReads` lets the reads around one of your own writes pass the mutation reserve, and `Mutates` tells an attempt observer which request is a write. [Request prices and the budget](docs/request-prices.md) covers both.
 - `creds` holds the device flow, `StoredSource` over the file store or over your own `Backend` through `NewStore`, and `AppKey` and `AppSource` for GitHub App credentials. `gitcred` holds the git credential helper.

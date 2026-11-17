@@ -889,6 +889,16 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup",
 			},
+			{
+				Field: "Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the document leaves latestOpinionatedReviews out of the request",
+			},
+			{
+				Field: "Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the document leaves latestOpinionatedReviews out of the request",
+			},
 		},
 	},
 	{
@@ -944,13 +954,23 @@ var Table = []Entry{
 				Kind:  DiffersInShape,
 				Says:  "the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented",
 			},
+			{
+				Field: "Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the document leaves approvedBy out of the request",
+			},
+			{
+				Field: "Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the document leaves reviewers out of the request",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial",
-		Requests:  Requests{Min: 2, Max: 5},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then, unless WithReviews(false) left them unread, one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial",
+		Requests:  Requests{Min: 1, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -973,13 +993,23 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
 			},
+			{
+				Field: "Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the reviews page is not read, which spends one request less",
+			},
+			{
+				Field: "Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the reviews page is not read, which spends one request less",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial",
-		Requests:  Requests{Min: 2, Max: 5},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then, unless WithReviews(false) left them unread, one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial",
+		Requests:  Requests{Min: 1, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1006,6 +1036,16 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
+			},
+			{
+				Field: "Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the reviews page is not read, which spends one request less",
+			},
+			{
+				Field: "Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the reviews page is not read, which spends one request less",
 			},
 		},
 	},

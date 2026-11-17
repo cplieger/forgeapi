@@ -110,13 +110,15 @@ var prList = document{
 // [Client.MergeStatus] and, through the permissions it selects, [Client.GrantCaps].
 // The merged answer comes from the pair this selection carries, the state member
 // and the nullable merged timestamp, because this product has no merged boolean.
+// The review fields are a variable for the reason the list's are: [forgeapi.WithReviews]
+// reaches them, and [Client.MergeStatus] publishes no review count.
 var prRead = document{
 	name: "PRRead",
-	text: `query PRRead($fullPath: ID!, $iid: String!) {
+	text: `query PRRead($fullPath: ID!, $iid: String!, $reviews: Boolean!) {
   project(fullPath: $fullPath) {
     fullPath
     userPermissions { pushCode readMergeRequest }
-    mergeRequest(iid: $iid) {` + mergeRequestFields("", "") + `
+    mergeRequest(iid: $iid) {` + mergeRequestFields("", "@include(if: $reviews)") + `
     }
   }
   queryComplexity { score limit }

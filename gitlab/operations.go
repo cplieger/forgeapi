@@ -512,12 +512,16 @@ func (c *Client) projectByID(ctx context.Context, op string, id int64) (forgeapi
 // arm is the REST read a connection whose setup found the documents refused takes
 // instead, from its first call, so the discovery is the connection's cost rather
 // than this call's.
-func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error) {
+func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error) {
 	const op = "ReadPR"
 	ctx = transport.Call(ctx, op)
-	read, err := c.readMergeRequest(ctx, op, repo, pr)
+	set := forgeapi.ResolveRead(opts...)
+	read, err := c.readMergeRequest(ctx, op, repo, pr, set.Reviews)
 	if err != nil {
 		return forgeapi.PullRequest{}, err
+	}
+	if !set.Reviews {
+		read.item.Action.Approvals, read.item.Action.ChangesRequested = forgeapi.CountUnknown, forgeapi.CountUnknown
 	}
 	return read.item, nil
 }
@@ -535,8 +539,10 @@ type mergeRequestRead struct {
 }
 
 // readMergeRequest is the single-merge-request read two operations share: the document
-// where this connection's documents work, and the REST read where they do not.
-func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef) (mergeRequestRead, error) {
+// where this connection's documents work, and the REST read where they do not. reviews
+// is whether the document selects the review fields, which the merge-state read and a
+// [forgeapi.WithReviews] false leave out; the REST record carries none either way.
+func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, reviews bool) (mergeRequestRead, error) {
 	if err := checkRepo(repo); err != nil {
 		return mergeRequestRead{}, err
 	}
@@ -550,6 +556,7 @@ func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.
 	if _, err := c.execute(ctx, op, prRead, map[string]any{
 		varFullPath: repo.Selector,
 		"iid":       strconv.Itoa(pr.Number),
+		"reviews":   reviews,
 	}, &payload); err != nil {
 		return mergeRequestRead{}, err
 	}
@@ -1009,7 +1016,7 @@ func (c *Client) mergeOutcome(r *restMergeRequest) forgeapi.MergeOutcomeState {
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error) {
 	const op = "MergeStatus"
 	ctx = transport.Call(ctx, op)
-	read, err := c.readMergeRequest(ctx, op, repo, pr)
+	read, err := c.readMergeRequest(ctx, op, repo, pr, false)
 	if err != nil {
 		return forgeapi.MergeStatus{}, err
 	}

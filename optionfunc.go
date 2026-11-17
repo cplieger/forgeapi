@@ -12,6 +12,16 @@ type listOptionFunc func(*ListSettings)
 
 func (f listOptionFunc) applyListOption(s *ListSettings) { f(s) }
 
+// reviewsOption is [WithReviews]'s value, a list option and a read option at once.
+type reviewsOption bool
+
+func (r reviewsOption) applyListOption(s *ListSettings) {
+	s.Reviews = bool(r)
+	s.ReviewsSet = true
+}
+
+func (r reviewsOption) applyReadOption(s *ReadSettings) { s.Reviews = bool(r) }
+
 // nameUnknown is the spelling every enumeration's zero member renders as, which is
 // the honest answer for an unpopulated field rather than a wrong one.
 const nameUnknown = "unknown"
