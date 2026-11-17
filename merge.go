@@ -46,18 +46,13 @@ type MergeRequest struct { //nolint:govet // fieldalignment: field order here is
 	// value it does not support, which the family package reports rather than
 	// swallows.
 	Strategy string
-	// HeadSHA is required, and mandatory rather than prudent: one product has
-	// a group and instance setting that makes it compulsory and answers 400
-	// without it. It is also the precondition that makes a merge safe, since a
-	// push landing between the read and the click must fail the merge rather
-	// than land unreviewed code.
-	//
-	// An empty HeadSHA is therefore REFUSED with [CodeMissingSHA] before any
-	// request, on every family and not only the one that answers 400 for it.
-	// The requirement is stated as a refusal because the alternative is the
-	// field's own reason failing open: on the two families that do not demand
-	// it, a merge sent without it merges whatever the head is now, which is the
-	// outcome the pin exists to prevent.
+	// HeadSHA is required: one product has a group and instance setting that
+	// makes it compulsory and answers 400 without it, and it is the precondition
+	// that makes a merge safe, since a push landing between the read and the
+	// click must fail the merge rather than land unreviewed code. An empty
+	// HeadSHA is REFUSED with [CodeMissingSHA] before any request, on every
+	// family: on the two that do not demand it, a merge sent without it merges
+	// whatever the head is now, which is the outcome the pin exists to prevent.
 	HeadSHA string
 	// DeleteBranch asks the forge to delete the source branch after merging.
 	DeleteBranch bool

@@ -263,10 +263,11 @@ func TestTheReRunRetriesThePipelineGitLabMatchesToTheHead(t *testing.T) {
 }
 
 // Where the connection's documents are refused, the re-run reads the REST merge
-// request, whose head_pipeline is the STORED one, kept after a push until a pipeline
-// of the new head exists (lib/api/entities/merge_request.rb). Its payload carries no
-// source_sha to prove a pipeline on another commit belongs to the head, so one is
-// refused, a merged results pipeline of the current head included.
+// request, whose head_pipeline is the STORED one (lib/api/entities/merge_request.rb),
+// kept after a push until a pipeline of the new head exists (app/models/merge_request.rb
+// update_head_pipeline). That pipeline carries no source_sha (API::Entities::Ci::Pipeline)
+// to prove a pipeline on another commit belongs to the head, so one is refused, a
+// merged results pipeline of the current head included.
 func TestADegradedReRunRetriesOnlyAStoredPipelineOnTheHead(t *testing.T) {
 	const other = "0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293"
 	const forkRetryRoute = "POST /api/v4/projects/99/pipelines/77/retry"

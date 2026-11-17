@@ -774,9 +774,10 @@ func (c *Client) normalizeRESTPull(r *restMergeRequest, repo forgeapi.RepoRef, p
 		repo = referencedRepo(r.References, sigil)
 	}
 	author, kind := restAuthor(r.Author)
-	// head_pipeline is the STORED pipeline, kept after a push until one of the new
-	// head exists (lib/api/entities/merge_request.rb), and the payload carries no
-	// source_sha, so only a pipeline on the head's own sha speaks for the head.
+	// head_pipeline is the STORED pipeline (lib/api/entities/merge_request.rb), kept
+	// after a push until one of the new head exists (app/models/merge_request.rb
+	// update_head_pipeline), and it carries no source_sha (API::Entities::Ci::Pipeline),
+	// so only a pipeline on the head's own sha speaks for the head.
 	checks := forgeapi.CheckUnknown
 	if p := r.HeadPipeline; p != nil && r.SHA != "" && p.SHA == r.SHA {
 		checks = c.checkState("pipeline status (rest)", p.Status)

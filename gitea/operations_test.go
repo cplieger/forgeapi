@@ -219,20 +219,13 @@ func TestACreationWithNoLabelsCostsOneRequest(t *testing.T) {
 }
 
 // TestACreationRefusesALabelTheWholeListItReadDoesNotCarry holds the resolution's
-// failure arm over a SHORT page, and holds it to claiming no more than the read
-// establishes.
-//
-// A name with no identifier behind it is refused rather than dropped, because a
-// creation that silently lost a label the caller asked for is the worse answer. What
-// the refusal may SAY is bounded by what was read: one page at the instance maximum
-// of the repository's labels and one of its organization's, so a message asserting
-// the repository has no such label states a fact that read cannot establish. A page that
-// came back short IS the whole list this route can reach, so this arm keeps the code
-// it carried before the truncated one existed, which is the rule for this pair.
-// Its kind is the upstream one for the same reason the sibling refusal over an
-// answered read uses it: nothing here is a merge, and the merge kind would tell a
-// caller their pull request is unmergeable because an issue's label name did not
-// resolve.
+// failure arm over a SHORT page. A name with no identifier behind it is refused,
+// not dropped, since a creation that silently lost a label is the worse answer. A
+// short page is the whole list this route reaches, so the code stays
+// [forgeapi.CodeValidation], and the message names the page and bound it read,
+// because one page at the instance maximum cannot establish the repository has no
+// such label. The kind is the upstream one: the merge kind would tell a caller
+// their pull request is unmergeable because an issue's label name did not resolve.
 func TestACreationRefusesALabelTheWholeListItReadDoesNotCarry(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		"GET /api/v1/repos/example/example/labels": labelBody,
