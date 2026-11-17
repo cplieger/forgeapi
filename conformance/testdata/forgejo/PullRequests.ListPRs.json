@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded list_prs response beside a recorded commit_status response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured: neither call the folded read is made of sends a validator on this product, so nothing here is revalidatable; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer codeberg.org gave anonymously, read 2026-10-02",
+  "//": "cut from a recorded list_prs response beside a recorded commit_status response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured: neither call the folded read is made of sends a validator on this product, so nothing here is revalidatable; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer codeberg.org gave anonymously, read 2026-10-02; the comments and review_comments keys cut from a recorded ListPRs response, read 2026-11-16, their counts replaced with the canonical subject's; the reviews route answered as a recorded list_pull_reviews response, the answer codeberg.org gave anonymously, read 2026-11-16, trimmed to the user id, state, id, dismissed and stale keys, its reviews replaced with the canonical subject's two approvals, one change request and one review request",
   "routes": [
     {
       "method": "GET",
@@ -30,6 +30,8 @@
               "description": "Example label."
             }
           ],
+          "comments": 2,
+          "review_comments": 1,
           "head": {
             "ref": "example-feature",
             "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
@@ -73,6 +75,52 @@
           }
         ]
       }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/repos/example/example/pulls/1/reviews",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "id": 1,
+          "user": {
+            "id": 1
+          },
+          "state": "APPROVED",
+          "dismissed": false,
+          "stale": false
+        },
+        {
+          "id": 2,
+          "user": {
+            "id": 2
+          },
+          "state": "REQUEST_CHANGES",
+          "dismissed": false,
+          "stale": false
+        },
+        {
+          "id": 3,
+          "user": {
+            "id": 3
+          },
+          "state": "REQUEST_REVIEW",
+          "dismissed": false,
+          "stale": false
+        },
+        {
+          "id": 4,
+          "user": {
+            "id": 4
+          },
+          "state": "APPROVED",
+          "dismissed": false,
+          "stale": false
+        }
+      ]
     },
     {
       "method": "GET",

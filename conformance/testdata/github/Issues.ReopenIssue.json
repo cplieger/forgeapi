@@ -1,0 +1,33 @@
+{
+  "//": "cut from a recorded ReadIssue response, the answer github.com, anonymously gave, read 2026-11-16; trimmed to the fields the case asserts; owner, repository, login, ids, URLs, times and counts replaced with the canonical subject; no sandbox capture exists for this mutation on this product, so the response shape is the same product's read capture, which this product's API description gives the mutation as its response schema",
+  "routes": [
+    {
+      "method": "PATCH",
+      "path": "/repos/example/example/issues/1",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "number": 1,
+        "state": "open",
+        "title": "Example issue",
+        "body": "Example issue body.",
+        "user": {
+          "login": "example-user"
+        },
+        "html_url": "https://forge.example/example/example/issues/1",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-02T00:00:00Z",
+        "labels": [
+          {
+            "name": "example-label",
+            "color": "ededed",
+            "description": "Example label."
+          }
+        ],
+        "comments": 3
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // mergeAnswering is a harness whose merge route answers status with the empty body
@@ -31,7 +31,7 @@ func mergeAnswering(t *testing.T, status int) (*harness, *map[string]any) {
 
 // mergeAnsweringByForm is a harness whose merge route answers bare to a form without
 // merge_when_checks_succeed and flagged to one carrying it, and records every form.
-func mergeAnsweringByForm(t *testing.T, bare, flagged int) (*harness, *[]map[string]any) {
+func mergeAnsweringByForm(t *testing.T, bare, flagged int, opts ...forgeapi.Option) (*harness, *[]map[string]any) {
 	t.Helper()
 	forms := &[]map[string]any{}
 	in := newInstance()
@@ -51,7 +51,7 @@ func mergeAnsweringByForm(t *testing.T, bare, flagged int) (*harness, *[]map[str
 		w.WriteHeader(bare)
 	}))
 	t.Cleanup(in.server.Close)
-	return newHarnessOver(t, in, time.Now), forms
+	return newHarnessOver(t, in, time.Now, opts...), forms
 }
 
 // TestAutoMergeAsksTheInstanceToMergeWhenChecksSucceed holds `AutoMerge` to ADR-0103's

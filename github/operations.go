@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // maxStatusPageItems is the page size the degraded folded-status reads ask for, which
@@ -18,10 +18,10 @@ import (
 // fold is computed over, so a smaller page spends more requests for the same verdict.
 const maxStatusPageItems = 100
 
-// maxRunPageItems is the page size the re-run's resolving read asks for. It is small
-// because that read wants ONE run, the one carrying the head the caller pinned, and
-// upstream applies the pin as a declared filter.
-const maxRunPageItems = 20
+// maxRunPageItems is the page size the re-run's resolving read asks for, this
+// product's own maximum, so the walk for a failed run on a head with many spends as
+// few reads as it can.
+const maxRunPageItems = 100
 
 // The request-body fields several mutations share, and the two document variables every
 // repository-addressed document of this product takes.
@@ -37,6 +37,7 @@ const (
 	varAfter  = "after"
 
 	varMergeState = "mergeState"
+	varReviews    = "reviews"
 )
 
 // Whoami implements [forgeapi.Identity]. This product reports the credential's
@@ -167,37 +168,13 @@ func (c *Client) ownedRepos(ctx context.Context, op string, set *forgeapi.ListSe
 	return page, nil
 }
 
-// ListPRs implements [forgeapi.PullRequests].
-//
-// It reads the list document rather than the REST list, which returns neither
-// mergeability field at all: the document carries the check rollup, the merge
-// state, the head commit, the auto-merge request and the merge-queue entry in one
-// call, measured at ONE rate-limit point for 20 pull-request rows and at three for
-// 100. nodeCount tracks what the document REQUESTS rather than what came back, and
-// moves without the cost: at 100 rows it read 2,300 with a labels page of 20 and
-// 10,300 with the labels page of 100 this document selects, at three points both.
-//
-// Each row's check fold is BOUNDED to the first page of that row's contexts
-// connection, which is what keeps the list at one request, and on this product that
-// bound costs NO unknown: the connection's per-state counts describe the WHOLE
-// collection, measured byte-identical across three pages of a 446-context collection,
-// so the verdict and the six counts are exact from the first page and what the bound
-// truncates is the check NAMES. A row whose connection reports a next page therefore
-// carries a real verdict beside [forgeapi.PartialPaginationCap], which is what says
-// the names are short rather than the verdict.
-//
-// It asks for at most [prListPageCeiling] rows a page whatever the page bound asks,
-// for the reason that constant states, and a page of that size cost two points on
-// the repository it was measured on. A page the ceiling shortened is an ordinary
-// page: it carries the document's continuation and no partial marker, so the
-// ceiling costs requests and never rows.
-//
-// This is the one read of this family with no REST arm, and that is its published
-// price rather than an omission: the REST list carries no rollup and no merge state,
-// so a fall-back would answer a different question, and a call that fell back inside
-// itself would spend two requests where this row publishes one. A document refused
-// here is this call's failure and marks the connection, so the two reads that do have
-// a REST arm take it from their next call.
+// ListPRs implements [forgeapi.PullRequests] with the list document, one request a
+// page of at most [prListPageCeiling] rows: the REST list carries no rollup and no
+// merge state, so this read has no REST arm, and a refused document fails the call
+// and marks the connection. Each row's fold is bounded to one context
+// ([listFoldPageSize]), yet its verdict and counts are exact, because the
+// connection's per-state counts describe the whole collection ([docStateCount]); a
+// row whose contexts continue carries [forgeapi.PartialPaginationCap] for the names.
 func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
 	const op = opListPRs
 	ctx = transport.Call(ctx, op)
@@ -228,6 +205,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		varAfter:      nullableString(after),
 		"states":      documentStates(set.State),
 		varMergeState: set.MergeState,
+		varReviews:    set.Reviews,
 	}, &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
@@ -249,7 +227,8 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
 		item := c.rowWithFold(&rows.Nodes[i], canonical)
-		c.markListed(&item, at.refused[i], set.MergeState)
+		c.markListed(&item, at.refused[i], &set)
+		c.markReviewsCut(&item, rows.Nodes[i].Reviews, set.Reviews)
 		items = append(items, item)
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items, Next: documentNext(call, rows.PageInfo), Successor: successor}
@@ -260,13 +239,25 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 }
 
 // markListed applies a listed row's own markers: the refused check rollup, and the
-// merge state blanked when the list was asked not to read it.
-func (c *Client) markListed(item *forgeapi.PullRequest, rollupRefused, mergeState bool) {
+// merge state and review counts blanked when the list was asked not to read them.
+func (c *Client) markListed(item *forgeapi.PullRequest, rollupRefused bool, set *forgeapi.ListSettings) {
 	if rollupRefused {
 		c.refuseChecks(item)
 	}
-	if !mergeState {
+	if !set.MergeState {
 		blankMergeState(item)
+	}
+	if !set.Reviews {
+		item.Action.Approvals, item.Action.ChangesRequested = forgeapi.CountUnknown, forgeapi.CountUnknown
+	}
+}
+
+// markReviewsCut marks a row whose review list was cut, which [reviewCounts]
+// answered unknown, unless the row already carries a marker or read says the
+// reviews were not asked for.
+func (c *Client) markReviewsCut(item *forgeapi.PullRequest, reviews *docReviews, read bool) {
+	if read && reviews.cut() && item.Partial == nil {
+		item.Partial = c.partial(forgeapi.PartialPaginationCap, len(reviews.Nodes))
 	}
 }
 
@@ -353,16 +344,19 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
 	if bounded, ok := c.unpagedList[forgeapi.PullRequest](set.After); ok {
+		bounded.Indexed = true
 		return bounded, nil
 	}
 	query := searchQuery(searchPulls, &set)
 	set.PageBound = min(set.PageBound, prSearchPageCeiling)
 	vars := searchVariables(query, &set, after)
 	vars[varMergeState] = set.MergeState
+	vars[varReviews] = set.Reviews
 	var payload docPayload
 	result, err := c.execute(ctx, op, prMine, vars, &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
+			deferred.Indexed = true
 			return deferred, nil
 		}
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -385,7 +379,8 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	items := make([]forgeapi.PullRequest, 0, len(nodes))
 	for _, node := range nodes {
 		item := c.rowWithFold(&node.docPullRequest, rowRepo(node.Repository))
-		c.markListed(&item, refused[node], set.MergeState)
+		c.markListed(&item, refused[node], &set)
+		c.markReviewsCut(&item, node.Reviews, set.Reviews)
 		items = append(items, item)
 	}
 	return c.searchPage(items, rows.PageInfo, searchWalk{call: call, served: served}, rows.IssueCount, at.unplaced()), nil
@@ -436,16 +431,14 @@ type searchWalk struct {
 }
 
 // searchPage is one page of a cross-repository search: its rows, the continuation
-// carrying what the walk has been served, and the marker of the page that ends a walk.
-//
-// A page whose document answered errors beside its data carries the document's own
-// marker, because that says this page's rows are in question, which outranks a
-// statement about rows beyond it. Otherwise a page minting no continuation while the
-// search's stated total is more than the walk was served carries the result window,
-// counting the whole walk through the continuation rather than one page.
+// carrying what the walk has been served, and the marker of the page that ends a walk:
+// the document's own marker where it answered errors beside its data, since this
+// page's rows are in question, else the result window where no continuation is minted
+// while the search's stated total exceeds what the walk was served. Every page a search
+// list answers is Indexed, its bounded and deferred pages included.
 func (c *Client) searchPage[T any](items []T, info docPageInfo, walk searchWalk, total int, documentPartial bool) forgeapi.Page[T] {
 	served := walk.served + len(items)
-	page := forgeapi.Page[T]{Items: items, Next: searchNext(info, walk.call, served)}
+	page := forgeapi.Page[T]{Items: items, Next: searchNext(info, walk.call, served), Indexed: true}
 	switch {
 	case documentPartial:
 		page.Partial = c.partial(forgeapi.PartialGraphQLPartial, len(items))
@@ -498,6 +491,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 		return forgeapi.Page[forgeapi.Issue]{}, err
 	}
 	if bounded, ok := c.unpagedList[forgeapi.Issue](set.After); ok {
+		bounded.Indexed = true
 		return bounded, nil
 	}
 	query := searchQuery(searchIssues, &set)
@@ -505,6 +499,7 @@ func (c *Client) ListMyIssues(ctx context.Context, opts ...forgeapi.ListOption) 
 	result, err := c.execute(ctx, op, issueMine, searchVariables(query, &set, after), &payload)
 	if err != nil {
 		if deferred, ok := c.deferredPage[forgeapi.Issue](err); ok {
+			deferred.Indexed = true
 			return deferred, nil
 		}
 		return forgeapi.Page[forgeapi.Issue]{}, err
@@ -605,13 +600,14 @@ func (c *Client) readPull(ctx context.Context, op string, repo forgeapi.RepoRef,
 }
 
 // documentRead is the single-pull-request document read, with the complete fold
-// following the contexts connection's pages up to the published bound.
+// following the contexts connection's pages up to the published bound. The read
+// that follows is the one that returns reviews, so the merge-state read selects none.
 func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, follow bool) (pullRead, error) {
 	owner, name, err := ownerName(repo)
 	if err != nil {
 		return pullRead{}, err
 	}
-	vars := map[string]any{varOwner: owner, varName: name, "number": pr.Number, "checksAfter": nil}
+	vars := map[string]any{varOwner: owner, varName: name, "number": pr.Number, "checksAfter": nil, varReviews: follow}
 	var payload docPayload
 	result, execErr := c.execute(ctx, op, prRead, vars, &payload)
 	if execErr != nil {
@@ -634,6 +630,7 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	}
 	c.applyFold(&item, &folded)
 	c.markRead(&item, &at)
+	c.markReviewsCut(&item, node.Reviews, follow)
 	return pullRead{item: item, merged: supportOf(node.Merged)}, nil
 }
 
@@ -820,9 +817,9 @@ func (c *Client) CreatePR(ctx context.Context, repo forgeapi.RepoRef, req forgea
 	return item, nil
 }
 
-// applyLabels puts the labels a creation named on the object it created, through the
-// route this product declares for them, which takes their NAMES and is addressed by
-// the object's own number under the issues path on a pull request as on an issue.
+// applyLabels puts labels on an item through the route this product declares for
+// them, which takes their NAMES and is addressed by the item's own number under the
+// issues path on a pull request as on an issue.
 func (c *Client) applyLabels(ctx context.Context, op string, repo forgeapi.RepoRef, number int, labels []string) error {
 	if number <= 0 {
 		return errorf(forgeapi.CodeValidation, "the creation answered no number, so the labels have nothing to address")
@@ -863,90 +860,106 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 	return c.normalizeMutatedPull(&record, repo), nil
 }
 
-// RerunFailedChecks implements [forgeapi.PullRequests].
-//
-// It is TWO requests: the workflow run carrying the head the caller pinned has to be
-// resolved before it can be retried, because this product's retry verb is addressed by
-// a server-allocated run id rather than by a commit. A request of either that answers
-// from another address spends the one further read that resolves the successor, and the
-// resolving read spends it in place of the retry where the refusal is what the caller
-// gets.
-//
-// Whether this instance serves the verb is [forgeapi.CapRerunChecks] from
-// [Client.ConnectionCaps], and the measurement found that question scoped wrong for
-// this product: the runner is enabled per REPOSITORY rather than per instance or per
-// version, no connection-scope read names it, the read that answers it for one
-// repository needs admin, and a workflow-runs read answers 200 whether the runner is
-// enabled or merely unused. So the connection-scope verdict is unknown, that capability
-// is what a consumer reads to render the control with its reason, and what refuses a
-// re-run here is the instance's own answer rather than a verdict this library holds. No
-// request is spent obtaining one, which is what keeps this figure the same on a fresh
-// connection as on a used one.
-//
-// The head pin binds and costs no request of its own: the resolving read is filtered BY
-// the caller's SHA, which this product declares as a parameter of that route, and a SHA
-// no run carries means the pull request has moved since the caller's row was rendered.
-// That is refused rather than retried, because a re-run can carry deployment side
-// effects and a row displaying one commit's red status must not act on another's. An
-// empty SHA means the forge reported no head, and the re-run then proceeds against the
-// FIRST run the instance returns, which is the one case where the pin is unavailable
-// rather than waived.
-//
-// The verb retries the failed jobs of that run rather than the whole run, which is what
-// this operation publishes.
-//
-//nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own workflow run, which the head SHA pins
+// RerunFailedChecks implements [forgeapi.PullRequests]: the run re-run is the one
+// [Client.rerunTarget] resolves. It is not gated on [forgeapi.CapRerunChecks], whose
+// verdict is unknown at connection scope: the runner is enabled per repository, the
+// read naming it needs admin, and a runs read answers 200 either way, so a refusal
+// here is the instance's own.
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
 	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return err
 	}
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
+	}
 	if headSHA != "" {
 		if err := forgeapi.ValidateRef(headSHA); err != nil {
 			return err
 		}
 	}
-	query := url.Values{keyPerPage: {strconv.Itoa(maxRunPageItems)}}
-	if headSHA != "" {
-		query.Set("head_sha", headSHA)
-	}
-	var moved rename
-	runs, resp, err := c.readRuns(ctx, op, repo, query, &moved)
+	run, err := c.rerunTarget(ctx, op, repo, pr, headSHA)
 	if err != nil {
 		return err
-	}
-	if moved.to != nil {
-		return c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
-	}
-	run, ok := pickRun(runs.Runs, headSHA)
-	if !ok {
-		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeStaleHead, forgeapi.KindConflict, http.StatusOK,
-			"no workflow run carries the head this caller pinned")
 	}
 	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
-// pickRun is the head pin read off the resolving read's own rows: the run whose head
-// matches what the caller pinned, or the FIRST row the instance returned where the
-// caller brought no pin.
-//
-// That second arm claims no more than it knows. This product's runs route declares a
-// head-SHA filter and returns its rows newest first, and this read sends no other
-// ordering, so the first row is the instance's own choice. The PINNED arm is sound for a
-// different reason: the SHA is a declared filter, so upstream applies it and the
-// comparison here is a second check rather than the only one.
-func pickRun(runs []restWorkflowRun, headSHA string) (restWorkflowRun, bool) {
-	for i := range runs {
-		if runs[i].ID == 0 {
-			continue
+var _ transport.RerunResolver = (*Client)(nil).rerunTarget
+
+// rerunTarget is this family's [transport.RerunResolver]: the first workflow run on
+// the head (the pin, or the pull request's own, read first) that failed or was
+// cancelled, whatever its event or pull request, since the checks verdict is the
+// commit's statusCheckRollup, which counts every run on it. A run's pull_requests is
+// no filter: a fork pull request's run answers it empty
+// (https://github.com/github/docs/issues/22501). A request answering from another
+// address spends the one further read resolving the successor.
+func (c *Client) rerunTarget(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, pin string) (transport.RunTarget, error) {
+	var moved rename
+	head := pin
+	if pin == "" {
+		pulled, err := c.pullHead(ctx, op, repo, pr, &moved)
+		if err != nil {
+			return transport.RunTarget{}, err
 		}
-		if headSHA == "" || runs[i].HeadSHA == headSHA {
-			return runs[i], true
-		}
+		head = pulled
 	}
-	return restWorkflowRun{}, false
+	read := func(page int) ([]restWorkflowRun, error) {
+		query := url.Values{keyPerPage: {strconv.Itoa(maxRunPageItems)}, keyPage: {strconv.Itoa(page)}, "head_sha": {head}}
+		runs, resp, err := c.readRuns(ctx, op, repo, query, &moved)
+		if err != nil {
+			return nil, err
+		}
+		if moved.to != nil {
+			return nil, c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+		}
+		return runs.Runs, nil
+	}
+	pick := func(r *restWorkflowRun) (onHead, rerunnable bool) {
+		return r.ID != 0 && r.HeadSHA == head, c.runVerdict(r) == forgeapi.CheckFailing || member(r.Conclusion) == "cancelled"
+	}
+	run, err := transport.PickRun(ctx, c.core, op, "workflow run", maxRunPageItems, pin != "", read, pick)
+	if err != nil {
+		return transport.RunTarget{}, err
+	}
+	return transport.RunTarget{ID: run.ID}, nil
+}
+
+// pullHead is the head commit a pull request carries now, for a re-run whose caller
+// brought no pin. A pull request answering none is refused before any write.
+func (c *Client) pullHead(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, moved *rename) (string, error) {
+	var record restPull
+	resp, err := c.readMovedJSON(ctx, op, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record, moved)
+	if err != nil {
+		return "", err
+	}
+	if moved.to != nil {
+		return "", c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+	}
+	if record.Head == nil || record.Head.SHA == "" {
+		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeMissingSHA, forgeapi.KindUpstream, http.StatusOK,
+			"the pull request answered no head commit")
+	}
+	return record.Head.SHA, nil
+}
+
+// RerunFailedRun implements [forgeapi.Checks]: one POST to the failed-jobs re-run of
+// the run, plus the successor read where it answered from another address. Like
+// [Client.RerunFailedChecks] it is not gated on [forgeapi.CapRerunChecks], whose
+// verdict this product cannot read per connection.
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error {
+	const op = "RerunFailedRun"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if run.ID <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "run id is not positive")
+	}
+	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
+	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
 // readRuns is the one read of a repository's workflow runs, which the re-run and the
@@ -1287,6 +1300,51 @@ func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forg
 	}, nil
 }
 
+// CancelAutoMerge implements [forgeapi.Merges].
+//
+// The pull request's REST record is read first: its auto_merge is null where nothing
+// is armed, and the call ends there, since this product's description says nothing of
+// what the disarm document answers on a pull request with nothing armed. Otherwise the
+// disarm is addressed by the record's node id, as the arm is. A disarm the forge
+// refuses stays upstream with its message quoted: no capture witnesses its body.
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error {
+	const op = "CancelAutoMerge"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
+	}
+	var record restPull
+	if err := c.readRepoJSON(ctx, op, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
+		return err
+	}
+	if record.AutoMerge == nil {
+		return nil
+	}
+	var answer disarmData
+	result, err := c.execute(ctx, op, disableAutoMerge, map[string]any{"pullRequestId": record.NodeID}, &answer)
+	if err != nil {
+		return err
+	}
+	switch {
+	case answer.Disable == nil:
+		reason := result.Refusal
+		if reason == "" {
+			reason = "a null payload beside no error"
+		}
+		return c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream, result.Status,
+			"the forge refused to cancel the auto-merge: "+reason)
+	case answer.Disable.PullRequest == nil:
+		c.unmapped("auto-merge disarm answer (document)", "no pull request on the disarm's payload")
+	case answer.Disable.PullRequest.AutoMergeRequest != nil:
+		return c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream, result.Status,
+			"the forge answered the cancel with the auto-merge still armed")
+	}
+	return nil
+}
+
 // CommitStatus implements [forgeapi.Checks].
 //
 // The fold is computed here rather than taken from this product's rollup
@@ -1500,6 +1558,51 @@ func (c *Client) ListIssues(ctx context.Context, repo forgeapi.RepoRef, opts ...
 	}, nil
 }
 
+// ReadIssue implements [forgeapi.Issues].
+func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	const op = "ReadIssue"
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return forgeapi.Issue{}, err
+	}
+	if issue.Number <= 0 {
+		return forgeapi.Issue{}, errorf(forgeapi.CodeRepoRefInvalid, "issue number is not positive")
+	}
+	var record restIssue
+	resp, err := c.readJSON(ctx, op, repoRoute(repo, "/issues/"+strconv.Itoa(issue.Number)), nil, &record)
+	home, err := c.issueHome(ctx, op, repo, resp, err)
+	if err != nil {
+		return forgeapi.Issue{}, err
+	}
+	if record.PullRequest != nil {
+		return forgeapi.Issue{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), "", forgeapi.KindNotFound, resp.Status,
+			"number "+strconv.Itoa(issue.Number)+" is a pull request on this product, and this operation reads issues only")
+	}
+	return c.normalizeIssue(&record, home), nil
+}
+
+// issueHome is the repository one issue read's answer lives in: the one the caller
+// named, or where a transfer's hop led. A hop that is no transfer is the repository's
+// move, which this answer has no carrier for, so it is the stale refusal.
+func (c *Client) issueHome(ctx context.Context, op string, repo forgeapi.RepoRef, resp *transport.Response, err error) (forgeapi.RepoRef, error) {
+	if resp != nil && resp.Redirected && transport.ContextSentinel(err) == nil {
+		if to := c.transferredTo(resp.Ended); to != nil {
+			if to.ID == repo.ID {
+				return repo, err
+			}
+			return *to, err
+		}
+	}
+	var moved rename
+	if stale := c.followMove(ctx, op, resp, err, &moved); stale != nil {
+		return forgeapi.RepoRef{}, stale
+	}
+	if moved.to != nil {
+		return forgeapi.RepoRef{}, c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+	}
+	return repo, nil
+}
+
 // CreateIssue implements [forgeapi.Issues]. It is ONE request: this product's issue
 // creation takes label NAMES, so nothing has to resolve them to identifiers first,
 // which is the difference from the pull-request creation, whose route declares no
@@ -1531,7 +1634,16 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 // CloseIssue implements [forgeapi.Issues]. This product fills the close REASON itself
 // on a plain close, measured, so the request sends the state alone.
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
-	const op = "CloseIssue"
+	return c.setIssueState(ctx, "CloseIssue", repo, issue, stateClosed)
+}
+
+// ReopenIssue implements [forgeapi.Issues].
+func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	return c.setIssueState(ctx, "ReopenIssue", repo, issue, stateOpen)
+}
+
+// setIssueState is the one transition both issue lifecycle operations make.
+func (c *Client) setIssueState(ctx context.Context, op string, repo forgeapi.RepoRef, issue forgeapi.IssueRef, state string) (forgeapi.Issue, error) {
 	ctx = transport.Call(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
@@ -1541,7 +1653,7 @@ func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue fo
 	}
 	var record restIssue
 	path := repoRoute(repo, "/issues/"+strconv.Itoa(issue.Number))
-	if err := c.sendJSON(ctx, op, http.MethodPatch, path, map[string]any{keyState: stateClosed}, &record); err != nil {
+	if err := c.sendJSON(ctx, op, http.MethodPatch, path, map[string]any{keyState: state}, &record); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	return c.normalizeIssue(&record, repo), nil
@@ -1640,4 +1752,103 @@ func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...
 		Partial:   c.pagePartial(len(rows), next, walk.page),
 		Successor: moved.to,
 	}, nil
+}
+
+// AddLabels implements [forgeapi.Labels].
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "AddLabels"
+	ctx = transport.CallWrite(ctx, op)
+	number, err := labelItem(repo, target)
+	if err != nil || len(names) == 0 {
+		return err
+	}
+	if err := c.checkDefined(ctx, op, repo, names); err != nil {
+		return err
+	}
+	return c.applyLabels(ctx, op, repo, number, names)
+}
+
+// labelItem is the number a label change addresses, refused before any request
+// where the repository or the target cannot be addressed.
+func labelItem(repo forgeapi.RepoRef, target forgeapi.LabelTarget) (int, error) {
+	if err := checkRepo(repo); err != nil {
+		return 0, err
+	}
+	if err := target.Validate(); err != nil {
+		return 0, err
+	}
+	if target.PR.Number != 0 {
+		return target.PR.Number, nil
+	}
+	return target.Issue.Number, nil
+}
+
+// checkDefined refuses the first name the first page of repo's labels does not
+// define, so an addition writes only labels the repository already has.
+func (c *Client) checkDefined(ctx context.Context, op string, repo forgeapi.RepoRef, names []string) error {
+	query := url.Values{keyPage: {"1"}, keyPerPage: {strconv.Itoa(restPerPageMax)}}
+	var rows []restLabel
+	if err := c.readRepoJSON(ctx, op, repoRoute(repo, "/labels"), query, &rows); err != nil {
+		return err
+	}
+	defined := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		defined[row.Name] = true
+	}
+	for _, name := range names {
+		if !defined[name] {
+			return c.unresolvedLabel(ctx, op, name, len(rows))
+		}
+	}
+	return nil
+}
+
+// unresolvedLabel is the refusal of a name the label page lacks, under the code the
+// page earns: a full page may continue past it, a short one is the whole list.
+func (c *Client) unresolvedLabel(ctx context.Context, op, name string, rows int) *forgeapi.Error {
+	code, read := forgeapi.CodeValidation, "which was the whole list"
+	if rows >= restPerPageMax {
+		code, read = forgeapi.CodeLabelPageTruncated, "which came back full, so the list continues past it"
+	}
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), code, forgeapi.KindUpstream, http.StatusOK,
+		"no label named "+name+" on the first page of this repository's labels, bounded at "+
+			strconv.Itoa(restPerPageMax)+", "+read)
+}
+
+// RemoveLabels implements [forgeapi.Labels]. This product's removal answers 404 for
+// a label the item lacks and for a missing item alike, so the first 404 reads the
+// item once: found, that 404 and every later one is a name not carried.
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "RemoveLabels"
+	ctx = transport.CallWrite(ctx, op)
+	number, err := labelItem(repo, target)
+	if err != nil {
+		return err
+	}
+	item := repoRoute(repo, "/issues/"+strconv.Itoa(number))
+	labels := (&url.URL{Path: item + "/labels/"}).EscapedPath()
+	var removed []string
+	found := false
+	for _, name := range transport.DistinctNames(names) {
+		resp, err := c.exchange(ctx, &transport.Request{
+			Op: op, Method: http.MethodDelete, EscapedPath: labels + url.PathEscape(name),
+			Answers: []int{http.StatusNotFound},
+		})
+		switch {
+		case err != nil:
+			if resp != nil && resp.Status < http.StatusMultipleChoices {
+				removed = append(removed, name)
+			}
+			return transport.AfterRemovals(err, removed)
+		case resp.Status != http.StatusNotFound:
+			removed = append(removed, name)
+		case !found:
+			var record struct{}
+			if err := c.readRepoJSON(ctx, op, item, nil, &record); err != nil {
+				return transport.AfterRemovals(err, removed)
+			}
+			found = true
+		}
+	}
+	return nil
 }

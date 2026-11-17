@@ -4,7 +4,7 @@ This page covers how a list call pages and how to resume a walk. Read it before 
 
 ## Pages
 
-Every list answers a `Page`. It holds the `Items`, a `Next` cursor that `WithAfter` continues the walk from, and a `Partial` that is nil when the page holds everything asked for.
+Every list answers a `Page`. It holds the `Items`, a `Next` cursor that `WithAfter` continues the walk from, and a `Partial` that is nil when the page holds everything asked for. `Indexed` marks a page read from a search index that can lag the records, which [Lists across repositories](cross-repository-lists.md#rows) covers.
 
 A page can hold fewer rows than `WithPageBound` asked for and still carry `Next`. A family asks for fewer rows where its instance or its query serves fewer. Gitea and Forgejo ask for at most the page size the instance states. GitHub's `ListPRs`, and the search behind `ListMyPRs` and `ListMyIssues`, ask for at most a page size measured to answer on every attempt. So walk until `Next` is empty. On GitHub, a full page of `ListRepos`, `ListIssues`, `ListReleases` or `ListLabels` answered from the [read cache](read-cache.md) always carries `Next`, so such a walk can end on a page with no row.
 

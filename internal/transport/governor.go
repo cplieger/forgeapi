@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // governor is one connection's cost-aware pacing.
@@ -174,14 +174,20 @@ func (g *governor) price(cost int) {
 	g.lastCost = cost
 }
 
-// admit reports whether one further read may be issued, and why not when it may
-// not. A read that would cross the mutation reserve is DEFERRED rather than
+// admit reports whether one further read may be issued. A read that would cross the mutation reserve is DEFERRED rather than
 // issued, so a cycle of reads never spends what the merge the user is about to
 // click will need. The pools held are the one op's last answer drew on, else the
 // unnamed pool, and the parent that pool overlaps ([forgeapi.WithMutationReserve]
 // owns why). A deferral publishes the pool it held, so the published figure is
 // the budget that stopped the read.
-func (g *governor) admit(op string) (forgeapi.PartialReason, bool) {
+func (g *governor) admit(op string) bool {
+	_, ok := g.admitWithin(op, g.reserve)
+	return ok
+}
+
+// admitWithin is [governor.admit] holding reserve of each pool rather than the
+// client's own reserve.
+func (g *governor) admitWithin(op string, reserve int) (forgeapi.PartialReason, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.expire()
@@ -191,7 +197,7 @@ func (g *governor) admit(op string) (forgeapi.PartialReason, bool) {
 	}
 	for _, name := range held {
 		p, ok := g.pools[name]
-		if !ok || p.remaining == forgeapi.BudgetRemainingUnknown || !p.holds(g.reserve) {
+		if !ok || p.remaining == forgeapi.BudgetRemainingUnknown || !p.holds(reserve) {
 			continue
 		}
 		g.remaining, g.reset = p.remaining, p.reset
@@ -206,9 +212,10 @@ func (g *governor) admit(op string) (forgeapi.PartialReason, bool) {
 // admitFold reports whether one folded-status read may be issued inside the
 // current rolling interval, which is what the two per-interval knobs bound: how
 // MANY such reads it may issue and how much wall clock they may spend. A read past
-// either is not sent and its row is marked with the budget reason.
-func (g *governor) admitFold(op string) (forgeapi.PartialReason, bool) {
-	if reason, ok := g.admit(op); !ok {
+// either is not sent and its row is marked with the budget reason. reserve is what
+// the read must leave of its pool, as [governor.admitWithin] takes it.
+func (g *governor) admitFold(op string, reserve int) (forgeapi.PartialReason, bool) {
+	if reason, ok := g.admitWithin(op, reserve); !ok {
 		return reason, false
 	}
 	g.mu.Lock()

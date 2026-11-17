@@ -83,7 +83,8 @@ const (
 	// CodeMissingSHA is a merge whose head SHA is empty: refused by this
 	// library before the request on every family, since [MergeRequest.HeadSHA]
 	// is what makes a merge safe, and refused upstream by the one product an
-	// operator can configure to require it.
+	// operator can configure to require it. It is also a re-run called with no
+	// head whose pull request the forge answers with none, refused before any write.
 	CodeMissingSHA = "missing_sha"
 	// CodeNoMergePermission is a merge the credential may not perform.
 	CodeNoMergePermission = "no_merge_permission"
@@ -94,14 +95,26 @@ const (
 	// status of its own. A route that says so only in text answers
 	// [CodeNotMergeable]. The remedy for both is reading the pull request again.
 	CodeStaleHead = "stale_head"
+	// CodeRunNotFailed is a re-run refused before any write because nothing it
+	// addresses failed or was cancelled: the run, every run on the head, or on
+	// GitLab the head pipeline GitLab matches to the head, none matched included.
+	// It rides [KindConflict], and the remedy is reading the checks again.
+	CodeRunNotFailed = "run_not_failed"
+	// CodeRunPageTruncated is a re-run of a pull request's failed checks, on every
+	// family but GitLab, refused before any write because no run on the pages it
+	// read, at the most rows the instance serves on one, failed or was cancelled,
+	// and the last of them came back full, so such a run may sit past it. The
+	// message names the page count and size. [Checks.ListRuns] and
+	// [Checks.RerunFailedRun] reach a run past it.
+	CodeRunPageTruncated = "run_page_truncated"
 	// CodeValidation is a request upstream rejected as invalid, a response
-	// body this library could not decode, or a label name a creation could not
-	// resolve on a read that answered the whole label list. Kind and Status say
-	// which end the shape came from.
+	// body this library could not decode, or a label name a creation or
+	// [Labels.AddLabels] could not resolve on a read that answered the whole
+	// label list. Kind and Status say which end the shape came from.
 	CodeValidation = "validation"
 	// CodeLabelPageTruncated is that same unresolved label name where the page
-	// read came back full, so the name may exist past the bound: retry with a
-	// larger page bound. The message names the page bound.
+	// read, at the most rows the instance serves on one page, came back full, so
+	// the name may exist past it. The message names the page size.
 	CodeLabelPageTruncated = "label_page_truncated"
 	// CodeBranchCannotMerge is one product's refusal naming the branch rather
 	// than the request.
@@ -110,12 +123,13 @@ const (
 	// until an operator unarchives it, so never retried or reported as a conflict.
 	CodeRepoArchived = "repo_archived"
 	// CodeScopeInsufficient is a credential the instance authenticated and
-	// refused for a permission or scope the operation needs: a fine-grained
-	// token without the resource permission, a legacy token on a group that
-	// requires fine-grained ones, or a legacy token without the scope. It rides
+	// refused for a permission or scope the operation needs. It rides
 	// [KindForbidden], and its remedy is the credential's permission set, never a
 	// role or a reconnect. It is issued only where the product names the cause in
-	// a machine-readable error member; [Error.Message] names what is missing.
+	// a machine-readable form: GitLab's insufficient_scope member, GitHub's
+	// permission refusal message beside X-Accepted-GitHub-Permissions, or
+	// X-Accepted-OAuth-Scopes naming no scope X-OAuth-Scopes holds; [Error.Needs]
+	// carries what that form names and [Error.Message] its words.
 	CodeScopeInsufficient = "scope_insufficient"
 	// CodeAlreadyEnqueued is a merge in flight with no verdict yet: an
 	// equivalent merge another request started, or one accepted and running in
@@ -192,6 +206,9 @@ const (
 	// CodeListMergeStateInvalid is a [WithMergeState] named on a list with no
 	// merge state to leave out, refused by the family method at either value.
 	CodeListMergeStateInvalid = "list_merge_state_invalid"
+	// CodeListReviewsInvalid is a [WithReviews] named on a list with no review
+	// counts to leave out, refused by the family method at either value.
+	CodeListReviewsInvalid = "list_reviews_invalid"
 	// CodeRunUndated is a run row with no creation time on a listing held to a
 	// [WithSince] bound. Read with no bound, the row answers a zero CreatedAt;
 	// any other malformed run row is [CodeValidation].
@@ -275,6 +292,8 @@ func Codes() []string {
 		CodeNoMergePermission,
 		CodeStrategyNotAllowed,
 		CodeStaleHead,
+		CodeRunNotFailed,
+		CodeRunPageTruncated,
 		CodeValidation,
 		CodeLabelPageTruncated,
 		CodeBranchCannotMerge,
@@ -298,6 +317,7 @@ func Codes() []string {
 		CodeListOwnerInvalid,
 		CodeListSinceInvalid,
 		CodeListMergeStateInvalid,
+		CodeListReviewsInvalid,
 		CodeRunUndated,
 		CodeCursorInvalid,
 		CodeRefInvalid,
@@ -336,8 +356,8 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// [CodeCapabilityUnsupported], whose operation began.
 	Op string
 	// Code is the machine-readable cause, one of the Code* constants, which a
-	// consumer branches on. It is empty on one failure only: the read the
-	// governor deferred to hold the mutation reserve, which answers
+	// consumer branches on. It is empty on one failure only: a read the
+	// governor deferred ([WithMutationReserve]), which answers
 	// [KindRateLimited] with no status.
 	Code string
 	// Family is the family that answered, or [FamilyUnknown] where nothing
@@ -379,6 +399,10 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// [CodeCapabilityUnsupported] and zero everywhere else: the value
 	// [Capabilities.ConnectionCaps] renders beside a disabled control.
 	Evidence Evidence
+	// Needs is what the forge says the call needs, as the forge spells it,
+	// such as a permission or a scope list; empty where its answer names
+	// nothing. It is carried on [CodeScopeInsufficient].
+	Needs string
 }
 
 // Error renders the operation, code, status and message. The separator after

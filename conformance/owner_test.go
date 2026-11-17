@@ -2,13 +2,14 @@ package conformance
 
 import (
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // ownerArm is the owner scope's request for the canonical owner.
@@ -131,6 +132,12 @@ var unresolvedOwnerAnswers = map[spec.Product]struct {
 // the one answer is what the case's own operation meets.
 func newAnswerServer(t *testing.T, e spec.Entry, status int, body string) (*httptest.Server, *recorder) {
 	t.Helper()
+	return newAnswerServerWith(t, e, status, http.Header{}, body)
+}
+
+// newAnswerServerWith is newAnswerServer whose one answer also carries header.
+func newAnswerServerWith(t *testing.T, e spec.Entry, status int, header http.Header, body string) (*httptest.Server, *recorder) {
+	t.Helper()
 	rec := &recorder{}
 	setup := setupRoutes(t, e)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +156,7 @@ func newAnswerServer(t *testing.T, e spec.Entry, status int, body string) (*http
 				return
 			}
 		}
+		maps.Copy(w.Header(), header)
 		w.WriteHeader(status)
 		if _, err := io.WriteString(w, body); err != nil {
 			t.Errorf("Setup: writing the answer to %s %s: %v", r.Method, r.URL.EscapedPath(), err)

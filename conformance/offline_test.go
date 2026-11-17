@@ -15,12 +15,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/families"
-	"github.com/cplieger/forgeapi/v2/gitea"
-	"github.com/cplieger/forgeapi/v2/github"
-	"github.com/cplieger/forgeapi/v2/gitlab"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/families"
+	"github.com/cplieger/forgeapi/v3/gitea"
+	"github.com/cplieger/forgeapi/v3/github"
+	"github.com/cplieger/forgeapi/v3/gitlab"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // maxFixtureBody bounds what the fixture server reads from one request, so a
@@ -131,7 +131,7 @@ func newFixtureServer(t *testing.T, f fixture) (*httptest.Server, *recorder) {
 			w.Header().Set(k, v)
 		}
 		w.WriteHeader(route.Status)
-		if _, err := w.Write(route.Body); err != nil {
+		if _, err := w.Write(route.payload()); err != nil {
 			t.Errorf("Setup: writing the fixture response for %s %s: %v", r.Method, r.URL.EscapedPath(), err)
 		}
 	}))
@@ -338,9 +338,9 @@ func carried(req sent, row *spec.Sent) string {
 	return string(raw)
 }
 
-// decides are the operations whose REQUEST carries a decision at 1.0: the merge, the
-// two creations, the re-run, and the run listing, which reads the re-run's own route
-// and must leave off the head filter the re-run sends there. It is the gate over the
+// decides are the operations whose REQUEST carries a decision: the merge, the two
+// creations and the label addition, the re-run, and the run listing, which reads the
+// re-run's own route and must leave off the head filter the re-run sends there. It is the gate over the
 // table's own completeness, because a Sends row deleted from the table would
 // leave every case green while the property it held went unchecked, which is the
 // shape of defect this column was added for.
@@ -350,7 +350,14 @@ var decides = map[string]bool{
 	"Issues.CreateIssue":             true,
 	"PullRequests.RerunFailedChecks": true,
 	"Checks.ListRuns":                true,
+	"Labels.AddLabels":               true,
 }
+
+// decidesNowhere are the cells of an operation above whose request carries no
+// decision on that product: GitLab's re-run takes the pipeline GitLab matches to the
+// merge request's head rather than filtering a listing by the head, a pick
+// TestAGitLabReRunRetriesThePipelineGitLabMatchesToTheHead holds.
+var decidesNowhere = map[spec.Product]map[string]bool{spec.GitLab: {"PullRequests.RerunFailedChecks": true}}
 
 // TestEveryRequestDecisionTheDesignNamesIsStated holds the table to the operations
 // above in both directions: each one states what it sends on every product whose
@@ -359,7 +366,7 @@ var decides = map[string]bool{
 func TestEveryRequestDecisionTheDesignNamesIsStated(t *testing.T) {
 	for _, e := range spec.Table {
 		switch {
-		case !decides[e.Method]:
+		case !decides[e.Method] || decidesNowhere[e.Product][e.Method]:
 			if len(e.Sends) > 0 {
 				t.Errorf("%s on %s states %d request fact(s), want none: this operation's request carries no decision a caller makes",
 					e.Method, e.Product, len(e.Sends))
@@ -528,7 +535,7 @@ func checkPrice(t *testing.T, e spec.Entry, op operation, got any, spent int, ar
 	if op.items != nil {
 		items = op.items(got)
 	}
-	low, high := price(&e, items)
+	low, high := price(&e, items, op.names)
 	if spent < low || spent > high {
 		t.Errorf("%s on %s sent %d request(s), want %d to %d for %d item(s): %v",
 			e.Method, e.Product, spent, low, high, items, arrived)
@@ -557,11 +564,9 @@ func checkRoute(t *testing.T, e spec.Entry, f fixture, arrived []sent) {
 		return
 	}
 	first := arrived[0]
-	for _, w := range f.Routes {
-		if w.GraphQL {
-			checkDocument(t, e, first)
-			return
-		}
+	if first.method == http.MethodPost && isGraphQL(first.body) {
+		checkDocument(t, e, first)
+		return
 	}
 	named := tablePaths(&e)
 	if len(named) == 0 {

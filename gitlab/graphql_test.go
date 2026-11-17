@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // documentCeiling is the complexity figure both documents are asserted against, as
@@ -23,7 +23,7 @@ const documentPageSize = 100
 
 // documents is every document this family ships, which is what the document
 // assertions iterate.
-var documents = []document{prList, prRead, ownerLookup}
+var documents = []document{prList, prRead, ownerLookup, rerunHead}
 
 // The document answers this file drives. Each is the envelope this product's endpoint
 // actually sends for one shape, and the two error bodies are the two shapes measured
@@ -104,6 +104,19 @@ const (
 	readRoute = "GET /api/v4/projects/" + testEncoded + "/merge_requests/1"
 	listRoute = "GET /api/v4/projects/" + testEncoded + "/merge_requests"
 )
+
+// The re-run reads GitLab's own match of the head pipeline, its global id and its
+// project's, and the setup question asks for the same selection, so a schema missing
+// one of them sends the connection to REST before a re-run is refused for it.
+func TestTheReRunsSelectionIsAskedAtSetup(t *testing.T) {
+	for _, doc := range []document{rerunHead, docAcceptance} {
+		for _, want := range []string{"diffHeadSha", "headPipeline { id status project { id } }", "{\n    id\n"} {
+			if !strings.Contains(doc.text, want) {
+				t.Errorf("the %s document does not select %q, which the re-run reads", doc.name, want)
+			}
+		}
+	}
+}
 
 // TestEveryDocumentIsNamedAndTakesItsVariables holds the documents to what is asked of
 // every one this library ships: a name, the variables its callers fill, the field set

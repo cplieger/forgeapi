@@ -3,12 +3,13 @@ package github
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // The operation names this family spells, which are the role methods' own. They are
@@ -137,6 +138,16 @@ type (
 		} `json:"enablePullRequestAutoMerge"`
 	}
 
+	// disarmData is the disarm document's payload: null where the disarm was
+	// refused, and the pull request's auto-merge request, null once disarmed.
+	disarmData struct {
+		Disable *struct {
+			PullRequest *struct {
+				AutoMergeRequest *docAutoMerge `json:"autoMergeRequest"`
+			} `json:"pullRequest"`
+		} `json:"disablePullRequestAutoMerge"`
+	}
+
 	docQueueEntry struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
 		State    string `json:"state"`
 		Position *int   `json:"position"`
@@ -162,8 +173,21 @@ type (
 		AutoMergeRequest *docAutoMerge  `json:"autoMergeRequest"`
 		MergeQueueEntry  *docQueueEntry `json:"mergeQueueEntry"`
 		Labels           *docLabels     `json:"labels"`
+		Comments         *int           `json:"totalCommentsCount"`
+		Reviews          *docReviews    `json:"latestOpinionatedReviews"`
 		Commits          *docCommits    `json:"commits"`
 		Repository       *docRepoRef    `json:"repository"`
+	}
+
+	// docReviews is a pull request's latest opinionated review per reviewer, absent
+	// where the document was asked not to select it.
+	docReviews struct {
+		Nodes      []docReview `json:"nodes"`
+		TotalCount int         `json:"totalCount"`
+	}
+
+	docReview struct {
+		State string `json:"state"`
 	}
 
 	// docRepoRef is the per-row repository the cross-repository document selects,
@@ -220,7 +244,12 @@ type (
 		State      string      `json:"state"`
 		Author     *docActor   `json:"author"`
 		Labels     *docLabels  `json:"labels"`
+		Comments   *docCount   `json:"comments"`
 		Repository *docRepoRef `json:"repository"`
+	}
+
+	docCount struct {
+		TotalCount int `json:"totalCount"`
 	}
 
 	docIssueSearch struct { //nolint:govet // fieldalignment: the field order is the wire shape's own, so a reader compares this type against the bytes it decodes
@@ -317,6 +346,11 @@ func (*armData) cost() int {
 	return 0
 }
 
+// cost is zero for the disarm, a mutation, for the reason [armData.cost] gives.
+func (*disarmData) cost() int {
+	return 0
+}
+
 // charged is the cost one budget object reports, zero where the document selected
 // none.
 func (r *docRateLimit) charged() int {
@@ -398,6 +432,8 @@ type (
 		Merged         bool           `json:"merged"`
 		Mergeable      *bool          `json:"mergeable"`
 		MergeableState string         `json:"mergeable_state"`
+		Comments       *int           `json:"comments"`
+		ReviewComments *int           `json:"review_comments"`
 		AutoMerge      *restAutoMerge `json:"auto_merge"`
 	}
 
@@ -411,9 +447,11 @@ type (
 		CreatedAt time.Time   `json:"created_at"`
 		UpdatedAt time.Time   `json:"updated_at"`
 		Labels    []restLabel `json:"labels"`
-		// PullRequest is the key that makes a row of the issues route a PULL
-		// REQUEST. It is read to DROP that row, because this route's population is
-		// issues and pull requests both and the operation publishes issues.
+		Comments  *int        `json:"comments"`
+		// PullRequest is the key that makes a record of the issues routes a PULL
+		// REQUEST, which a list drops and a read of one number refuses, because
+		// these routes' population is issues and pull requests both and the
+		// operations publish issues.
 		PullRequest *struct{} `json:"pull_request"`
 	}
 
@@ -1048,6 +1086,7 @@ func (c *Client) normalizeDocPull(n *docPullRequest, repo forgeapi.RepoRef) forg
 		QueuePosition:  forgeapi.QueuePositionUnknown,
 		MergeBlocked:   c.blockReason("merge state status (document)", n.MergeStateStatus),
 	}
+	action.Approvals, action.ChangesRequested = reviewCounts(n.Reviews)
 	if n.MergeQueueEntry != nil {
 		action.QueueState = c.queueState("merge queue entry state (document)", n.MergeQueueEntry.State)
 		if n.MergeQueueEntry.Position != nil {
@@ -1067,6 +1106,7 @@ func (c *Client) normalizeDocPull(n *docPullRequest, repo forgeapi.RepoRef) forg
 		WebURL:       n.URL,
 		HeadSHA:      n.HeadRefOID,
 		Labels:       normalizeDocLabels(n.Labels),
+		Comments:     commentCount(n.Comments),
 		CreatedAt:    n.CreatedAt,
 		UpdatedAt:    n.UpdatedAt,
 		State:        c.pullState("pull request state (document)", n.State, false),
@@ -1125,17 +1165,20 @@ func (c *Client) normalizeRESTPull(r *restPull, repo forgeapi.RepoRef) forgeapi.
 		WebURL:       r.WebURL,
 		HeadSHA:      sha,
 		Labels:       normalizeLabels(r.Labels),
+		Comments:     commentCount(r.Comments, r.ReviewComments),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 		State:        c.pullState("pull request state (rest)", r.State, r.Merged),
 		Draft:        r.Draft,
 		Action: forgeapi.ActionState{
-			Mergeable:      supportOfPointer(r.Mergeable),
-			Checks:         forgeapi.CheckUnknown,
-			AutoMergeArmed: supportOf(r.AutoMerge != nil),
-			QueueState:     forgeapi.QueueNone,
-			QueuePosition:  forgeapi.QueuePositionUnknown,
-			MergeBlocked:   c.blockReason("mergeable state (rest)", r.MergeableState),
+			Mergeable:        supportOfPointer(r.Mergeable),
+			Checks:           forgeapi.CheckUnknown,
+			AutoMergeArmed:   supportOf(r.AutoMerge != nil),
+			QueueState:       forgeapi.QueueNone,
+			QueuePosition:    forgeapi.QueuePositionUnknown,
+			MergeBlocked:     c.blockReason("mergeable state (rest)", r.MergeableState),
+			Approvals:        forgeapi.CountUnknown,
+			ChangesRequested: forgeapi.CountUnknown,
 		},
 	}
 }
@@ -1169,6 +1212,7 @@ func (c *Client) normalizeIssue(i *restIssue, repo forgeapi.RepoRef) forgeapi.Is
 		AuthorKind: kind,
 		WebURL:     i.WebURL,
 		Labels:     normalizeLabels(i.Labels),
+		Comments:   commentCount(i.Comments),
 		CreatedAt:  i.CreatedAt,
 		UpdatedAt:  i.UpdatedAt,
 		State:      c.issueState("issue state (rest)", i.State),
@@ -1188,10 +1232,55 @@ func (c *Client) normalizeDocIssue(n *docIssue) forgeapi.Issue {
 		AuthorKind: kind,
 		WebURL:     n.URL,
 		Labels:     normalizeDocLabels(n.Labels),
+		Comments:   n.Comments.total(),
 		CreatedAt:  n.CreatedAt,
 		UpdatedAt:  n.UpdatedAt,
 		State:      c.issueState("issue state (document)", n.State),
 	}
+}
+
+// reviewCounts is the approving and change-requesting reviewers among a pull
+// request's latest opinionated reviews, both [forgeapi.CountUnknown] where the
+// row carries no reviews or carries fewer than its total, since a count over a
+// cut list would read as exact.
+func reviewCounts(r *docReviews) (approvals, changes int) {
+	if r == nil || r.TotalCount > len(r.Nodes) {
+		return forgeapi.CountUnknown, forgeapi.CountUnknown
+	}
+	for _, n := range r.Nodes {
+		switch n.State {
+		case "APPROVED":
+			approvals++
+		case "CHANGES_REQUESTED":
+			changes++
+		}
+	}
+	return approvals, changes
+}
+
+// cut reports that a row's review list is shorter than its total.
+func (r *docReviews) cut() bool { return r != nil && r.TotalCount > len(r.Nodes) }
+
+// commentCount is the sum of the count keys a record carries, and
+// [forgeapi.CountUnknown] where it lacks any of them.
+func commentCount(parts ...*int) int {
+	total := 0
+	for _, n := range parts {
+		if n == nil {
+			return forgeapi.CountUnknown
+		}
+		total += *n
+	}
+	return total
+}
+
+// total is the connection's count, and [forgeapi.CountUnknown] where the row
+// carries no connection.
+func (c *docCount) total() int {
+	if c == nil {
+		return forgeapi.CountUnknown
+	}
+	return c.TotalCount
 }
 
 // normalizeRun is the workflow-run normalizer. The run's status and conclusion are
@@ -1200,10 +1289,6 @@ func (c *Client) normalizeDocIssue(n *docIssue) forgeapi.Issue {
 // a completed run's verdict is its conclusion's, except where [runConclusions] says
 // a run's conclusion means something else.
 func (c *Client) normalizeRun(r *restWorkflowRun, repo forgeapi.RepoRef) forgeapi.Run {
-	state, ok := runConclusions[member(r.Conclusion)]
-	if !ok {
-		state = c.runState("workflow run (rest)", r.Status, r.Conclusion)
-	}
 	return forgeapi.Run{
 		Ref:          forgeapi.RunRef{ID: r.ID, Number: r.RunNumber},
 		Repo:         repo,
@@ -1215,9 +1300,17 @@ func (c *Client) normalizeRun(r *restWorkflowRun, repo forgeapi.RepoRef) forgeap
 		CreatedAt:    r.CreatedAt,
 		StartedAt:    r.StartedAt,
 		UpdatedAt:    r.UpdatedAt,
-		State:        state,
+		State:        c.runVerdict(r),
 		Trigger:      c.runTrigger(r.Event),
 	}
+}
+
+// runVerdict is one workflow run's folded state.
+func (c *Client) runVerdict(r *restWorkflowRun) forgeapi.CheckState {
+	if state, ok := runConclusions[member(r.Conclusion)]; ok {
+		return state
+	}
+	return c.runState("workflow run (rest)", r.Status, r.Conclusion)
 }
 
 // definition is the run's path without the ref the route's documented example
@@ -1450,29 +1543,42 @@ func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 
 // mapper is this connection's error mapping: the mapping below, over the one fact
 // about the connection that a response cannot carry, which is whether the request
-// that was refused carried the version pin. No cell reads the body's error member:
-// this product's refusals carry message text only.
-func (c *Client) mapper(op string, status int, header http.Header, _ string) (kind forgeapi.ErrorKind, code string) {
-	return mapping(op, status, header, c.sendsPin())
+// that was refused carried the version pin.
+func (c *Client) mapper(op string, status int, header http.Header, member transport.Member) transport.Verdict {
+	return mapping(op, status, header, member.Class, c.sendsPin())
 }
 
-// mapping is this family's error mapping, by operation plus status plus the headers
-// that decide a cell, which the reading below takes first.
-//
-// Cells turn on the OPERATION where one route answers a status for causes of its own.
-// The merge's 400 names no cause: a draft, a closed pull request and a head pin naming
-// another commit answer one body structure with different human text, measured. Its
-// 409 reaches this mapping only where the body names no merge in flight, since one
-// that does is the outcome the merge reads for itself.
-//
-// One cell turns on the connection instead: pinned says the refused request carried
-// the version pin, which is the only state in which a 400 can be that version's fault.
-//
-// An unmapped combination stays upstream and is never guessed.
-func mapping(op string, status int, header http.Header, pinned bool) (kind forgeapi.ErrorKind, code string) {
-	if mapped, ok := headerMapped(status, header, pinned); ok {
-		return mapped.kind, mapped.code
+// classResourceRefused is the class of the message GitHub answers a GitHub App or a
+// fine-grained token refused for a permission with
+// (https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api,
+// "Resource not accessible").
+const classResourceRefused = "resource_refused"
+
+// messageClasses is the refusal messages this family's mapping reads, by class.
+var messageClasses = map[string]string{
+	"Resource not accessible by integration":           classResourceRefused,
+	"Resource not accessible by personal access token": classResourceRefused,
+}
+
+// mapping is this family's error mapping: the cells a header decides
+// ([headerMapped]) first, then [statusMapped]'s. class is the refusal message's
+// class from [messageClasses]; pinned says the refused request carried the version
+// pin, the only state in which a 400 can be that version's fault.
+func mapping(op string, status int, header http.Header, class string, pinned bool) transport.Verdict {
+	if mapped, ok := headerMapped(op, status, header, class, pinned); ok {
+		return mapped
 	}
+	kind, code := statusMapped(op, status)
+	return transport.Verdict{Kind: kind, Code: code}
+}
+
+// statusMapped is the mapping by operation and status. The merge's 400 names no
+// cause: a draft, a closed pull request and a head pin naming another commit answer
+// one body structure with different human text, measured. Its 409 reaches this
+// mapping only where the body names no merge in flight, since one that does is the
+// outcome the merge reads for itself. An unmapped combination stays upstream and is
+// never guessed.
+func statusMapped(op string, status int) (kind forgeapi.ErrorKind, code string) {
 	switch status {
 	case http.StatusBadRequest:
 		if op == opMergePR {
@@ -1508,29 +1614,63 @@ func mapping(op string, status int, header http.Header, pinned bool) (kind forge
 	return forgeapi.KindUpstream, ""
 }
 
-// verdict is one mapped answer, which is a pair rather than two returns because the two
-// readings below hand it back through one predicate.
-type verdict struct {
-	code string
-	kind forgeapi.ErrorKind
-}
-
-// headerMapped is the part of the mapping a header decides rather than the status.
-//
-// A 403 whose headers say throttle (see throttled) is a rate limit, so nobody is
-// told to fix a token while the quota refills. A 400 to a request that carried the
-// version pin and was not answered under it is that version out of the instance's
-// reach. An unpinned request's echo names the instance's default on every response,
-// so the echo is read only when pinned.
-func headerMapped(status int, header http.Header, pinned bool) (verdict, bool) {
+// headerMapped is the part of the mapping a header decides. A 403 whose headers say
+// throttle is a rate limit, so nobody is told to fix a token while the quota refills.
+// Any other 403 that names what the credential lacks ([lacking]) is the scope
+// refusal, except the merge's, whose 403 is the merge permission a role grants. A 400
+// to a pinned request not answered under the pin is that version out of the
+// instance's reach; an unpinned request's echo names the instance's default, so it is
+// read only when pinned.
+func headerMapped(op string, status int, header http.Header, class string, pinned bool) (transport.Verdict, bool) {
 	switch {
 	case status == http.StatusForbidden && throttled(header):
-		return verdict{kind: forgeapi.KindRateLimited}, true
+		return transport.Verdict{Kind: forgeapi.KindRateLimited}, true
+	case status == http.StatusForbidden && op != opMergePR:
+		if needs := lacking(header, class); needs != "" {
+			return transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: needs}, true
+		}
 	case status == http.StatusBadRequest && pinned && retiredVersion(header):
-		return verdict{kind: forgeapi.KindUpstream, code: forgeapi.CodeAPIVersionRetired}, true
+		return transport.Verdict{Kind: forgeapi.KindUpstream, Code: forgeapi.CodeAPIVersionRetired}, true
 	}
-	return verdict{}, false
+	return transport.Verdict{}, false
 }
+
+// lacking is what a refusal says the credential lacks, as sent, empty where it
+// names nothing it lacks: the permissions a fine-grained token or an app needs, where
+// the message is the permission refusal's, or the scopes a route accepts where a
+// classic token holds none of them
+// (https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).
+// The permissions header rides every answer to such an actor, 200s included, so it
+// alone proves nothing lacking. The accepted list names each scope's parents too, so
+// one held scope satisfies it; only X-OAuth-Scopes says what the token holds.
+func lacking(header http.Header, class string) string {
+	if permissions := strings.TrimSpace(header.Get(headerAcceptedPermissions)); permissions != "" && class == classResourceRefused {
+		return permissions
+	}
+	accepted := strings.TrimSpace(header.Get(headerAcceptedScopes))
+	held, classic := header[headerScopes]
+	if accepted == "" || !classic {
+		return ""
+	}
+	granted := strings.Split(strings.Join(held, ","), ",")
+	for i := range granted {
+		granted[i] = strings.TrimSpace(granted[i])
+	}
+	for scope := range strings.SplitSeq(accepted, ",") {
+		if scope = strings.TrimSpace(scope); scope != "" && slices.Contains(granted, scope) {
+			return ""
+		}
+	}
+	return accepted
+}
+
+// The headers a refusal names what a credential holds and lacks with, in their
+// canonical form, which [lacking] indexes the header map by.
+const (
+	headerAcceptedPermissions = "X-Accepted-Github-Permissions"
+	headerAcceptedScopes      = "X-Accepted-Oauth-Scopes"
+	headerScopes              = "X-Oauth-Scopes"
+)
 
 // throttled reports whether a refusal is this product's quota rather than a
 // permission: the remaining-budget header at zero, the primary or a secondary limit

@@ -3,7 +3,7 @@ package forgeapi_test
 import (
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // A kind's spelling is what a log line carries and what a stored record's file

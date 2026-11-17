@@ -8,7 +8,7 @@ This table has one row per operation and one column per forge product. Each oper
 
 `unsupported` says the product has no such operation, and no implementation can change that.
 
-Where a product departs from the normalized contract, the operation's own godoc on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v2) lists each departure, so this table holds only the status.
+Where a product departs from the normalized contract, the operation's own godoc on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v3) lists each departure, so this table holds only the status.
 
 | Operation | GitHub | GitLab | Gitea | Forgejo |
 | --- | --- | --- | --- | --- |
@@ -20,15 +20,19 @@ Where a product departs from the normalized contract, the operation's own godoc 
 | `PullRequests.CreatePR` | supported | supported | supported | supported |
 | `PullRequests.ClosePR` | supported | supported | supported | supported |
 | `PullRequests.ReopenPR` | supported | supported | supported | supported |
-| `PullRequests.RerunFailedChecks` | supported | supported | supported | unsupported |
+| `PullRequests.RerunFailedChecks` | supported | supported | supported | supported |
 | `Merges.MergePR` | supported | supported | supported | supported |
 | `Merges.MergeStatus` | supported | supported | supported | supported |
+| `Merges.CancelAutoMerge` | supported | supported | supported | supported |
 | `Checks.CommitStatus` | supported | supported | supported | supported |
 | `Checks.ListRuns` | supported | supported | supported | supported |
+| `Checks.RerunFailedRun` | supported | supported | supported | supported |
 | `Issues.ListIssues` | supported | supported | supported | supported |
 | `Issues.ListMyIssues` | supported | supported | supported | supported |
+| `Issues.ReadIssue` | supported | supported | supported | supported |
 | `Issues.CreateIssue` | supported | supported | supported | supported |
 | `Issues.CloseIssue` | supported | supported | supported | supported |
+| `Issues.ReopenIssue` | supported | supported | supported | supported |
 | `Capabilities.ConnectionCaps` | supported | supported | supported | supported |
 | `Capabilities.GrantCaps` | supported | supported | supported | supported |
 | `Capabilities.RepoAffordances` | supported | supported | supported | supported |
@@ -36,6 +40,8 @@ Where a product departs from the normalized contract, the operation's own godoc 
 | `Releases.ListReleases` | supported | supported | supported | supported |
 | `Releases.CreateRelease` | supported | supported | supported | supported |
 | `Labels.ListLabels` | supported | supported | supported | supported |
+| `Labels.AddLabels` | supported | supported | supported | supported |
+| `Labels.RemoveLabels` | supported | supported | supported | supported |
 
 ## Rate-limit answers
 

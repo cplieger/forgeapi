@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // check is one field of one operation's normalized answer. want is the contract's
@@ -59,10 +59,14 @@ type operation struct {
 	// whose operations panic.
 	zero any
 	// errorArms are the table fields naming what the operation answers under an
-	// option, or after an earlier answer on the connection, rather than a field of
-	// its default answer. A dedicated test asserts each one, and the
-	// departure-coverage gate reads them beside the fields expect declares.
+	// option, after an earlier answer on the connection or on an older release,
+	// or what a write does beyond its answer, rather than a field of its default
+	// answer. A dedicated test asserts each one, and the departure-coverage gate
+	// reads them beside the fields expect declares.
 	errorArms []string
+	// names is how many label names the case's call names, which a per-name
+	// price counts.
+	names int
 	// rowArms are row fields the recorded fixture was trimmed of, asserted by a
 	// dedicated test over the fixture's own row carrying the key the product's
 	// published shape names.
@@ -73,6 +77,9 @@ type operation struct {
 	// readsPR marks a read addressed at the subject's pull request, which a live
 	// run can make only where the lane says which pull request its subject holds.
 	readsPR bool
+	// readsIssue marks a read addressed at the subject's issue, which a live run
+	// can make only where the lane says which issue its subject holds.
+	readsIssue bool
 }
 
 // ownerUnresolved is the table's field for what a cross-repository list answers
@@ -263,7 +270,7 @@ var operations = []operation{
 		method:    "PullRequests.ListPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
 		rowArms:   []string{rowAuthorKind},
-		errorArms: []string{rowChecksUnderFineGrained, rowMergeableUnderOption, rowMergeBlockedUnderOption},
+		errorArms: []string{rowChecksUnderFineGrained, rowMergeableUnderOption, rowMergeBlockedUnderOption, rowApprovalsUnderOption, rowChangesUnderOption},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -285,7 +292,7 @@ var operations = []operation{
 		method:    "PullRequests.ListMyPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
 		rowArms:   []string{rowAuthorKind},
-		errorArms: []string{rowChecksUnderFineGrained, ownerUnresolved, scopeInsufficient, archivedRowsForOwner, rowMergeableUnderOption, rowMergeBlockedUnderOption},
+		errorArms: []string{rowChecksUnderFineGrained, ownerUnresolved, scopeInsufficient, archivedRowsForOwner, rowMergeableUnderOption, rowMergeBlockedUnderOption, rowApprovalsUnderOption, rowChangesUnderOption},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -375,9 +382,10 @@ var operations = []operation{
 		},
 	},
 	{
-		method:   "PullRequests.RerunFailedChecks",
-		zero:     nil,
-		mutation: true,
+		method:    "PullRequests.RerunFailedChecks",
+		zero:      nil,
+		mutation:  true,
+		errorArms: []string{jobsRerun, verbAbsentBefore17, headPipelineRerun},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -443,6 +451,20 @@ var operations = []operation{
 				eq("Successor", g.Successor, (*forgeapi.RepoRef)(nil)),
 			}
 		},
+	},
+	{
+		method:    "Merges.CancelAutoMerge",
+		zero:      nil,
+		mutation:  true,
+		errorArms: []string{cancelPermissionRefused},
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Merges)
+			if !ok {
+				return nil, roleAbsent("Merges")
+			}
+			return nil, r.CancelAutoMerge(ctx, s.repo, s.pr)
+		},
+		expect: func(spec.Product, any) []check { return nil },
 	},
 	{
 		method:    "Checks.CommitStatus",
@@ -514,6 +536,20 @@ var operations = []operation{
 		},
 	},
 	{
+		method:    "Checks.RerunFailedRun",
+		zero:      nil,
+		mutation:  true,
+		errorArms: []string{jobsRerun, verbAbsentBefore17},
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Checks)
+			if !ok {
+				return nil, roleAbsent("Checks")
+			}
+			return nil, r.RerunFailedRun(ctx, s.repo, s.run)
+		},
+		expect: func(spec.Product, any) []check { return nil },
+	},
+	{
 		method:  "Issues.ListIssues",
 		zero:    forgeapi.Page[forgeapi.Issue]{},
 		rowArms: []string{rowAuthorKind},
@@ -560,6 +596,22 @@ var operations = []operation{
 		},
 	},
 	{
+		method:     "Issues.ReadIssue",
+		zero:       forgeapi.Issue{},
+		rowArms:    []string{authorKind},
+		readsIssue: true,
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Issues)
+			if !ok {
+				return nil, roleAbsent("Issues")
+			}
+			return r.ReadIssue(ctx, s.repo, s.issue)
+		},
+		expect: func(p spec.Product, got any) []check {
+			return issueChecks("", p, got.(forgeapi.Issue), forgeapi.IssueStateOpen)
+		},
+	},
+	{
 		method:   "Issues.CreateIssue",
 		zero:     forgeapi.Issue{},
 		rowArms:  []string{authorKind},
@@ -596,8 +648,25 @@ var operations = []operation{
 		},
 	},
 	{
-		method: "Capabilities.ConnectionCaps",
-		zero:   forgeapi.ConnectionCaps{},
+		method:   "Issues.ReopenIssue",
+		zero:     forgeapi.Issue{},
+		rowArms:  []string{authorKind},
+		mutation: true,
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Issues)
+			if !ok {
+				return nil, roleAbsent("Issues")
+			}
+			return r.ReopenIssue(ctx, s.repo, s.issue)
+		},
+		expect: func(p spec.Product, got any) []check {
+			return issueChecks("", p, got.(forgeapi.Issue), forgeapi.IssueStateOpen)
+		},
+	},
+	{
+		method:    "Capabilities.ConnectionCaps",
+		zero:      forgeapi.ConnectionCaps{},
+		errorArms: []string{capsBefore17},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.Capabilities)
 			if !ok {
@@ -609,9 +678,8 @@ var operations = []operation{
 			g := got.(forgeapi.ConnectionCaps)
 			return []check{
 				eq("Product", g.Product, productOf[p]),
-				absentBy("Caps[rerun_checks]", g.Caps[forgeapi.CapRerunChecks],
-					forgeapi.SupportYes, forgeapi.SupportUnknown,
-					map[spec.Product]any{spec.Forgejo: forgeapi.SupportNo}),
+				absent("Caps[rerun_checks]", g.Caps[forgeapi.CapRerunChecks],
+					forgeapi.SupportYes, forgeapi.SupportUnknown),
 				present("Ev[rerun_checks].Source", g.Ev[forgeapi.CapRerunChecks].Source, forgeapi.EvidenceUnknown),
 			}
 		},
@@ -739,6 +807,35 @@ var operations = []operation{
 			}
 		},
 	},
+	{
+		method:   "Labels.AddLabels",
+		zero:     nil,
+		mutation: true,
+		names:    1,
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Labels)
+			if !ok {
+				return nil, roleAbsent("Labels")
+			}
+			return nil, r.AddLabels(ctx, s.repo, forgeapi.LabelTarget{Issue: s.issue}, []string{s.label})
+		},
+		expect: func(spec.Product, any) []check { return nil },
+	},
+	{
+		method:    "Labels.RemoveLabels",
+		zero:      nil,
+		mutation:  true,
+		names:     1,
+		errorArms: []string{sharedLabelName},
+		invoke: func(ctx context.Context, c any, s subject) (any, error) {
+			r, ok := c.(forgeapi.Labels)
+			if !ok {
+				return nil, roleAbsent("Labels")
+			}
+			return nil, r.RemoveLabels(ctx, s.repo, forgeapi.LabelTarget{Issue: s.issue}, []string{s.label})
+		},
+		expect: func(spec.Product, any) []check { return nil },
+	},
 }
 
 // pullRequestChecks is the normalized pull request, one statement serving the
@@ -762,6 +859,7 @@ func pullRequestChecks(prefix string, p spec.Product, g forgeapi.PullRequest, st
 		eq(prefix+"Labels[].Name", label.Name, labelName),
 		present(prefix+"Labels[].Color", label.Color, ""),
 		eq(prefix+"Labels[].Description", label.Description, labelDesc),
+		eq(prefix+"Comments", g.Comments, commentCount),
 		eq(prefix+"CreatedAt", g.CreatedAt, createdAt),
 		eq(prefix+"UpdatedAt", g.UpdatedAt, updatedAt),
 		eq(prefix+"State", g.State, state),
@@ -782,6 +880,8 @@ func pullRequestChecks(prefix string, p spec.Product, g forgeapi.PullRequest, st
 		// value the contract states rather than that integer's zero.
 		absent(prefix+"Action.QueuePosition", a.QueuePosition, forgeapi.QueuePositionUnknown, forgeapi.QueuePositionUnknown),
 		eq(prefix+"Action.MergeBlocked", a.MergeBlocked, forgeapi.MergeBlockNone),
+		absent(prefix+"Action.Approvals", a.Approvals, approvalCount, forgeapi.CountUnknown),
+		absent(prefix+"Action.ChangesRequested", a.ChangesRequested, changesCount, forgeapi.CountUnknown),
 		eq(prefix+"Partial", g.Partial, (*forgeapi.Partial)(nil)),
 	}
 }
@@ -823,6 +923,7 @@ func issueChecks(prefix string, p spec.Product, g forgeapi.Issue, state forgeapi
 		eq(prefix+"Labels[].Name", label.Name, labelName),
 		present(prefix+"Labels[].Color", label.Color, ""),
 		eq(prefix+"Labels[].Description", label.Description, labelDesc),
+		eq(prefix+"Comments", g.Comments, commentCount),
 		eq(prefix+"CreatedAt", g.CreatedAt, createdAt),
 		eq(prefix+"UpdatedAt", g.UpdatedAt, updatedAt),
 		eq(prefix+"State", g.State, state),

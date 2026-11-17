@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/creds"
-	"github.com/cplieger/forgeapi/v2/github"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/forgeapi/v3/github"
 )
 
 // Example signs a user in to github.com through the OAuth device grant, saves

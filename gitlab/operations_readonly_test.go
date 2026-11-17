@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // reads is every read operation of this family's client, each called once, the two

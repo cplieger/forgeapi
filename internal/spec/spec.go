@@ -74,6 +74,12 @@ type Requests struct {
 	// PerItemCeiling counts the further requests a row may cost beyond PerItem:
 	// GitLab's fork lookup on its cross-repository list, one per distinct fork.
 	PerItemCeiling int
+	// PerName counts the further requests each label name the call names costs:
+	// one removal per name where the product removes one label per request.
+	PerName int
+	// PerNameCeiling counts the further requests a name may cost beyond PerName:
+	// a removal sent only for a name the item carries.
+	PerNameCeiling int
 	// Paged says the figure is per page of a continued list, capped by
 	// Budget.ListPages.
 	Paged bool
@@ -174,21 +180,25 @@ type Entry struct {
 var Fields = map[string]int{
 	"Identity.Whoami":                5,
 	"Repos.ListRepos":                17,
-	"PullRequests.ListPRs":           30,
-	"PullRequests.ListMyPRs":         30,
-	"PullRequests.ReadPR":            27,
-	"PullRequests.CreatePR":          27,
-	"PullRequests.ClosePR":           27,
-	"PullRequests.ReopenPR":          27,
+	"PullRequests.ListPRs":           33,
+	"PullRequests.ListMyPRs":         33,
+	"PullRequests.ReadPR":            30,
+	"PullRequests.CreatePR":          30,
+	"PullRequests.ClosePR":           30,
+	"PullRequests.ReopenPR":          30,
 	"PullRequests.RerunFailedChecks": 2,
 	"Merges.MergePR":                 4,
 	"Merges.MergeStatus":             4,
+	"Merges.CancelAutoMerge":         1,
 	"Checks.CommitStatus":            10,
 	"Checks.ListRuns":                15,
-	"Issues.ListIssues":              17,
-	"Issues.ListMyIssues":            17,
-	"Issues.CreateIssue":             14,
-	"Issues.CloseIssue":              14,
+	"Checks.RerunFailedRun":          2,
+	"Issues.ListIssues":              18,
+	"Issues.ListMyIssues":            18,
+	"Issues.ReadIssue":               15,
+	"Issues.CreateIssue":             15,
+	"Issues.CloseIssue":              15,
+	"Issues.ReopenIssue":             15,
 	"Capabilities.ConnectionCaps":    4,
 	"Capabilities.GrantCaps":         2,
 	"Capabilities.RepoAffordances":   6,
@@ -196,6 +206,8 @@ var Fields = map[string]int{
 	"Releases.ListReleases":          10,
 	"Releases.CreateRelease":         7,
 	"Labels.ListLabels":              6,
+	"Labels.AddLabels":               1,
+	"Labels.RemoveLabels":            1,
 }
 
 // Table is the expectation table: one entry per operation per product, in the
@@ -355,10 +367,15 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.ListPRs",
 		Product:   GitHub,
-		Exercises: "the PRList document, asking for at most 50 rows a page whatever the page bound asks, since a larger page of its rows answered 502 on every attempt on a large repository",
+		Exercises: "the PRList document, asking for at most 30 rows a page whatever the page bound asks, since a page of 50 of its rows answered 502 on 8 of 15 attempts on two large repositories; each row selects latestOpinionatedReviews(first: 20), one review per reviewer, and a row naming more than 20 reviewers answers both counts CountUnknown with pagination_cap on its Partial",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Items[].Comments",
+				Kind:  DiffersInShape,
+				Says:  "totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16",
+			},
 			{
 				Field: "Items[].Action.Checks, under a fine-grained token",
 				Kind:  CannotSupply,
@@ -374,12 +391,22 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request",
 			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ListPRs",
 		Product:   GitLab,
-		Exercises: "the PRList document, or GET /api/v4/projects/{id}/merge_requests where this connection's setup found the documents refused",
+		Exercises: "the PRList document, or GET /api/v4/projects/{id}/merge_requests where this connection's setup found the documents refused; each row selects approvedBy.count and the review state of its first 100 reviewers, and a row whose reviewers continue past them answers ChangesRequested CountUnknown with pagination_cap on its Partial; the REST route carries neither, so that arm answers both counts CountUnknown",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Needs:     "read_merge_state",
 		Support:   Supported,
@@ -402,7 +429,7 @@ var Table = []Entry{
 			{
 				Field: "Items[].Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold",
+				Says:  "headPipeline.status scalar, no fold; CheckUnknown where the documents are refused, since a REST list row carries no head_pipeline",
 			},
 			{
 				Field: "Items[].Action.ChecksPassing .. ChecksTotal",
@@ -434,13 +461,33 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "MergeBlockUnknown on every row: the document leaves detailedMergeStatus out of the request, and the REST route reads none on a list row",
 			},
+			{
+				Field: "Items[].Action.Approvals",
+				Kind:  DiffersInShape,
+				Says:  "approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested",
+				Kind:  DiffersInShape,
+				Says:  "the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented",
+			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves approvedBy out of the request, and the REST route reads none",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves reviewers out of the request, and the REST route reads none",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ListPRs",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
-		Requests:  Requests{Min: 1, Max: 2, PerItem: 1, Paged: true},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, then under the same per-interval admission one page of each row's reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on the row's Partial, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Requests:  Requests{Min: 1, Max: 2, PerItem: 2, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -468,13 +515,23 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "SupportUnknown on every row: the row's mergeable key is left unread",
 			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: no row's reviews are read, which spends one request per row less",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: no row's reviews are read, which spends one request per row less",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ListPRs",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
-		Requests:  Requests{Min: 1, Max: 2, PerItem: 1, Paged: true},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, then under the same per-interval admission one page of each row's reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on the row's Partial, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Requests:  Requests{Min: 1, Max: 2, PerItem: 2, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -507,15 +564,30 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "SupportUnknown on every row: the row's mergeable key is left unread",
 			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: no row's reviews are read, which spends one request per row less",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: no row's reviews are read, which spends one request per row less",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ListMyPRs",
 		Product:   GitHub,
-		Exercises: "the PRMine search document, asking for at most 25 rows a page whatever the page bound asks, since a larger page of its rows answered 502 under both owners measured, the smaller of them holding fewer than a hundred open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user",
+		Exercises: "the PRMine search document, asking for at most 15 rows a page whatever the page bound asks, since a page of 25 of its rows answered 502 on 2 of 5 attempts under an owner holding 57,746 open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user; each row selects latestOpinionatedReviews(first: 20), one review per reviewer, and a row naming more than 20 reviewers answers both counts CountUnknown with pagination_cap on its Partial",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Items[].Comments",
+				Kind:  DiffersInShape,
+				Says:  "totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16",
+			},
 			{
 				Field: "Items[].Action.Checks, under a fine-grained token",
 				Kind:  CannotSupply,
@@ -540,6 +612,16 @@ var Table = []Entry{
 				Field: "Items[].Action.MergeBlocked, under WithMergeState(false)",
 				Kind:  CannotSupply,
 				Says:  "MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request",
+			},
+			{
+				Field: "Items[].Action.Approvals, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request",
+			},
+			{
+				Field: "Items[].Action.ChangesRequested, under WithReviews(false)",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request",
 			},
 		},
 	},
@@ -610,6 +692,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "none: the group route's non_archived defaults to true",
 			},
+			{
+				Field: "Items[].Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: a REST list row carries no approval count and no reviewer review state",
+			},
 		},
 	},
 	{
@@ -619,6 +706,11 @@ var Table = []Entry{
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Items[].Comments",
+				Kind:  DiffersInShape,
+				Says:  "comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted",
+			},
 			{
 				Field: "Items[].SourceBranch",
 				Kind:  CannotSupply,
@@ -684,6 +776,11 @@ var Table = []Entry{
 				Kind:  DiffersInShape,
 				Says:  "draft on the pull_request object, not at the row's top level",
 			},
+			{
+				Field: "Items[].Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: an issue-search row carries no review key, and this list reads nothing per row",
+			},
 		},
 	},
 	{
@@ -693,6 +790,11 @@ var Table = []Entry{
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Items[].Comments",
+				Kind:  DiffersInShape,
+				Says:  "comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted",
+			},
 			{
 				Field: "Items[].AuthorKind",
 				Kind:  CannotSupply,
@@ -763,15 +865,25 @@ var Table = []Entry{
 				Kind:  DiffersInShape,
 				Says:  "draft on the pull_request object, not at the row's top level",
 			},
+			{
+				Field: "Items[].Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: an issue-search row carries no review key, and this list reads nothing per row",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   GitHub,
-		Exercises: "the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address",
+		Exercises: "the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address; the document selects latestOpinionatedReviews(first: 20), and more than 20 reviewers answer both counts CountUnknown with pagination_cap on Partial, as does the REST record, which carries no review",
 		Requests:  Requests{Min: 0, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "Comments",
+				Kind:  DiffersInShape,
+				Says:  "totalCommentsCount on the document, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16; comments plus review_comments, with no review body, on the REST read a connection whose documents were refused falls back to",
+			},
 			{
 				Field: "Action.Checks, under a fine-grained token",
 				Kind:  CannotSupply,
@@ -782,7 +894,7 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   GitLab,
-		Exercises: "the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused",
+		Exercises: "the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused; the document selects approvedBy.count and the review state of the first 100 reviewers, and reviewers continuing past them answer ChangesRequested CountUnknown with pagination_cap on Partial; the REST record carries neither, so that arm answers both counts CountUnknown",
 		Requests:  Requests{Min: 1, Max: 1},
 		Needs:     "read_merge_state",
 		Support:   Supported,
@@ -805,7 +917,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold",
+				Says:  "headPipeline.status scalar, no fold; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a merged results one included, since that payload carries no source_sha to match it by",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -822,13 +934,23 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "no position; train index null",
 			},
+			{
+				Field: "Action.Approvals",
+				Kind:  DiffersInShape,
+				Says:  "approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review",
+			},
+			{
+				Field: "Action.ChangesRequested",
+				Kind:  DiffersInShape,
+				Says:  "the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries",
-		Requests:  Requests{Min: 2, Max: 4},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial",
+		Requests:  Requests{Min: 2, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -856,8 +978,8 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.ReadPR",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries",
-		Requests:  Requests{Min: 2, Max: 4},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial",
+		Requests:  Requests{Min: 2, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -929,6 +1051,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the creation lands, unknown on every creation measured",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST pull-request record a mutation answers carries no review",
+			},
 		},
 		Sends: []Sent{
 			{
@@ -996,6 +1123,11 @@ var Table = []Entry{
 				Kind:  DiffersInSpelling,
 				Says:  "state string, opened",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state",
+			},
 		},
 		Sends: []Sent{
 			{
@@ -1009,8 +1141,8 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.CreatePR",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/pulls",
-		Requests:  Requests{Min: 1, Max: 2},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls",
+		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1038,6 +1170,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
+			},
 		},
 		Sends: []Sent{
 			{
@@ -1051,8 +1188,8 @@ var Table = []Entry{
 	{
 		Method:    "PullRequests.CreatePR",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/pulls",
-		Requests:  Requests{Min: 1, Max: 2},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls",
+		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1084,6 +1221,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
 			},
 		},
 		Sends: []Sent{
@@ -1122,6 +1264,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the close lands: unknown before the check settles, clean after it",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST pull-request record a mutation answers carries no review",
+			},
 		},
 	},
 	{
@@ -1159,7 +1306,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran",
+				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -1180,6 +1327,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the close lands: preparing before the check settles, not_open after it, checking after a reopen",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state",
 			},
 		},
 	},
@@ -1214,6 +1366,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
 			},
 		},
 	},
@@ -1254,6 +1411,11 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
+			},
 		},
 	},
 	{
@@ -1282,6 +1444,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the reopen lands, unknown on every reopen measured",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST pull-request record a mutation answers carries no review",
 			},
 		},
 	},
@@ -1320,7 +1487,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran",
+				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -1346,6 +1513,11 @@ var Table = []Entry{
 				Field: "State",
 				Kind:  DiffersInSpelling,
 				Says:  "state string, opened, closed_at cleared",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state",
 			},
 		},
 	},
@@ -1380,6 +1552,11 @@ var Table = []Entry{
 				Field: "Action.MergeBlocked",
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
+			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
 			},
 		},
 	},
@@ -1420,45 +1597,68 @@ var Table = []Entry{
 				Kind:  CannotSupply,
 				Says:  "mergeable and draft, no reason",
 			},
+			{
+				Field: "Action.Approvals .. ChangesRequested",
+				Kind:  CannotSupply,
+				Says:  "CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none",
+			},
 		},
 	},
 	{
 		Method:    "PullRequests.RerunFailedChecks",
 		Product:   GitHub,
-		Exercises: "GET /repos/{owner}/{repo}/actions/runs to resolve the head commit's run, then POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where either of them answered from another address",
-		Requests:  Requests{Min: 2, Max: 3},
+		Exercises: "GET /repos/{owner}/{repo}/pulls/{pull_number} for the pull request's current head where the caller brought none, then GET /repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages of 100, to resolve a run on it that failed or was cancelled, then POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where any of them answered from another address",
+		Requests:  Requests{Min: 2, Max: 6},
 		Needs:     "rerun_checks",
 		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "the failed jobs and their dependent jobs, as the route documents",
+			},
+		},
 		Sends: []Sent{
 			{
 				Field: "head_sha",
 				Where: InQuery,
 				Holds: HoldsHeadSHA,
-				Says:  "the head the caller pinned, as the filter this product's runs route declares, so the retry addresses the workflow run of the commit the caller's row was rendered from rather than whichever the instance returns first",
+				Says:  "the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the retry addresses a workflow run of that commit rather than one of another branch",
+			},
+			{
+				Field: "per_page",
+				Where: InQuery,
+				Holds: HoldsLiteral,
+				Value: "100",
+				Says:  "this product's most rows on one page, so the walk for a failed run reads as few pages as it can",
 			},
 		},
 	},
 	{
 		Method:    "PullRequests.RerunFailedChecks",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects/{id}/pipelines, filtered by the head SHA, to resolve the head commit's pipeline, then POST /api/v4/projects/{id}/pipelines/{run}/retry",
+		Exercises: "the RerunHead document for the merge request's head and the head pipeline GitLab matches to it by sha or source_sha, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused, then POST /api/v4/projects/{id}/pipelines/{run}/retry, addressed instead at the project that pipeline names where it is another, a fork's",
 		Requests:  Requests{Min: 2, Max: 2},
 		Needs:     "rerun_checks",
 		Support:   Supported,
-		Sends: []Sent{
+		Departures: []Departure{
 			{
-				Field: "sha",
-				Where: InQuery,
-				Holds: HoldsHeadSHA,
-				Says:  "the head the caller pinned, as the filter this product's pipelines route declares, so the retry addresses the pipeline of the commit the caller's row was rendered from rather than whichever the instance returns first",
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict",
+			},
+			{
+				Field: "run re-run",
+				Kind:  DiffersInShape,
+				Says:  "the head pipeline GitLab matches to the merge request's head rather than a run picked among the head's: on a project with merged results pipelines it ran on a merge commit of the head, and on a fork's merge request in the fork's project; none matched, an earlier head's pipeline included, is refused with CodeRunNotFailed, and so is a stored pipeline on another commit where the documents are refused, since the REST payload carries no source_sha to match it by",
 			},
 		},
 	},
 	{
 		Method:    "PullRequests.RerunFailedChecks",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/actions/runs, filtered by the head SHA, to resolve the head commit's run, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, both of which this product's swagger document names",
-		Requests:  Requests{Min: 2, Max: 2},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, both of which this product's swagger document names",
+		Requests:  Requests{Min: 2, Max: 5},
 		Needs:     "rerun_checks",
 		Support:   Supported,
 		Sends: []Sent{
@@ -1466,22 +1666,49 @@ var Table = []Entry{
 				Field: "head_sha",
 				Where: InQuery,
 				Holds: HoldsHeadSHA,
-				Says:  "the head the caller pinned, as the filter this product's runs route declares, so the retry addresses the run of the commit the caller's row was rendered from rather than whichever the instance returns first",
+				Says:  "the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the retry addresses a run of that commit rather than one of another branch",
+			},
+			{
+				Field: "limit",
+				Where: InQuery,
+				Holds: HoldsLiteral,
+				Value: "50",
+				Says:  "the instance's stated maximum, here the maximum both public instances state, so the walk for a failed run reads as few pages as it can, and a page shorter than it ends the walk",
 			},
 		},
 	},
 	{
 		Method:    "PullRequests.RerunFailedChecks",
 		Product:   Forgejo,
-		Exercises: "",
-		Requests:  Requests{},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17",
+		Requests:  Requests{Min: 2, Max: 5},
 		Needs:     "rerun_checks",
-		Support:   Unsupported,
+		Support:   Supported,
 		Departures: []Departure{
 			{
-				Field: "error, verb absent",
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "the whole finished run starts again, its passed jobs included: this product has no failed-jobs route, and its per-job route cannot be aimed at the failed roots alone, because a job's needs name workflow job keys the job list does not carry beside the integer id",
+			},
+			{
+				Field: "error, verb absent, before 17",
 				Kind:  CannotSupply,
-				Says:  "no re-run verb in this product's API, which its swagger document settles",
+				Says:  "no re-run verb before Forgejo 17, which its swagger document settles",
+			},
+		},
+		Sends: []Sent{
+			{
+				Field: "head_sha",
+				Where: InQuery,
+				Holds: HoldsHeadSHA,
+				Says:  "the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the re-run addresses a run of that commit rather than one of another branch",
+			},
+			{
+				Field: "limit",
+				Where: InQuery,
+				Holds: HoldsLiteral,
+				Value: "50",
+				Says:  "the instance's stated maximum, here the maximum both public instances state, so the walk for a failed run reads as few pages as it can, and a page shorter than it ends the walk",
 			},
 		},
 	},
@@ -1717,6 +1944,47 @@ var Table = []Entry{
 		},
 	},
 	{
+		Method:    "Merges.CancelAutoMerge",
+		Product:   GitHub,
+		Exercises: "GET /repos/{owner}/{repo}/pulls/{number}, whose auto_merge null says nothing is armed and ends the call, then the DisableAutoMerge document addressed by the node id that record names; where the repository moved, the read's hop and one read against the id-addressed location resolve the successor the stale refusal carries, and nothing is cancelled",
+		Requests:  Requests{Min: 1, Max: 3},
+		Support:   Supported,
+	},
+	{
+		Method:    "Merges.CancelAutoMerge",
+		Product:   GitLab,
+		Exercises: "POST /api/v4/projects/{id}/merge_requests/{iid}/cancel_auto_merge where this connection's setup read a version at or past 19.5, whose 409 says nothing is armed, and otherwise POST /api/v4/projects/{id}/merge_requests/{iid}/cancel_merge_when_pipeline_succeeds, the route every version serves, whose 201 carrying status error says the same",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field:    "merge train",
+				Kind:     NotMeasured,
+				Says:     "a merge request on a merge train is also removed from the train, as both routes document; unmeasured, needs a sandbox project that merges through a train",
+				Evidence: "SANDBOX",
+			},
+			{
+				Field: "error, permission refused, on cancel_merge_when_pipeline_succeeds",
+				Kind:  DiffersInShape,
+				Says:  "KindUnauthorized: this route answers 401 to a caller who may not cancel, a status no member separates from a credential the instance rejects; it is the route sent before 19.5 and where setup read no version",
+			},
+		},
+	},
+	{
+		Method:    "Merges.CancelAutoMerge",
+		Product:   Gitea,
+		Exercises: "DELETE /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, whose 404 answers a pull request with nothing scheduled and a missing one alike, so a 404 is followed by GET /api/v1/repos/{owner}/{repo}/pulls/{number}, which finding the pull request makes the answer nil; where the repository moved, the redirect the DELETE is refused names the successor the stale refusal carries, and so does the one 301 the read answers where the move came between the two",
+		Requests:  Requests{Min: 1, Max: 3},
+		Support:   Supported,
+	},
+	{
+		Method:    "Merges.CancelAutoMerge",
+		Product:   Forgejo,
+		Exercises: "DELETE /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, whose 404 answers a pull request with nothing scheduled and a missing one alike, so a 404 is followed by GET /api/v1/repos/{owner}/{repo}/pulls/{number}, which finding the pull request makes the answer nil; where the repository moved, the redirect the DELETE is refused names the successor the stale refusal carries, and so does the one 301 the read answers where the move came between the two",
+		Requests:  Requests{Min: 1, Max: 3},
+		Support:   Supported,
+	},
+	{
 		Method:    "Checks.CommitStatus",
 		Product:   GitHub,
 		Exercises: "the CommitRollup document, the one source on this product that tells a commit with no CI from a commit whose checks all passed, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers",
@@ -1794,7 +2062,7 @@ var Table = []Entry{
 	{
 		Method:    "Checks.ListRuns",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects/{id}/pipelines, the route the re-run resolves its pipeline on, with the page bound as its page size and no head filter",
+		Exercises: "GET /api/v4/projects/{id}/pipelines, with the page bound as its page size and no head filter",
 		Requests:  Requests{Min: 1, Max: 1, Paged: true},
 		Support:   Supported,
 		Departures: []Departure{
@@ -1928,6 +2196,64 @@ var Table = []Entry{
 				Holds: HoldsLiteral,
 				Value: "50",
 				Says:  "the smaller of the page bound and the instance's stated maximum, here the maximum both public instances state, the same on every page of one walk, which is what lets the stated total decide the continuation where an instance serves fewer rows than asked",
+			},
+		},
+	},
+	{
+		Method:    "Checks.RerunFailedRun",
+		Product:   GitHub,
+		Exercises: "POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where it answered from another address",
+		Requests:  Requests{Min: 1, Max: 2},
+		Needs:     "rerun_checks",
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "the failed jobs and their dependent jobs, as the route documents",
+			},
+		},
+	},
+	{
+		Method:    "Checks.RerunFailedRun",
+		Product:   GitLab,
+		Exercises: "POST /api/v4/projects/{id}/pipelines/{run}/retry",
+		Requests:  Requests{Min: 1, Max: 1},
+		Needs:     "rerun_checks",
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict",
+			},
+		},
+	},
+	{
+		Method:    "Checks.RerunFailedRun",
+		Product:   Gitea,
+		Exercises: "POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, which this product's swagger document names",
+		Requests:  Requests{Min: 1, Max: 1},
+		Needs:     "rerun_checks",
+		Support:   Supported,
+	},
+	{
+		Method:    "Checks.RerunFailedRun",
+		Product:   Forgejo,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/actions/runs/{run}, since this product's whole-run re-run starts any finished run again, so a run that neither failed nor was cancelled is refused before any write, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17",
+		Requests:  Requests{Min: 2, Max: 2},
+		Needs:     "rerun_checks",
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "jobs re-run",
+				Kind:  DiffersInShape,
+				Says:  "the whole finished run starts again, its passed jobs included: this product has no failed-jobs route, and its per-job route cannot be aimed at the failed roots alone, because a job's needs name workflow job keys the job list does not carry beside the integer id",
+			},
+			{
+				Field: "error, verb absent, before 17",
+				Kind:  CannotSupply,
+				Says:  "no re-run verb before Forgejo 17, which its swagger document settles",
 			},
 		},
 	},
@@ -2073,6 +2399,68 @@ var Table = []Entry{
 		},
 	},
 	{
+		Method:    "Issues.ReadIssue",
+		Product:   GitHub,
+		Exercises: "GET /repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record carrying a pull-request key is answered not found; where the issue was transferred, the 301 its old address answers, whose name-addressed Location is the issue in the repository it now lives in, read there; and where the repository moved, one read against the id-addressed location to resolve the successor the stale refusal carries",
+		Requests:  Requests{Min: 0, Max: 3},
+		Support:   Supported,
+	},
+	{
+		Method:    "Issues.ReadIssue",
+		Product:   GitLab,
+		Exercises: "GET /api/v4/projects/{id}/issues/{iid}",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "Ref",
+				Kind:  DiffersInSpelling,
+				Says:  "iid int, the project's own sequence",
+			},
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-11-16, while a merge request's author answers it",
+			},
+			{
+				Field: "Labels[].Color",
+				Kind:  CannotSupply,
+				Says:  "no colour on the answer: its labels arrive as name strings, the label detail parameter of the list routes ignored on this one, measured on gitlab.com 2026-11-16",
+			},
+			{
+				Field: "Labels[].Description",
+				Kind:  CannotSupply,
+				Says:  "no description on the answer: its labels arrive as name strings, the label detail parameter of the list routes ignored on this one, measured on gitlab.com 2026-11-16",
+			},
+			{
+				Field: "State",
+				Kind:  DiffersInSpelling,
+				Says:  "state string, opened",
+			},
+		},
+	},
+	{
+		Method:    "Issues.ReadIssue",
+		Product:   Gitea,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record whose pull_request is set is answered not found, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries",
+		Requests:  Requests{Min: 1, Max: 2},
+		Support:   Supported,
+	},
+	{
+		Method:    "Issues.ReadIssue",
+		Product:   Forgejo,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record whose pull_request is set is answered not found, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries",
+		Requests:  Requests{Min: 1, Max: 2},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-11-16",
+			},
+		},
+	},
+	{
 		Method:    "Issues.CreateIssue",
 		Product:   GitHub,
 		Exercises: "POST /repos/{owner}/{repo}/issues, whose own body carries the labels the caller named, then one read against the id-addressed location to resolve the successor where it answered from another address",
@@ -2132,8 +2520,8 @@ var Table = []Entry{
 	{
 		Method:    "Issues.CreateIssue",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues",
-		Requests:  Requests{Min: 1, Max: 2},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues",
+		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Sends: []Sent{
 			{
@@ -2147,8 +2535,8 @@ var Table = []Entry{
 	{
 		Method:    "Issues.CreateIssue",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues",
-		Requests:  Requests{Min: 1, Max: 2},
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues",
+		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -2224,6 +2612,68 @@ var Table = []Entry{
 		},
 	},
 	{
+		Method:    "Issues.ReopenIssue",
+		Product:   GitHub,
+		Exercises: "PATCH /repos/{owner}/{repo}/issues/{number}, then one read against the id-addressed location to resolve the successor where it answered from another address",
+		Requests:  Requests{Min: 1, Max: 2},
+		Support:   Supported,
+	},
+	{
+		Method:    "Issues.ReopenIssue",
+		Product:   GitLab,
+		Exercises: "PUT /api/v4/projects/{id}/issues/{iid}",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "Ref",
+				Kind:  DiffersInSpelling,
+				Says:  "iid int, the project's own sequence",
+			},
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it",
+			},
+			{
+				Field: "Labels[].Color",
+				Kind:  CannotSupply,
+				Says:  "no colour on the answer: its labels arrive as name strings",
+			},
+			{
+				Field: "Labels[].Description",
+				Kind:  CannotSupply,
+				Says:  "no description on the answer: its labels arrive as name strings",
+			},
+			{
+				Field: "State",
+				Kind:  DiffersInSpelling,
+				Says:  "state string, opened",
+			},
+		},
+	},
+	{
+		Method:    "Issues.ReopenIssue",
+		Product:   Gitea,
+		Exercises: "PATCH /api/v1/repos/{owner}/{repo}/issues/{number}",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+	},
+	{
+		Method:    "Issues.ReopenIssue",
+		Product:   Forgejo,
+		Exercises: "PATCH /api/v1/repos/{owner}/{repo}/issues/{number}",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "AuthorKind",
+				Kind:  CannotSupply,
+				Says:  "AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11",
+			},
+		},
+	},
+	{
 		Method:    "Capabilities.ConnectionCaps",
 		Product:   GitHub,
 		Exercises: "the X-GitHub-Request-Id header that names the product and the x-github-enterprise-version header that names an appliance's version, both riding traffic the connection already sent, then GET /meta where no header answered, beside GET /versions, which settles whether this instance serves the version this family pins, all cached with the connection",
@@ -2259,9 +2709,9 @@ var Table = []Entry{
 		Support:   Supported,
 		Departures: []Departure{
 			{
-				Field: "Caps[rerun_checks]",
+				Field: "Caps[rerun_checks], before 17",
 				Kind:  CannotSupply,
-				Says:  "swagger has no rerun verb: no",
+				Says:  "no: the swagger document declares no re-run verb before Forgejo 17",
 			},
 		},
 	},
@@ -2596,6 +3046,101 @@ var Table = []Entry{
 		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
 		Requests:  Requests{Min: 1, Max: 2, Paged: true},
 		Support:   Supported,
+	},
+	{
+		Method:    "Labels.AddLabels",
+		Product:   GitHub,
+		Exercises: "GET /repos/{owner}/{repo}/labels, its first page at the most a page serves, to refuse a name the repository does not define before anything is written, then POST /repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the read's hop and one read against the id-addressed location resolve the successor the stale refusal carries, and nothing is written",
+		Requests:  Requests{Min: 2, Max: 3},
+		Support:   Supported,
+		Sends: []Sent{
+			{
+				Field: "labels",
+				Where: InBody,
+				Holds: HoldsLabelNames,
+				Says:  "the labels the caller named, as the NAMES this product's addition takes, each one the label read found defined",
+			},
+		},
+	},
+	{
+		Method:    "Labels.AddLabels",
+		Product:   GitLab,
+		Exercises: "GET /api/v4/projects/{id}/labels, its first page at the most a page serves, to refuse a name the project does not define, since this product's add_labels creates one, then PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}",
+		Requests:  Requests{Min: 2, Max: 2},
+		Support:   Supported,
+		Sends: []Sent{
+			{
+				Field: "add_labels",
+				Where: InBody,
+				Holds: HoldsLabelNames,
+				Says:  "the labels the caller named, as the NAMES this product's update takes, each one the label read found defined",
+			},
+		},
+	},
+	{
+		Method:    "Labels.AddLabels",
+		Product:   Gitea,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written",
+		Requests:  Requests{Min: 2, Max: 3},
+		Support:   Supported,
+		Sends: []Sent{
+			{
+				Field: "labels",
+				Where: InBody,
+				Holds: HoldsLabelIDs,
+				Says:  "the labels the caller named, as the numeric ids this product's option takes, which is what the label read this row prices resolves",
+			},
+		},
+	},
+	{
+		Method:    "Labels.AddLabels",
+		Product:   Forgejo,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written",
+		Requests:  Requests{Min: 2, Max: 3},
+		Support:   Supported,
+		Sends: []Sent{
+			{
+				Field: "labels",
+				Where: InBody,
+				Holds: HoldsLabelIDs,
+				Says:  "the labels the caller named, as the numeric ids this product's option takes, which is what the label read this row prices resolves",
+			},
+		},
+	},
+	{
+		Method:    "Labels.RemoveLabels",
+		Product:   GitHub,
+		Exercises: "DELETE /repos/{owner}/{repo}/issues/{number}/labels/{name} for each name, the issue route a pull request shares; its 404 answers a label the item lacks and a missing item alike, so the first one is followed by one GET /repos/{owner}/{repo}/issues/{number}, which finding the item makes that removal and every later 404 a name not carried; where a removal answered from another address, one read against the id-addressed location resolves the successor the stale refusal carries",
+		Requests:  Requests{Min: 0, Max: 1, PerName: 1},
+		Support:   Supported,
+	},
+	{
+		Method:    "Labels.RemoveLabels",
+		Product:   GitLab,
+		Exercises: "PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}, whose remove_labels ignores a name the item does not carry; a name with a comma or with surrounding space names no label of this product and is not sent",
+		Requests:  Requests{Min: 1, Max: 1},
+		Support:   Supported,
+	},
+	{
+		Method:    "Labels.RemoveLabels",
+		Product:   Gitea,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries with its id, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{label_id} for each name it carries, by the id this product's route takes, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed",
+		Requests:  Requests{Min: 1, Max: 2, PerNameCeiling: 1},
+		Support:   Supported,
+	},
+	{
+		Method:    "Labels.RemoveLabels",
+		Product:   Forgejo,
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{name} for each name it carries, by name, since this product reads digits as an id only where no label has that name, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed",
+		Requests:  Requests{Min: 1, Max: 2, PerNameCeiling: 1},
+		Support:   Supported,
+		Departures: []Departure{
+			{
+				Field: "removal, a name the repository and its organization share",
+				Kind:  CannotSupply,
+				Says:  "the repository's label alone: this product's removal resolves a name to the repository's label before the organization's and an id to a repository label only, so an organization label the item carries stays where the repository defines a label of its name, and the call answers nil",
+			},
+		},
 	},
 }
 

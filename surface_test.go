@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2/internal/surface"
+	"github.com/cplieger/forgeapi/v3/internal/surface"
 )
 
 const (
@@ -94,6 +94,24 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 		"func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)",
 		"func NewStoredSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*StoredSource, error)",
 		"func New(store creds.Store, opts ...forgeapi.Option) *Helper",
+		"const CountUnknown = -1",
+		"func WithReviews(read bool) ListOption",
+		"func ActionReads(ctx context.Context, n int) context.Context",
+		"func Mutates(r *http.Request) bool",
+		"type LabelTarget struct {",
+		"func (t LabelTarget) Validate() error",
+		"\tIndexed bool\n",
+		"\tNeeds string\n",
+		"type Backend interface {",
+		"func NewStore(b Backend) Store",
+		"func (r *Record) Equal(o *Record) bool",
+		"\tReadIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)\n",
+		"\tReopenIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)\n",
+		"\tAddLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error\n",
+		"\tRemoveLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error\n",
+		"\tCancelAutoMerge(ctx context.Context, repo RepoRef, pr PRRef) error\n",
+		"\tRerunFailedRun(ctx context.Context, repo RepoRef, run RunRef) error\n",
+		"\tGovernor\n\tLabels\n\tClose()\n",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("surface.Generate(%q) does not render %q", ".", want)
@@ -213,6 +231,7 @@ func TestRuledDefaultsAreStated(t *testing.T) {
 		{fn: "WithPageBound", defaultClause: "Default: [DefaultPageBound].", names: []string{"CodePageBoundInvalid"}},
 		{fn: "WithSince", defaultClause: "Default: no bound,", names: []string{"CodeListSinceInvalid"}},
 		{fn: "WithMergeState", defaultClause: "Default: true.", names: []string{"CodeListMergeStateInvalid"}},
+		{fn: "WithReviews", defaultClause: "Default: true.", names: []string{"CodeListReviewsInvalid", "CountUnknown"}},
 		{fn: "WithReadCache", defaultClause: "Default: [DefaultReadCacheBytes].", zeroClause: "Zero holds nothing and sends every read unconditionally.", names: []string{"CodeBudgetInvalid"}},
 	} {
 		t.Run(test.fn, func(t *testing.T) {

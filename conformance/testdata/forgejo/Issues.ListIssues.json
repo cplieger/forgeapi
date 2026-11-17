@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded list_issues response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer codeberg.org gave anonymously, read 2026-10-02",
+  "//": "cut from a recorded list_issues response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the last three routes are connection setup, which this case runs first because a page it reads asks for at most the instance's stated maximum page size: the version and the API document as the connection read's own fixture serves them, and that maximum, cut from a recorded settings_api response, the answer codeberg.org gave anonymously, read 2026-10-02; the comments key cut from a recorded ListIssues response, read 2026-11-16, its count replaced with the canonical subject's",
   "routes": [
     {
       "method": "GET",
@@ -26,7 +26,8 @@
               "color": "ededed",
               "description": "Example label."
             }
-          ]
+          ],
+          "comments": 3
         }
       ]
     },

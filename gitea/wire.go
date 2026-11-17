@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // The checks a decoded body can fail, each the cause its failure line names.
@@ -33,6 +33,19 @@ type (
 		// Type is absent on Forgejo, measured on codeberg.org 2026-10-11.
 		Type   string   `json:"type"`
 		Scopes []string `json:"scopes"`
+	}
+
+	// wireReview is one review of a pull request, a review request included.
+	wireReview struct {
+		User      *wireReviewer `json:"user"`
+		State     string        `json:"state"`
+		ID        int64         `json:"id"`
+		Dismissed bool          `json:"dismissed"`
+		Stale     bool          `json:"stale"`
+	}
+
+	wireReviewer struct {
+		ID int64 `json:"id"`
 	}
 
 	wireLabel struct {
@@ -96,22 +109,24 @@ type (
 	}
 
 	wirePull struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
-		Number      int           `json:"number"`
-		State       string        `json:"state"`
-		Title       string        `json:"title"`
-		Body        string        `json:"body"`
-		User        wireUser      `json:"user"`
-		WebURL      string        `json:"html_url"`
-		CreatedAt   time.Time     `json:"created_at"`
-		UpdatedAt   time.Time     `json:"updated_at"`
-		Labels      []wireLabel   `json:"labels"`
-		Head        wireBranch    `json:"head"`
-		Base        wireBranch    `json:"base"`
-		Draft       bool          `json:"draft"`
-		Merged      bool          `json:"merged"`
-		Mergeable   *bool         `json:"mergeable"`
-		Repository  *wireRepoMeta `json:"repository"`
-		PullRequest *wirePullMeta `json:"pull_request"`
+		Number         int           `json:"number"`
+		State          string        `json:"state"`
+		Title          string        `json:"title"`
+		Body           string        `json:"body"`
+		User           wireUser      `json:"user"`
+		WebURL         string        `json:"html_url"`
+		CreatedAt      time.Time     `json:"created_at"`
+		UpdatedAt      time.Time     `json:"updated_at"`
+		Labels         []wireLabel   `json:"labels"`
+		Comments       *int          `json:"comments"`
+		ReviewComments *int          `json:"review_comments"`
+		Head           wireBranch    `json:"head"`
+		Base           wireBranch    `json:"base"`
+		Draft          bool          `json:"draft"`
+		Merged         bool          `json:"merged"`
+		Mergeable      *bool         `json:"mergeable"`
+		Repository     *wireRepoMeta `json:"repository"`
+		PullRequest    *wirePullMeta `json:"pull_request"`
 	}
 
 	wireIssue struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
@@ -124,7 +139,11 @@ type (
 		CreatedAt  time.Time     `json:"created_at"`
 		UpdatedAt  time.Time     `json:"updated_at"`
 		Labels     []wireLabel   `json:"labels"`
+		Comments   *int          `json:"comments"`
 		Repository *wireRepoMeta `json:"repository"`
+		// PullRequest is set on the record of a pull request, which these routes
+		// answer beside issues because both share one number space.
+		PullRequest *wirePullMeta `json:"pull_request"`
 	}
 
 	wireRelease struct {
@@ -395,6 +414,7 @@ func (c *Client) normalizePull(p *wirePull, repo forgeapi.RepoRef) forgeapi.Pull
 		WebURL:       p.WebURL,
 		HeadSHA:      p.Head.SHA,
 		Labels:       normalizeLabels(p.Labels),
+		Comments:     commentCount(p.Comments, p.ReviewComments),
 		CreatedAt:    p.CreatedAt,
 		UpdatedAt:    p.UpdatedAt,
 		Action:       normalizeAction(p),
@@ -543,14 +563,48 @@ func (c *Client) unmapped(field, value string) {
 // is unknown rather than one of the seven causes invented from the pair.
 func normalizeAction(p *wirePull) forgeapi.ActionState {
 	return forgeapi.ActionState{
-		Mergeable:      support(p.Mergeable),
-		Checks:         forgeapi.CheckUnknown,
-		AutoMergeArmed: forgeapi.SupportUnknown,
-		QueueState:     forgeapi.QueueNone,
-		QueuePosition:  forgeapi.QueuePositionUnknown,
-		MergeBlocked:   forgeapi.MergeBlockUnknown,
+		Mergeable:        support(p.Mergeable),
+		Checks:           forgeapi.CheckUnknown,
+		AutoMergeArmed:   forgeapi.SupportUnknown,
+		QueueState:       forgeapi.QueueNone,
+		QueuePosition:    forgeapi.QueuePositionUnknown,
+		MergeBlocked:     forgeapi.MergeBlockUnknown,
+		Approvals:        forgeapi.CountUnknown,
+		ChangesRequested: forgeapi.CountUnknown,
 	}
 }
+
+// reviewCounts is the reviewers whose latest opinionated review approves and those
+// whose latest requests changes. A review is opinionated where it approves or
+// requests changes and is neither dismissed nor stale, so a later comment or review
+// request changes nothing; the latest is the highest id. A review with no user names
+// no reviewer to count.
+func reviewCounts(reviews []wireReview) (approvals, changes int) {
+	latest := make(map[int64]*wireReview, len(reviews))
+	for i := range reviews {
+		r := &reviews[i]
+		if r.User == nil || r.Dismissed || r.Stale || (r.State != reviewApproved && r.State != reviewChanges) {
+			continue
+		}
+		if held, ok := latest[r.User.ID]; !ok || r.ID > held.ID {
+			latest[r.User.ID] = r
+		}
+	}
+	for _, r := range latest {
+		if r.State == reviewApproved {
+			approvals++
+		} else {
+			changes++
+		}
+	}
+	return approvals, changes
+}
+
+// The two review states both products' swagger documents declare an opinion by.
+const (
+	reviewApproved = "APPROVED"
+	reviewChanges  = "REQUEST_CHANGES"
+)
 
 // normalizeIssue is the issue normalizer. repo is the addressed repository, and a
 // cross-repository row, which addresses none, carries its own as the meta shape.
@@ -567,10 +621,24 @@ func (c *Client) normalizeIssue(i *wireIssue, repo forgeapi.RepoRef) forgeapi.Is
 		AuthorKind: c.accountKind(i.User.Type),
 		WebURL:     i.WebURL,
 		Labels:     normalizeLabels(i.Labels),
+		Comments:   commentCount(i.Comments),
 		CreatedAt:  i.CreatedAt,
 		UpdatedAt:  i.UpdatedAt,
 		State:      c.issueState(i.State),
 	}
+}
+
+// commentCount is the sum of the count keys a record carries, and
+// [forgeapi.CountUnknown] where it lacks any of them.
+func commentCount(parts ...*int) int {
+	total := 0
+	for _, n := range parts {
+		if n == nil {
+			return forgeapi.CountUnknown
+		}
+		total += *n
+	}
+	return total
 }
 
 // normalizeRelease is the release normalizer.
@@ -667,9 +735,9 @@ func firstTime(a, b time.Time) time.Time {
 // conclusion and every other status is its own outcome, which is the only spelling
 // a Forgejo run carries.
 func (c *Client) runState(r *wireRun) forgeapi.CheckState {
-	field, raw := "actions run status", r.Status
+	field, raw := "actions run status", r.outcome()
 	if r.Status == runCompleted {
-		field, raw = "actions run conclusion", r.Conclusion
+		field = "actions run conclusion"
 	}
 	state, ok := runStates[raw]
 	if ok {
@@ -677,6 +745,15 @@ func (c *Client) runState(r *wireRun) forgeapi.CheckState {
 	}
 	c.unmapped(field, raw)
 	return forgeapi.CheckUnknown
+}
+
+// outcome is the run's outcome as sent: a completed Gitea run's conclusion, and
+// otherwise its status.
+func (r *wireRun) outcome() string {
+	if r.Status == runCompleted {
+		return r.Conclusion
+	}
+	return r.Status
 }
 
 // checkState maps one status row totally, counting and naming a value the table
@@ -801,19 +878,20 @@ var runEvents = map[string]forgeapi.RunTrigger{
 // request that already exists, a request upstream rejected as invalid.
 var conflictCodes = map[string]string{"MergePR": forgeapi.CodeNotMergeable, "CreatePR": forgeapi.CodeValidation}
 
-// mapper is this family's error mapping, by operation plus status plus the headers
-// that decide a cell.
-//
-// A 409 is mapped per operation, by [conflictCodes]. An archived
-// repository is a permanent refusal whose remedy is an operator unarchiving it,
-// never retried and never reported as a conflict, because no rebase and no re-read
-// reaches that state. A 405 is the bare merge refusal, as on the other two: this
-// product answers it for a merge style the repository disallows and for every other
-// refusal of its merge route alike, a pull request not yet mergeable among them, so
-// the status names no cause.
-//
-// No cell reads the body's error member.
-func mapper(op string, status int, header http.Header, _ string) (kind forgeapi.ErrorKind, code string) {
+// mapper is this family's error mapping, [statusMapped]. No cell reads the body's
+// members: this product names a missing scope in message text only.
+func mapper(op string, status int, header http.Header, _ transport.Member) transport.Verdict {
+	kind, code := statusMapped(op, status, header)
+	return transport.Verdict{Kind: kind, Code: code}
+}
+
+// statusMapped is the mapping by operation, status and the throttle header. A 409 is
+// mapped per operation, by [conflictCodes]. An archived repository is a permanent
+// refusal an operator lifts, never retried or reported as a conflict, because no
+// rebase and no re-read reaches that state. A 405 is the bare merge refusal: this
+// product answers it for a disallowed merge style and every other refusal of its
+// merge route alike, a pull request not yet mergeable among them.
+func statusMapped(op string, status int, header http.Header) (kind forgeapi.ErrorKind, code string) {
 	switch status {
 	case http.StatusUnauthorized:
 		return forgeapi.KindUnauthorized, ""

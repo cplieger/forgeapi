@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // giteaArrayLists are the Gitea family's page-numbered lists whose route answers an
@@ -121,7 +121,7 @@ func TestTheGiteaFamilySetupReadsTheStatedMaximumBesideTheVersion(t *testing.T) 
 			if n := settingsReads(window); n != 1 {
 				t.Errorf("ConnectionCaps on %s read %s %d time(s) [%s], want once, beside the version", p, settingsRoute, n, describeRequests(window))
 			}
-			if low, high := price(&e, 1); len(window) < low || len(window) > high {
+			if low, high := price(&e, 1, 0); len(window) < low || len(window) > high {
 				t.Errorf("ConnectionCaps on %s sent %d request(s) [%s], want %d to %d: the connection's row prices the setup read", p, len(window), describeRequests(window), low, high)
 			}
 
@@ -242,6 +242,7 @@ func TestAGiteaFamilyLabelLookupAsksForTheInstancesStatedMaximum(t *testing.T) {
 					pi.extras = append(pi.extras, w)
 				}
 			}
+			pi.extras = append(pi.extras, userOwner)
 			client := pagedClient(t, p, pi.serve(t), forgeapi.WithMutations(true))
 			issues, ok := client.(forgeapi.Issues)
 			if !ok {

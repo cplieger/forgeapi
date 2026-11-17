@@ -20,7 +20,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // counterSpy records every counter this library fires, by name, so an assertion names
@@ -69,14 +69,11 @@ func (s *counterSpy) counters() forgeapi.Counters {
 
 // testMapper is a stand-in for a family's own mapping, enough to tell a throttle from
 // the rest.
-func testMapper(_ string, status int, _ http.Header, _ string) (forgeapi.ErrorKind, string) {
-	switch {
-	case status == http.StatusTooManyRequests:
-		return forgeapi.KindRateLimited, ""
-	case status >= 500:
-		return forgeapi.KindUpstream, ""
+func testMapper(_ string, status int, _ http.Header, _ Member) Verdict {
+	if status == http.StatusTooManyRequests {
+		return Verdict{Kind: forgeapi.KindRateLimited}
 	}
-	return forgeapi.KindUpstream, ""
+	return Verdict{Kind: forgeapi.KindUpstream}
 }
 
 // testSignal reads the same structured header one in-scope product sends.

@@ -16,9 +16,10 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 const (
@@ -247,6 +248,13 @@ func exercises(entry *spec.Entry) string {
 // degradation path or a fold's pages rather than an estimate, and a paged figure
 // says so, because what a whole list costs is that figure times the pages taken.
 func price(requests spec.Requests) string {
+	named := perName(requests)
+	if requests.Max == 0 && named != "" {
+		if strings.HasSuffix(named, "one") {
+			return named + " request per label name"
+		}
+		return named + " requests per label name"
+	}
 	var out string
 	switch {
 	case requests.Max == 0:
@@ -275,7 +283,33 @@ func price(requests spec.Requests) string {
 	case requests.PerItemCeiling > 1:
 		out += fmt.Sprintf(" plus up to %d per row", requests.PerItemCeiling)
 	}
+	if named != "" {
+		out += " plus " + named + " per label name"
+	}
 	return out
+}
+
+// perName is how many requests each label name the call names adds, empty where
+// a name adds none: a fixed count, a range, or a ceiling alone.
+func perName(requests spec.Requests) string {
+	most := requests.PerName + requests.PerNameCeiling
+	switch {
+	case most == 0:
+		return ""
+	case requests.PerNameCeiling == 0:
+		return count(requests.PerName)
+	case requests.PerName == 0:
+		return "up to " + count(most)
+	}
+	return count(requests.PerName) + " to " + count(most)
+}
+
+// count spells a per-name figure as the other per-row figures are spelled.
+func count(n int) string {
+	if n == 1 {
+		return "one"
+	}
+	return strconv.Itoa(n)
 }
 
 func needs(entry *spec.Entry) string {
@@ -312,7 +346,7 @@ func departures(entry *spec.Entry) string {
 	for i, g := range groups {
 		subjects[i] = list(g.fields)
 	}
-	if len(groups) == 1 && len(groups[0].fields) == spec.Fields[entry.Method] {
+	if len(groups) == 1 && len(groups[0].fields) > 1 && len(groups[0].fields) == spec.Fields[entry.Method] {
 		subjects[0] = "every field"
 	}
 	subject, kind := 0, 0
@@ -370,7 +404,7 @@ func renderSupport() []byte {
 	out.WriteString("Either no family implements the operation there, or the measured instance answered it in a way the normalized contract does not cover. ")
 	out.WriteString("In that second case, the operation's godoc states the difference field by field.\n\n")
 	out.WriteString("`unsupported` says the product has no such operation, and no implementation can change that.\n\n")
-	out.WriteString("Where a product departs from the normalized contract, the operation's own godoc on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v2) lists each departure, so this table holds only the status.\n\n")
+	out.WriteString("Where a product departs from the normalized contract, the operation's own godoc on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v3) lists each departure, so this table holds only the status.\n\n")
 	out.WriteString("| Operation |")
 	for _, product := range spec.Products {
 		out.WriteString(" " + string(product) + " |")

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // TestEveryCaseHasALoadableFixture holds the fixture set to the table's shape and to
@@ -224,5 +224,7 @@ func resolvePlaceholders(path string, p spec.Product) string {
 		"{sha}", headSHA,
 		"{ref}", headSHA,
 		"{run}", "{}",
+		"{name}", labelName,
+		"{label_id}", "{}",
 	).Replace(path)
 }

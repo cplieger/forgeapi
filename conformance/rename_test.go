@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // movedSelector is the selector the canonical subject's repository moved to.
@@ -37,7 +38,7 @@ var successorCarriers = []string{
 
 // carrierlessReads are the Gitea family's repository-addressed reads whose answer
 // declares no successor, so a rename reaches the caller through the error.
-var carrierlessReads = []string{"PullRequests.ReadPR", "Capabilities.RepoAffordances"}
+var carrierlessReads = []string{"PullRequests.ReadPR", "Capabilities.RepoAffordances", "Issues.ReadIssue"}
 
 // movedInstance serves one case's fixture where the canonical subject's repository
 // moved: every request under from, the repository's old address, answers a 301
@@ -86,7 +87,7 @@ func movedInstance(t *testing.T, f fixture, from, to string, resolved []byte) (*
 			w.Header().Set(k, v)
 		}
 		w.WriteHeader(route.Status)
-		if _, err := w.Write(route.Body); err != nil {
+		if _, err := w.Write(route.payload()); err != nil {
 			t.Errorf("Setup: writing %s %s: %v", r.Method, path, err)
 		}
 	}))
@@ -180,11 +181,14 @@ func checkPricedArm(t *testing.T, e spec.Entry, call renamedCall, want int) {
 	if len(call.sent) != want {
 		t.Errorf("%s on %s on a moved repository sent %d request(s) [%s], want %d", e.Method, e.Product, len(call.sent), describeRequests(call.sent), want)
 	}
-	items := 1
-	if op, ok := operationFor(e.Method); ok && op.items != nil && call.err == nil {
-		items = op.items(call.got)
+	items, names := 1, 0
+	if op, ok := operationFor(e.Method); ok {
+		names = op.names
+		if op.items != nil && call.err == nil {
+			items = op.items(call.got)
+		}
 	}
-	if low, high := price(&e, items); len(call.sent) < low || len(call.sent) > high {
+	if low, high := price(&e, items, names); len(call.sent) < low || len(call.sent) > high {
 		t.Errorf("%s on %s on a moved repository sent %d request(s), want %d to %d for %d item(s): the table prices the rename arm",
 			e.Method, e.Product, len(call.sent), low, high, items)
 	}
@@ -317,7 +321,7 @@ func TestAGiteaFamilyRedirectToTheSameRepositoryIsNoRename(t *testing.T) {
 // one request the write sent.
 func TestAWriteToARenamedGiteaFamilyRepositoryRefusesWithItsSuccessor(t *testing.T) {
 	for _, p := range giteaFamilyProducts {
-		for _, method := range []string{"Issues.CloseIssue", "PullRequests.ClosePR"} {
+		for _, method := range []string{"Issues.CloseIssue", "Issues.ReopenIssue", "PullRequests.ClosePR", "Merges.CancelAutoMerge"} {
 			e := requireEntry(t, p, method)
 			t.Run(caseName(e), func(t *testing.T) {
 				f, err := loadFixture(p, method)
@@ -339,29 +343,60 @@ func TestAWriteToARenamedGiteaFamilyRepositoryRefusesWithItsSuccessor(t *testing
 	}
 }
 
-// A creation that reads the repository's labels first meets the move on that read,
-// and the successor the read's hop names is not the repository the caller asked to
-// write to, so the creation refuses with the stale code carrying it and writes to
-// neither address.
-func TestACreationOnARenamedGiteaFamilyRepositoryWritesNothingAfterItsReadMeetsTheMove(t *testing.T) {
+// A write that reads first, the labels a creation or an addition resolves or the
+// labels a removal finds on its item, meets the move on that read, and the successor
+// the read's hop names is not the repository the caller asked to write to, so it
+// refuses with the stale code carrying it and writes to neither address.
+func TestAWriteThatReadsFirstOnARenamedGiteaFamilyRepositoryWritesNothing(t *testing.T) {
 	for _, p := range giteaFamilyProducts {
-		e := requireEntry(t, p, "Issues.CreateIssue")
+		for _, method := range []string{"Issues.CreateIssue", "Labels.AddLabels", "Labels.RemoveLabels"} {
+			e := requireEntry(t, p, method)
+			t.Run(caseName(e), func(t *testing.T) {
+				f, err := loadFixture(p, e.Method)
+				if err != nil {
+					t.Fatalf("Setup: %v", err)
+				}
+				srv, rec := movedInstance(t, f, giteaRepos+selector, giteaRepos+movedSelector, nil)
+
+				call := callOn(t, e, srv, rec)
+				if fe := staleCode(t, method+" on "+string(p)+" on a moved repository", call.err); fe != nil {
+					checkSuccessor(t, method+" on "+string(p)+"'s refusal", p, fe.Successor)
+				}
+				for _, req := range call.sent {
+					if req.method != http.MethodGet {
+						t.Errorf("%s on %s on a moved repository sent %s, want no write: re-issuing it against the successor is the caller's decision", method, p, req)
+					}
+				}
+				checkPricedArm(t, e, call, 2)
+			})
+		}
+	}
+}
+
+// GitHub's label addition and auto-merge cancel read first, the repository's labels
+// and the pull request's record, and on a moved repository that read costs its hop
+// and the resolving read, after which the call refuses with the successor and writes
+// nothing.
+func TestAGitHubWriteThatReadsFirstOnARenamedRepositoryWritesNothing(t *testing.T) {
+	for _, method := range []string{"Labels.AddLabels", "Merges.CancelAutoMerge"} {
+		e := requireEntry(t, spec.GitHub, method)
 		t.Run(caseName(e), func(t *testing.T) {
-			f, err := loadFixture(p, e.Method)
+			f, err := loadFixture(spec.GitHub, e.Method)
 			if err != nil {
 				t.Fatalf("Setup: %v", err)
 			}
-			srv, rec := movedInstance(t, f, giteaRepos+selector, giteaRepos+movedSelector, nil)
+			srv, rec := movedInstance(t, f, "/repos/"+selector, githubRepositoryID, movedRecord(t, f))
 
 			call := callOn(t, e, srv, rec)
-			if fe := staleCode(t, "CreateIssue on "+string(p)+" on a moved repository", call.err); fe != nil {
-				checkSuccessor(t, "CreateIssue on "+string(p)+"'s refusal", p, fe.Successor)
+			if fe := staleCode(t, method+" on GitHub on a moved repository", call.err); fe != nil {
+				checkSuccessor(t, method+" on GitHub's refusal", spec.GitHub, fe.Successor)
 			}
 			for _, req := range call.sent {
 				if req.method != http.MethodGet {
-					t.Errorf("CreateIssue on %s on a moved repository sent %s, want no write: re-issuing it against the successor is the caller's decision", p, req)
+					t.Errorf("%s on GitHub on a moved repository sent %s, want no write", method, req)
 				}
 			}
+			checkPricedArm(t, e, call, 3)
 		})
 	}
 }
@@ -369,6 +404,10 @@ func TestACreationOnARenamedGiteaFamilyRepositoryWritesNothingAfterItsReadMeetsT
 // githubRESTCarriers are GitHub's repository-addressed reads the conformance
 // fixtures serve over REST, where a rename is witnessed by the redirect.
 var githubRESTCarriers = []string{"Issues.ListIssues", "Releases.ListReleases", "Labels.ListLabels", "Checks.ListRuns"}
+
+// githubCarrierlessReads are GitHub's REST reads whose answer declares no successor,
+// so the rename reaches the caller through the stale refusal.
+var githubCarrierlessReads = []string{"Capabilities.RepoAffordances", "Issues.ReadIssue"}
 
 // movedRecord is the id-addressed repository record GitHub answers for the moved
 // repository: the recorded one where the case reads it, naming the successor.
@@ -394,7 +433,7 @@ func movedRecord(t *testing.T, f fixture) []byte {
 // id-addressed, so the successor costs one further read: a one-read call sends its
 // read, the hop and the resolving read, which is the arm the table prices.
 func TestARenamedGitHubRepositorysRESTReadCostsItsReadItsHopAndOneResolvingRead(t *testing.T) {
-	for _, method := range append(append([]string(nil), githubRESTCarriers...), "Capabilities.RepoAffordances") {
+	for _, method := range append(append([]string(nil), githubRESTCarriers...), githubCarrierlessReads...) {
 		e := requireEntry(t, spec.GitHub, method)
 		t.Run(caseName(e), func(t *testing.T) {
 			f, err := loadFixture(spec.GitHub, method)
@@ -405,7 +444,7 @@ func TestARenamedGitHubRepositorysRESTReadCostsItsReadItsHopAndOneResolvingRead(
 
 			call := callOn(t, e, srv, rec)
 			succ := successorOf(call.got)
-			if method == "Capabilities.RepoAffordances" {
+			if slices.Contains(githubCarrierlessReads, method) {
 				if fe := staleCode(t, method+" on "+string(spec.GitHub)+" on a moved repository", call.err); fe != nil {
 					succ = fe.Successor
 				}

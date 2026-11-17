@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded list-prs response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured: this product's GraphQL endpoint does send a weak validator, and replaying it on the identical POST answers 200, because a POST is not a conditional GET",
+  "//": "cut from a recorded list-prs response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured: this product's GraphQL endpoint does send a weak validator, and replaying it on the identical POST answers 200, because a POST is not a conditional GET; the userNotesCount key cut from a recorded ListPRs response, read 2026-11-16, its count replaced with the canonical subject's; the approvedBy and reviewers keys cut from a recorded PRList response, read 2026-11-16, their count and review states replaced with the canonical subject's two approvals and one change request",
   "routes": [
     {
       "graphql": true,
@@ -53,6 +53,32 @@
                         "title": "example-label",
                         "color": "#ededed",
                         "description": "Example label."
+                      }
+                    ]
+                  },
+                  "userNotesCount": 3,
+                  "approvedBy": {
+                    "count": 2
+                  },
+                  "reviewers": {
+                    "pageInfo": {
+                      "hasNextPage": false
+                    },
+                    "nodes": [
+                      {
+                        "mergeRequestInteraction": {
+                          "reviewState": "APPROVED"
+                        }
+                      },
+                      {
+                        "mergeRequestInteraction": {
+                          "reviewState": "REQUESTED_CHANGES"
+                        }
+                      },
+                      {
+                        "mergeRequestInteraction": {
+                          "reviewState": "UNREVIEWED"
+                        }
                       }
                     ]
                   },

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // TestAStatusARequestReadsAsAnAnswerReachesTheCallerWithItsBody holds what

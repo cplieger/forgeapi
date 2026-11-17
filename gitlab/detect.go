@@ -3,9 +3,11 @@ package gitlab
 import (
 	"context"
 	"net/http"
+	"strconv"
+	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // headerMeta is the header this product names itself with. It is the family witness
@@ -57,6 +59,10 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 		return forgeapi.ConnectionCaps{}, c.undetected(ctx, op, err)
 	}
 	rerun, ev := rerunCapability(&meta, err)
+	var version string
+	if err == nil {
+		version = meta.Version
+	}
 	caps := forgeapi.ConnectionCaps{
 		Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
 		Ev:      map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
@@ -71,6 +77,7 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 	}
 	c.mu.Lock()
 	c.caps = &caps
+	c.version = version
 	c.mu.Unlock()
 	return caps, nil
 }
@@ -122,6 +129,39 @@ func (c *Client) cachedCaps() *forgeapi.ConnectionCaps {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.caps
+}
+
+// cancelAutoMergeMajor and cancelAutoMergeMinor are the release that introduced the
+// auto-merge cancel route answering the merge request and deprecated the one answering
+// a status hash (doc/api/merge_requests.md, "Cancel auto merge").
+const (
+	cancelAutoMergeMajor = 19
+	cancelAutoMergeMinor = 5
+)
+
+// cancelsAutoMerge reports whether the version setup read serves the current
+// auto-merge cancel route; false where none is held.
+func (c *Client) cancelsAutoMerge() bool {
+	c.mu.Lock()
+	version := c.version
+	c.mu.Unlock()
+	return versionAtLeast(version, cancelAutoMergeMajor, cancelAutoMergeMinor)
+}
+
+// versionAtLeast reports whether a version this product reports, such as 19.5.0-ee,
+// is at or past major.minor; false for one whose first two numbers do not parse.
+func versionAtLeast(version string, major, minor int) bool {
+	majorText, rest, _ := strings.Cut(version, ".")
+	minorText, _, _ := strings.Cut(rest, ".")
+	if end := strings.IndexFunc(minorText, func(r rune) bool { return r < '0' || r > '9' }); end >= 0 {
+		minorText = minorText[:end]
+	}
+	gotMajor, majorErr := strconv.Atoi(majorText)
+	gotMinor, minorErr := strconv.Atoi(minorText)
+	if majorErr != nil || minorErr != nil {
+		return false
+	}
+	return gotMajor > major || (gotMajor == major && gotMinor >= minor)
 }
 
 // GrantCaps implements [forgeapi.Capabilities] at no request, from the permission pair

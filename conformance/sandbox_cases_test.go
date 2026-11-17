@@ -3,6 +3,7 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -14,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // liveMutation is what one mutation needs around its call when it runs live on a
@@ -65,6 +66,49 @@ var liveMutations = map[string]liveMutation{
 			return map[string]any{"State": forgeapi.IssueStateClosed, "Title": s.prefix + issueTitle, "Body": issueBody}
 		},
 	},
+	"Issues.ReopenIssue": {
+		prepare: func(t *testing.T, l *lane, s *subject) {
+			titled(s)
+			n, err := l.openIssue(t.Context(), s.prefix+issueTitle)
+			if err != nil {
+				t.Fatalf("Setup: opening the issue the case reopens: %v", err)
+			}
+			l.later(t, "closing the issue the setup opened", func(ctx context.Context) error { return l.closeIssue(ctx, n) })
+			if err := l.closeIssue(t.Context(), n); err != nil {
+				t.Fatalf("Setup: closing the issue the case reopens: %v", err)
+			}
+			s.issue = forgeapi.IssueRef{Number: n}
+		},
+		made: func(t *testing.T, l *lane, s subject, _ any) {
+			if err := l.reopen(t.Context(), l.issuePath(s.issue.Number)); err != nil {
+				t.Errorf("reopening the issue the case reopened, now open: %v, want the forge's answer with no error, which ReopenIssue states", err)
+			}
+		},
+		fixes: func(s subject) map[string]any {
+			return map[string]any{"State": forgeapi.IssueStateOpen, "Title": s.prefix + issueTitle, "Body": issueBody}
+		},
+	},
+	"Labels.AddLabels": {
+		prepare: func(t *testing.T, l *lane, s *subject) {
+			titled(s)
+			openLaneIssue(t, l, s, "the case labels")
+		},
+		made: func(t *testing.T, l *lane, s subject, _ any) {
+			checkCarries(t, l, s, true)
+		},
+	},
+	"Labels.RemoveLabels": {
+		prepare: func(t *testing.T, l *lane, s *subject) {
+			titled(s)
+			openLaneIssue(t, l, s, "the case unlabels")
+			if err := l.labelIssue(t.Context(), s.issue.Number, s.label); err != nil {
+				t.Fatalf("Setup: labelling the issue the case unlabels: %v", err)
+			}
+		},
+		made: func(t *testing.T, l *lane, s subject, _ any) {
+			checkCarries(t, l, s, false)
+		},
+	},
 	"PullRequests.CreatePR": {
 		prepare: func(t *testing.T, l *lane, s *subject) {
 			titled(s)
@@ -92,9 +136,17 @@ var liveMutations = map[string]liveMutation{
 				t.Fatalf("Setup: closing the pull request the case reopens: %v", err)
 			}
 		},
+		made: func(t *testing.T, l *lane, s subject, _ any) {
+			if err := l.reopen(t.Context(), l.prPath(s.pr.Number)); err != nil {
+				t.Errorf("reopening the pull request the case reopened, now open: %v, want the forge's answer with no error, which ReopenPR states", err)
+			}
+		},
 		fixes: func(s subject) map[string]any { return openedPullRequest(s, forgeapi.PRStateOpen) },
 	},
 	"PullRequests.RerunFailedChecks": {
+		prepare: prepareRerun,
+	},
+	"Checks.RerunFailedRun": {
 		prepare: prepareRerun,
 	},
 	"Merges.MergePR": {
@@ -114,6 +166,9 @@ var liveMutations = map[string]liveMutation{
 			answer := mergeAnswer(s.product)
 			return map[string]any{"State": answer.State, "Code": answer.Code}
 		},
+	},
+	"Merges.CancelAutoMerge": {
+		prepare: func(t *testing.T, l *lane, s *subject) { openPullRequest(t, l, s, "cancel-auto-merge") },
 	},
 	"Releases.CreateRelease": {
 		prepare: func(t *testing.T, l *lane, s *subject) {
@@ -212,6 +267,40 @@ func openedPullRequest(s subject, state forgeapi.PRState) map[string]any {
 
 // titled points a creation's text at this run: every title starts with the run's
 // prefix, and the label applied is the lane's.
+// openLaneIssue opens an issue under the lane's title, registers its closing and
+// points the subject at it.
+func openLaneIssue(t *testing.T, l *lane, s *subject, what string) {
+	t.Helper()
+	n, err := l.openIssue(t.Context(), s.prefix+issueTitle)
+	if err != nil {
+		t.Fatalf("Setup: opening the issue %s: %v", what, err)
+	}
+	l.later(t, "closing the issue the setup opened", func(ctx context.Context) error { return l.closeIssue(ctx, n) })
+	s.issue = forgeapi.IssueRef{Number: n}
+}
+
+// checkCarries reads the subject's issue back and holds it to carrying the lane's
+// label or not, which is the whole effect of a label change answering no item.
+func checkCarries(t *testing.T, l *lane, s subject, want bool) {
+	t.Helper()
+	if err := carriesLabel(t.Context(), l, s, want); err != nil {
+		t.Error(err)
+	}
+}
+
+// carriesLabel is checkCarries' verdict: nil where the issue read back carries the
+// lane's label exactly when want says it should.
+func carriesLabel(ctx context.Context, l *lane, s subject, want bool) error {
+	names, err := l.issueLabels(ctx, s.issue.Number)
+	if err != nil {
+		return fmt.Errorf("reading back the issue the case changed: %w", err)
+	}
+	if got := slices.Contains(names, s.label); got != want {
+		return fmt.Errorf("issue %d carries %q = %v after the case, want %v: its labels are %v", s.issue.Number, s.label, got, want, names)
+	}
+	return nil
+}
+
 func titled(s *subject) {
 	s.prefix = laneTitlePrefix()
 	s.label = laneLabel(s.product)
@@ -269,7 +358,7 @@ func openOn(t *testing.T, l *lane, s *subject, head, base, sha string) {
 
 // prepareRerun opens a pull request whose head the sandbox's own CI ran on, and
 // waits a bounded time for that CI to finish with its failing job, which is what a
-// re-run of the failed checks acts on. The product's RUN_WAIT variable sets the
+// re-run of the failed checks acts on; the failed run is the subject's run. The product's RUN_WAIT variable sets the
 // bound; zero says the instance runs no CI at all, which is the lane's own
 // throwaway instances, so the case skips with that reason rather than waiting.
 func prepareRerun(t *testing.T, l *lane, s *subject) {
@@ -302,6 +391,7 @@ func prepareRerun(t *testing.T, l *lane, s *subject) {
 		t.Fatalf("Setup: the sandbox's own CI on %s finished with %s and no failing run, want its failing job: the sandbox's CI configuration yields one passing and one failing job on a push to a forgeapi-ci-* branch", sha, v.summary)
 	}
 	t.Logf("the sandbox's own CI on %s finished with %s", sha, v.summary)
+	s.run = forgeapi.RunRef{ID: v.failedRun}
 }
 
 // TestEveryMutationHasItsLiveSetup holds the live setups to the contract in both

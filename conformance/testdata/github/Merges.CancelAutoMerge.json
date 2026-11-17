@@ -1,0 +1,44 @@
+{
+  "//": "cut from a recorded single pull-request REST read response, read 2026-11-16; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; its auto_merge, null on the recording, replaced with an armed object of the auto-merge schema this product's API description gives, so the call reaches the disarm; no sandbox capture exists for this mutation on this product, so the disarm's answer is the payload this product's GraphQL schema gives the mutation, its pull request carrying no auto-merge request once disarmed",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/repos/example/example/pulls/1",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "number": 1,
+        "node_id": "PR_kwDOexample",
+        "state": "open",
+        "html_url": "https://forge.example/example/example/pull/1",
+        "auto_merge": {
+          "enabled_by": {
+            "login": "example-user"
+          },
+          "merge_method": "merge",
+          "commit_title": "Example pull request (#1)",
+          "commit_message": "Example body."
+        }
+      }
+    },
+    {
+      "graphql": true,
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "data": {
+          "disablePullRequestAutoMerge": {
+            "pullRequest": {
+              "number": 1,
+              "autoMergeRequest": null
+            }
+          }
+        }
+      }
+    }
+  ]
+}

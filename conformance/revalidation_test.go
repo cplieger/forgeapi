@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // TestARevalidatedReadAnswersWhatTheFirstReadAnswered is the projection property of
@@ -76,7 +76,7 @@ func runRevalidated(t *testing.T, e spec.Entry, op operation) {
 	if op.items != nil {
 		items = op.items(second)
 	}
-	if low, high := price(&e, items); billed < low || billed > high {
+	if low, high := price(&e, items, op.names); billed < low || billed > high {
 		t.Errorf("%s on %s billed %d request(s) revalidated (%d not-modified), want %d to %d", e.Method, e.Product, billed, answered, low, high)
 	}
 	if rec.gets() > 0 && answered == 0 && revalidates(&e) {
@@ -157,7 +157,7 @@ func newRevalidatingServer(t *testing.T, product spec.Product, f fixture) (*http
 			}
 		}
 		w.WriteHeader(route.Status)
-		if _, err := w.Write(route.Body); err != nil {
+		if _, err := w.Write(route.payload()); err != nil {
 			t.Errorf("Setup: writing the fixture response: %v", err)
 		}
 	}))

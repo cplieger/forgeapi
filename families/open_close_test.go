@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/families"
-	"github.com/cplieger/forgeapi/v2/gitea"
-	"github.com/cplieger/forgeapi/v2/github"
-	"github.com/cplieger/forgeapi/v2/gitlab"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/families"
+	"github.com/cplieger/forgeapi/v3/gitea"
+	"github.com/cplieger/forgeapi/v3/github"
+	"github.com/cplieger/forgeapi/v3/gitlab"
 )
 
 // connTracker is the last state of every connection an instance accepted, which is

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/creds"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
 )
 
 // FuzzParseAppKeyPEM_never_echoes_its_input holds both inputs to the

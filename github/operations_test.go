@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // The routes this family reaches on an instance whose API root is the appliance one,
@@ -27,6 +27,10 @@ const (
 	statusRoute    = "GET /api/v3/repos/example/example/commits/" + testHeadSHA + "/status"
 	checkRunsRoute = "GET /api/v3/repos/example/example/commits/" + testHeadSHA + "/check-runs"
 )
+
+// failedRuns is the head's one workflow run, failed, which a re-run of its failed
+// checks addresses.
+const failedRuns = `{"total_count":1,"workflow_runs":[{"id":1,"head_sha":"` + testHeadSHA + `","status":"completed","conclusion":"failure","name":"example"}]}`
 
 // prReadEnvelope is the single-pull-request document's answer, built from the recorded
 // repository node so the operation cases read the bytes the product sent.
@@ -82,7 +86,7 @@ func TestEveryOperationSpendsThePriceItPublishes(t *testing.T) {
 		issuesRoute:   `[` + recorded.raw(t, "rest_issue") + `]`,
 		labelsRoute:   `[{"name":"example-label","color":"ededed","description":"Example label."}]`,
 		releasesRoute: `[` + recorded.raw(t, "rest_release") + `]`,
-		runsRoute:     recorded.raw(t, "rest_workflow_runs"),
+		runsRoute:     failedRuns,
 		rerunRoute:    `{}`,
 		mergeRoute:    recorded.raw(t, "rest_merge_accepted"),
 		documentRoute: prReadEnvelope(t),
@@ -336,9 +340,8 @@ func TestAnUnreadableMergeAnswerIsNotAMerge(t *testing.T) {
 // commit the caller's row was rendered from, and a head no run carries is refused rather
 // than retried: a re-run can carry deployment side effects.
 func TestTheReRunSendsTheHeadPinAsTheFilterTheRouteDeclares(t *testing.T) {
-	recorded := readCaptures(t)
 	h := newHarness(t, map[string]string{
-		runsRoute:  recorded.raw(t, "rest_workflow_runs"),
+		runsRoute:  failedRuns,
 		rerunRoute: `{}`,
 	})
 	if err := h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), testHeadSHA); err != nil {

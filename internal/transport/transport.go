@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -34,7 +35,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/callmark"
 	"github.com/cplieger/go/httpcache"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/jsonx"
@@ -79,10 +81,28 @@ const (
 // family that knows those cells supplies the function and this package owns
 // everything around it.
 //
-// bodyError is the body's machine-readable error member, RFC 6750's `error`,
-// empty where the body carries none. It is a code the instance states, so a
-// family may map on it; the body's prose never reaches a mapper.
-type errorMapper func(op string, status int, header http.Header, bodyError string) (forgeapi.ErrorKind, string)
+// member is what the body states in machine-readable members; the body's prose
+// never reaches a mapper.
+type errorMapper func(op string, status int, header http.Header, member Member) Verdict
+
+// Member is the machine-readable part of a refusal's body: RFC 6750's error code
+// and the scope it names, each empty where the body carries none, and Class, the
+// family's name for a message member it lists in [Options.MessageClasses], empty for
+// any other message.
+type Member struct {
+	Error string
+	Scope string
+	Class string
+}
+
+// Verdict is a family's reading of one refusal: the code and kind the caller
+// branches on, and what the forge says the call needs, which becomes
+// [forgeapi.Error.Needs].
+type Verdict struct {
+	Code  string
+	Needs string
+	Kind  forgeapi.ErrorKind
+}
 
 // budgetSignal is how a family reads its product's budget signal off a response. It
 // returns the remaining units, the reset instant and whether the response carried
@@ -113,6 +133,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	logger     *slog.Logger
 	credential forgeapi.CredentialSource
 	mapper     errorMapper
+	classes    map[string]string
 	signal     budgetSignal
 	pool       budgetPool
 	apiBase    *url.URL
@@ -148,7 +169,11 @@ type Options struct {
 	PoolParent    budgetParent
 	DeriveAPIBase func(web *url.URL) string
 	Clock         func() time.Time
-	Family        forgeapi.Family
+	// MessageClasses maps each message member a product answers a stated cause with,
+	// matched whole after trimming space, to the class its mapper reads in
+	// [Member.Class]; no other message text reaches the mapper.
+	MessageClasses map[string]string
+	Family         forgeapi.Family
 	// FreeNotModified says the product bills nothing for a not-modified answer to
 	// an authorized conditional request, as its spec.Revalidations row states.
 	FreeNotModified bool
@@ -222,6 +247,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		logger:     loggerOf(set),
 		credential: set.Credential,
 		mapper:     opts.Mapper,
+		classes:    maps.Clone(opts.MessageClasses),
 		signal:     opts.Signal,
 		pool:       opts.Pool,
 		apiBase:    apiBase,
@@ -854,8 +880,18 @@ func (c *Conn) UnderAPI(address string) (string, bool) {
 }
 
 // AdmitFold asks the governor whether one folded-status read may be issued inside
-// the current rolling interval, and says why not when it may not.
-func (c *Conn) AdmitFold(op string) (forgeapi.PartialReason, bool) { return c.gov.admitFold(op) }
+// the current rolling interval, and says why not when it may not. Under
+// [forgeapi.ActionReads] with its bound not spent it holds the read only against a
+// pool at zero, as [Conn.admitRead] does. Each read the fold issues spends one of
+// the bound through [Conn.Do], so a fold can take the bound's last read and leave
+// its next read governed as any read.
+func (c *Conn) AdmitFold(ctx context.Context, op string) (forgeapi.PartialReason, bool) {
+	reserve := c.gov.reserve
+	if c.mutations && callmark.ActionReadsLeft(ctx) {
+		reserve = 0
+	}
+	return c.gov.admitFold(op, reserve)
+}
 
 // Rotate records how far the rotation of those reads got, so the next interval
 // starts after the row last served rather than at the first.
@@ -1188,10 +1224,28 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 		return c.refusal(ctx, req, c.fail(req.Op, forgeapi.CodeMutationsDisabled, forgeapi.KindForbidden, 0,
 			"mutations are disabled on this client"))
 	}
-	if _, ok := c.gov.admit(req.Op); !ok {
+	if !c.admitRead(ctx, req) {
 		return c.refusal(ctx, req, c.deferred(req.Op))
 	}
 	return nil
+}
+
+// admitRead is the governor's verdict on one read. A read under
+// [forgeapi.ActionReads] with its bound not spent is held only against a pool at
+// zero and spends one of the bound when admitted, so a read deferred at zero
+// leaves it to the action's next read. A credential source's read is never the
+// action's, and a read-only client has no reserve to spend.
+func (c *Conn) admitRead(ctx context.Context, req *Request) bool {
+	if c.mutations && !req.Credential && callmark.ActionReadsLeft(ctx) {
+		if _, ok := c.gov.admitWithin(req.Op, 0); !ok {
+			return false
+		}
+		if callmark.TakeActionRead(ctx) {
+			return true
+		}
+	}
+	ok := c.gov.admit(req.Op)
+	return ok
 }
 
 // discarder is the optional method of a credential source that is told when the
@@ -1284,7 +1338,13 @@ func (c *Conn) send(ctx context.Context, req *Request, target string, prepare fu
 		}
 		payload = encoded
 	}
-	r, err := http.NewRequestWithContext(ctx, req.Method, target, bodyReader(payload))
+	// Only the request's own context carries the write mark: the credential source
+	// is asked on ctx, so a token it mints for this write is not read as one.
+	marked := ctx
+	if req.mutates() {
+		marked = callmark.WithWrite(ctx)
+	}
+	r, err := http.NewRequestWithContext(marked, req.Method, target, bodyReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -1601,11 +1661,10 @@ func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capabi
 // turns this into one rather than into a failure; one that cannot reports it.
 // It carries the throttle kind with no code and no status, which is the same pair
 // this family's mapper answers an upstream throttle with minus the status: a
-// consumer tells the two apart by that status and by the remaining figure the
-// governor reports, which a deferral leaves above zero.
+// consumer tells the two apart by that status.
 func (c *Conn) deferred(op string) *forgeapi.Error {
 	return c.fail(op, "", forgeapi.KindRateLimited, 0,
-		"this read was deferred to hold the mutation reserve")
+		"this read was deferred: a rate-limit pool it draws on is at or under the mutation reserve")
 }
 
 // IsDeferred reports whether an error is the governor's deferral rather than an
@@ -1665,11 +1724,14 @@ func contextSentinel(err error) error {
 // plus status plus selected headers rather than by status alone.
 func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, started time.Time) *forgeapi.Error {
 	answer := readRefusal(resp.Body)
-	kind, code := forgeapi.KindNotFound, forgeapi.CodeOwnerUnresolved
+	verdict := Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeOwnerUnresolved}
 	if req.OwnerStatus == 0 || resp.Status != req.OwnerStatus {
-		kind, code = c.mapper(req.Op, resp.Status, resp.Header, answer.Error)
+		member := Member{Error: answer.Error, Scope: answer.Scope, Class: c.classes[strings.TrimSpace(answer.instanceText())]}
+		verdict = c.mapper(req.Op, resp.Status, resp.Header, member)
 	}
+	kind, code := verdict.Kind, verdict.Code
 	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
+	fe.Needs = resp.Quote(verdict.Needs) // upstream text, made safe as the message is
 	if kind == forgeapi.KindRateLimited {
 		fe.RetryAfter = httpclient.ParseRetryAfter(resp.Header.Get("Retry-After"))
 		if c.counters.RateLimited != nil {

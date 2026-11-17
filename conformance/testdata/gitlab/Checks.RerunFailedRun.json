@@ -1,0 +1,49 @@
+{
+  "//": "cut from a recorded connection-caps response, read 2026-09-18; the first two routes are connection setup, whose bounded schema question was measured anonymously against this product's own public instance on 2026-09-20 and answers a null project beside the complexity charged; no sandbox capture exists for this mutation on this product, so the retry's answer is the 201 with the pipeline record this product's pipelines documentation gives the retry, read 2026-11-16, trimmed and replaced with the canonical subject",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/metadata",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "x-gitlab-meta": "{\"correlation_id\":\"example-correlation-id\",\"version\":\"1\"}"
+      },
+      "body": {
+        "version": "18.4.0",
+        "enterprise": false,
+        "revision": "abcdef1"
+      }
+    },
+    {
+      "graphql": true,
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "data": {
+          "project": null,
+          "queryComplexity": {
+            "score": 53,
+            "limit": 200
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v4/projects/example%2Fexample/pipelines/{}/retry",
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "id": 1,
+        "sha": "1f0e7b3c9a5d84620ef1c3b7a6d5948e2f0b1c3d",
+        "status": "pending",
+        "ref": "main"
+      }
+    }
+  ]
+}

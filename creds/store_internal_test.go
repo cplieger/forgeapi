@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 const custodyRotated = `{"access_token":"token-new","token_type":"bearer","scope":"repo","expires_in":28800,"refresh_token":"refresh-new","refresh_token_expires_in":15897600}`
@@ -147,9 +147,10 @@ func (f *custodyFixture) source(t *testing.T) *StoredSource {
 }
 
 func (f *custodyFixture) custody() int {
-	f.store.custodyMu.Lock()
-	defer f.store.custodyMu.Unlock()
-	return len(f.store.custody)
+	c := f.store.store
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.custody)
 }
 
 // Custody is created only by a token call and freed with its record, so a key per
@@ -297,4 +298,76 @@ func TestFileStore_FreesAKeysCustodyWithItsRecord(t *testing.T) {
 			t.Errorf("the token server received %d exchange(s), want 1: the held pair is stored, not refreshed again", n)
 		}
 	})
+}
+
+// memBackend is the smallest Backend: records in a map under one lock.
+type memBackend struct {
+	recs map[string]Record
+	mu   sync.Mutex
+}
+
+func (b *memBackend) Load(key string) (Record, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	rec, ok := b.recs[key]
+	return rec, ok, nil
+}
+
+func (*memBackend) Keys() ([]string, error) { return nil, nil }
+
+func (b *memBackend) Put(key string, rec Record) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.recs[key] = rec
+	return nil
+}
+
+func (b *memBackend) Delete(key string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.recs, key)
+	return nil
+}
+
+func (b *memBackend) Swap(key string, prev, next Record) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if stored, ok := b.recs[key]; !ok || !stored.Equal(&prev) {
+		return false, nil
+	}
+	b.recs[key] = next
+	return true, nil
+}
+
+func TestNewStore_FreesAKeysCustodyWithItsRecord(t *testing.T) {
+	store := NewStore(&memBackend{recs: map[string]Record{}})
+	c, ok := store.(*custodian)
+	if !ok {
+		t.Fatalf("Setup: NewStore answered %T, want the custodian", store)
+	}
+	held := func() int {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.custody)
+	}
+	rec := Record{Family: forgeapi.FamilyGitHub, WebBaseURL: "https://github.example", Kind: forgeapi.CredKindStaticPAT, Token: "token-static"}
+	if err := store.Save("conn", rec); err != nil {
+		t.Fatalf("Setup: Save: %v", err)
+	}
+	src, err := NewStoredSource(store, "conn", forgeapi.Connection{WebBaseURL: rec.WebBaseURL})
+	if err != nil {
+		t.Fatalf("Setup: NewStoredSource: %v", err)
+	}
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatalf("Token() = %v, want the static token", err)
+	}
+	if n := held(); n != 1 {
+		t.Errorf("custody holds %d key(s) after a token call on a stored record, want 1", n)
+	}
+	if err := store.Delete("conn"); err != nil {
+		t.Fatalf("Delete = %v, want nil", err)
+	}
+	if n := held(); n != 0 {
+		t.Errorf("custody holds %d key(s) after the record was deleted, want 0", n)
+	}
 }

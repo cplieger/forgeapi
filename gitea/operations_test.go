@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // The bodies these tests serve, trimmed to the fields the case reads.
@@ -30,6 +30,14 @@ const repoRow = `{"full_name":"example/example","name":"example","owner":{"login
 
 // statusPath is the route a folded status arrives at for the canonical head.
 const statusPath = "GET /api/v1/repos/example/example/commits/" + testHeadSHA + "/status"
+
+// reviewsPath is the route pull request number's reviews arrive at in the
+// repository selector names; noReviews is a pull request nobody reviewed.
+func reviewsPath(selector string, number int) string {
+	return "GET /api/v1/repos/" + selector + "/pulls/" + strconv.Itoa(number) + "/reviews"
+}
+
+const noReviews = "[]"
 
 // The API document detection reads, trimmed to the two fields it looks at: the title,
 // which is the product mark, and the paths, which settle the one capability nothing
@@ -211,23 +219,17 @@ func TestACreationWithNoLabelsCostsOneRequest(t *testing.T) {
 }
 
 // TestACreationRefusesALabelTheWholeListItReadDoesNotCarry holds the resolution's
-// failure arm over a SHORT page, and holds it to claiming no more than the read
-// establishes.
-//
-// A name with no identifier behind it is refused rather than dropped, because a
-// creation that silently lost a label the caller asked for is the worse answer. What
-// the refusal may SAY is bounded by what was read: one page at the instance maximum,
-// which carries none of an organization's own labels, so a message asserting the
-// repository has no such label states a fact that read cannot establish. A page that
-// came back short IS the whole list this route can reach, so this arm keeps the code
-// it carried before the truncated one existed, which is the rule for this pair.
-// Its kind is the upstream one for the same reason the sibling refusal over an
-// answered read uses it: nothing here is a merge, and the merge kind would tell a
-// caller their pull request is unmergeable because an issue's label name did not
-// resolve.
+// failure arm over a SHORT page. A name with no identifier behind it is refused,
+// not dropped, since a creation that silently lost a label is the worse answer. A
+// short page is the whole list this route reaches, so the code stays
+// [forgeapi.CodeValidation], and the message names the page and bound it read,
+// because one page at the instance maximum cannot establish the repository has no
+// such label. The kind is the upstream one: the merge kind would tell a caller
+// their pull request is unmergeable because an issue's label name did not resolve.
 func TestACreationRefusesALabelTheWholeListItReadDoesNotCarry(t *testing.T) {
 	h := newHarness(t, map[string]string{
-		"GET /api/v1/repos/example/example/labels":  labelBody,
+		"GET /api/v1/repos/example/example/labels": labelBody,
+		orgLabelsRoute: `[]`,
 		"POST /api/v1/repos/example/example/issues": issueBody,
 	})
 	_, err := h.client.CreateIssue(t.Context(), testRef(), forgeapi.NewIssue{
@@ -267,7 +269,8 @@ func TestACreationRefusesALabelTheWholeListItReadDoesNotCarry(t *testing.T) {
 // to avoid, so the arms are held here by the code and not by the text.
 func TestACreationRefusesALabelBeyondAFullPageUnderItsOwnCode(t *testing.T) {
 	h := newHarness(t, map[string]string{
-		"GET /api/v1/repos/example/example/labels":  fullLabelPage(),
+		"GET /api/v1/repos/example/example/labels": fullLabelPage(),
+		orgLabelsRoute: `[]`,
 		"POST /api/v1/repos/example/example/issues": issueBody,
 	})
 	_, err := h.client.CreateIssue(t.Context(), testRef(), forgeapi.NewIssue{
@@ -482,7 +485,8 @@ func TestTheCrossRepositoryRowsDraftFlagIsReadWhereTheRouteCarriesIt(t *testing.
 func TestThePullRouteRowsDraftFlagIsReadAtItsTopLevel(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		"GET /api/v1/repos/example/example/pulls": "[" + draftPullRow(1, true) + "]",
-		statusPath: statusOK,
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
 	})
 	page, err := h.client.ListPRs(t.Context(), testRef())
 	if err != nil {
@@ -1144,7 +1148,8 @@ func TestTheFoldIsComputedOverTheRowsRatherThanTakenFromTheEndpoint(t *testing.T
 func TestAFullStatusPageOnAListAnswersUnknownWithThePaginationCap(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		"GET /api/v1/repos/example/example/pulls": "[" + pullRow(1) + "]",
-		statusPath: fullStatusPage(),
+		statusPath:                   fullStatusPage(),
+		reviewsPath(testSelector, 1): noReviews,
 	})
 	page, err := h.client.ListPRs(t.Context(), testRef())
 	if err != nil {
@@ -1161,8 +1166,8 @@ func TestAFullStatusPageOnAListAnswersUnknownWithThePaginationCap(t *testing.T) 
 	if row.Partial == nil || row.Partial.Reason != forgeapi.PartialPaginationCap {
 		t.Fatalf("the row's partial marker = %v, want the pagination cap: an unknown with no reason cannot be told from a pull request with no checks", row.Partial)
 	}
-	if got, want := h.instance.count(), 2; got != want {
-		t.Errorf("ListPRs sent %d request(s), want %d: the list plus one page of one fold, and no request beyond that page", got, want)
+	if got, want := h.instance.count(), 3; got != want {
+		t.Errorf("ListPRs sent %d request(s), want %d: the list, one page of one fold and one page of reviews, and no request beyond that page", got, want)
 	}
 }
 
@@ -1178,7 +1183,9 @@ func TestTheRotationResumesAfterTheRowItLastServed(t *testing.T) {
 	clock := newStepClock()
 	h := newClockedHarness(t, clock.now, map[string]string{
 		"GET /api/v1/repos/example/example/pulls": "[" + pullRow(1) + "," + pullRow(2) + "]",
-		statusPath: statusOK,
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
+		reviewsPath(testSelector, 2): noReviews,
 	},
 		forgeapi.WithStatusReadsPerInterval(1),
 		forgeapi.WithStatusTimePerInterval(interval),
@@ -1216,8 +1223,11 @@ func TestTheRotationAdvancesWhenTheRowItLastServedHasLeftTheList(t *testing.T) {
 	const route = "GET /api/v1/repos/example/example/pulls"
 	clock := newStepClock()
 	h := newClockedHarness(t, clock.now, map[string]string{
-		route:      "[" + pullRow(1) + "," + pullRow(2) + "]",
-		statusPath: statusOK,
+		route:                        "[" + pullRow(1) + "," + pullRow(2) + "]",
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
+		reviewsPath(testSelector, 2): noReviews,
+		reviewsPath(testSelector, 3): noReviews,
 	},
 		forgeapi.WithStatusReadsPerInterval(1),
 		forgeapi.WithStatusTimePerInterval(interval),
@@ -1266,6 +1276,7 @@ func TestTheRotationServesEveryRowOfEveryListAPollerPresents(t *testing.T) {
 		bodies := make([]string, 0, len(numbers))
 		for _, number := range numbers {
 			bodies = append(bodies, pullRow(number))
+			routes[reviewsPath(selector, number)] = noReviews
 		}
 		routes["GET /api/v1/repos/"+selector+"/pulls"] = "[" + strings.Join(bodies, ",") + "]"
 	}
@@ -1374,7 +1385,9 @@ func TestBothPerIntervalCapsAreEnforced(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			h := newHarness(t, map[string]string{
 				"GET /api/v1/repos/example/example/pulls": rows,
-				statusPath: statusOK,
+				statusPath:                   statusOK,
+				reviewsPath(testSelector, 1): noReviews,
+				reviewsPath(testSelector, 2): noReviews,
 			}, test.opts...)
 			page, err := h.client.ListPRs(t.Context(), testRef())
 			if err != nil {
@@ -1465,19 +1478,21 @@ func TestTheSwaggerDocumentIsFetchedOncePerConnection(t *testing.T) {
 }
 
 // TestTheBudgetReportsTheCostOfTheCallRatherThanOfOneRequest holds the figure a
-// consumer renders. On this family a list costs one request plus one per row, so a
+// consumer renders. On this family a list costs one request plus two per row, so a
 // constant of one would be wrong by an order of magnitude on exactly the call a
 // poller runs most.
 func TestTheBudgetReportsTheCostOfTheCallRatherThanOfOneRequest(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		"GET /api/v1/repos/example/example/pulls": "[" + pullRow(1) + "," + pullRow(2) + "]",
-		statusPath: statusOK,
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
+		reviewsPath(testSelector, 2): noReviews,
 	})
 	if _, err := h.client.ListPRs(t.Context(), testRef()); err != nil {
 		t.Fatalf("ListPRs = %v, want nil", err)
 	}
 	if got, want := h.client.BudgetState().LastCost, h.instance.count(); got != want {
-		t.Errorf("BudgetState().LastCost = %d, want %d: the last cost is a CALL's price, and this call spent the list plus one fold per row", got, want)
+		t.Errorf("BudgetState().LastCost = %d, want %d: the last cost is a CALL's price, and this call spent the list plus one fold and one review read per row", got, want)
 	}
 }
 
@@ -1587,4 +1602,91 @@ func TestARowNamingARepositoryWithNoFullNameFailsTheCall(t *testing.T) {
 			}
 		})
 	}
+}
+
+// orgLabelsRoute is the label page of the organization owning the canonical
+// repository.
+const orgLabelsRoute = "GET /api/v1/orgs/example/labels"
+
+// A name the repository's page lacks is resolved on its organization's page, whose
+// ids both products' option also takes, and either page coming back full is the
+// truncated refusal.
+func TestALabelResolutionReadsTheOrganizationsLabelsForANameTheRepositoryLacks(t *testing.T) {
+	const added = "POST /api/v1/repos/example/example/issues/1/labels"
+	for _, test := range []struct {
+		name, org, code, message string
+	}{
+		{name: "an_organization_label", org: `[{"id":71,"name":"org-label"}]`},
+		{name: "an_organization_page_without_it", org: `[{"id":72,"name":"other"}]`, code: forgeapi.CodeValidation, message: "or of its organization's"},
+		{name: "a_full_organization_page", org: fullLabelPage(), code: forgeapi.CodeLabelPageTruncated, message: "came back full"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{
+				"GET /api/v1/repos/example/example/labels": labelBody,
+				orgLabelsRoute: test.org,
+				added:          `[]`,
+			})
+			err := h.client.AddLabels(t.Context(), testRef(), forgeapi.LabelTarget{Issue: forgeapi.IssueRef{Number: 1}}, []string{"org-label"})
+			if test.code == "" {
+				if err != nil {
+					t.Fatalf("AddLabels of an organization label = %v, want nil", err)
+				}
+				if got := h.instance.body(added); !strings.Contains(got, "71") {
+					t.Errorf("AddLabels of an organization label sent %s, want the organization label's id 71", got)
+				}
+				return
+			}
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != test.code || !strings.Contains(fe.Message, test.message) {
+				t.Errorf("AddLabels = %v, want code %q with a message naming %q", err, test.code, test.message)
+			}
+			if slices.Contains(h.instance.arrived(), added) {
+				t.Errorf("AddLabels sent %v, want no write", h.instance.arrived())
+			}
+		})
+	}
+}
+
+// An action's reads pass the mutation reserve up to their bound, a list's per-row
+// reads included: under ActionReads a ListPRs at the reserve folds its row rather
+// than marking it deferred while the bound still has reads.
+func TestAListUnderActionReadsFoldsItsRowsAtTheReserve(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		"GET /api/v1/user":                        userBody,
+		"GET /api/v1/repos/example/example/pulls": "[" + pullRow(1) + "]",
+		statusPath:                   statusOK,
+		reviewsPath(testSelector, 1): noReviews,
+	}, forgeapi.WithMutations(true), forgeapi.WithMutationReserve(1))
+	h.instance.answerHeader("RateLimit", "r=1;t=60")
+	if _, err := h.client.Whoami(t.Context()); err != nil {
+		t.Fatalf("Setup: Whoami = %v, want nil: the first read is what reads the signal", err)
+	}
+	t.Run("a_plain_list_is_deferred", func(t *testing.T) {
+		page, err := h.client.ListPRs(t.Context(), testRef())
+		if err != nil || page.Partial == nil || page.Partial.Reason != forgeapi.PartialRateLimited {
+			t.Errorf("ListPRs at the reserve = partial %v, %v, want the deferral", page.Partial, err)
+		}
+	})
+	t.Run("an_actions_list_folds_its_row", func(t *testing.T) {
+		before := h.instance.count()
+		page, err := h.client.ListPRs(forgeapi.ActionReads(t.Context(), 3), testRef())
+		if err != nil || len(page.Items) != 1 {
+			t.Fatalf("ListPRs under ActionReads(ctx, 3) at the reserve = %+v, %v, want its one row", page, err)
+		}
+		if row := page.Items[0]; row.Partial != nil || row.Action.Checks != forgeapi.CheckPassing {
+			t.Errorf("the row under ActionReads = partial %v, checks %v, want it folded to %v", row.Partial, row.Action.Checks, forgeapi.CheckPassing)
+		}
+		if sent := h.instance.count() - before; sent != 3 {
+			t.Errorf("ListPRs under ActionReads(ctx, 3) sent %d request(s), want 3: the page, the status and the reviews", sent)
+		}
+	})
+	t.Run("a_spent_bound_defers_the_fold", func(t *testing.T) {
+		page, err := h.client.ListPRs(forgeapi.ActionReads(t.Context(), 1), testRef())
+		if err != nil || len(page.Items) != 1 {
+			t.Fatalf("ListPRs under ActionReads(ctx, 1) = %+v, %v, want its one row", page, err)
+		}
+		if row := page.Items[0]; row.Partial == nil || row.Partial.Reason != forgeapi.PartialRateLimited {
+			t.Errorf("the row once the bound is spent = partial %v, want the rate-limited reason", row.Partial)
+		}
+	})
 }

@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded ListIssues response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "//": "cut from a recorded ListIssues response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the comments key cut from a recorded ListIssues response, read 2026-11-16, its count replaced with the canonical subject's",
   "routes": [
     {
       "method": "GET",
@@ -26,7 +26,8 @@
               "color": "ededed",
               "description": "Example label."
             }
-          ]
+          ],
+          "comments": 3
         }
       ]
     }

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // Client is one GitLab connection: where the instance is, what the credential is
@@ -27,6 +27,9 @@ type Client struct {
 	// the token's own permission before the owner's access and the pair reports
 	// only the owner's.
 	refused *forgeapi.Evidence
+	// version is the instance version connection setup read, held with caps and
+	// empty where setup has not run or the metadata read was refused.
+	version string
 	// grantPush is what the last document reported for the project permission
 	// that decides whether a caller can ask for a merge-status recalculation. It
 	// is held beside grant because the evidence names the source and this names

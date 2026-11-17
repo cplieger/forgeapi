@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/github"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/github"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // The live lane's variables, one pair per product: the instance URL and, where the
@@ -261,6 +261,14 @@ func runLiveScoped(t *testing.T, e spec.Entry, op operation, ownerScoped bool) {
 			t.Skipf("%s reads one pull request: %s", e.Method, s.prUnnamed)
 		}
 	}
+	if op.readsIssue {
+		if s.issueInvalid != nil {
+			t.Fatalf("Setup: %s on %s reads one issue: %v", e.Method, e.Product, s.issueInvalid)
+		}
+		if s.issueUnnamed != "" {
+			t.Skipf("%s reads one issue: %s", e.Method, s.issueUnnamed)
+		}
+	}
 	wire := &counting{next: &http.Transport{}}
 	conn := forgeapi.Connection{WebBaseURL: base}
 	client, err := guard(func() (any, error) { return newClient(e.Product, conn, liveOptions(base, wire, token)...) })
@@ -297,7 +305,7 @@ func runLiveScoped(t *testing.T, e spec.Entry, op operation, ownerScoped bool) {
 	if op.items != nil {
 		items = op.items(got)
 	}
-	low, high := price(&e, items)
+	low, high := price(&e, items, op.names)
 	// The low arm is a floor only where the governor issued every read the price
 	// covers. A read it DEFERRED to hold the mutation reserve, or one the
 	// per-interval caps stopped, takes the count BELOW the table rather than above
@@ -480,15 +488,16 @@ const (
 
 // seeded reports whether the lane names the sandbox's permanent read subject: the
 // product's sandbox variable names the subject's repository and its pull-request
-// variable names the seed pull request there.
+// variable names the seed pull request there. On a sandbox the issue variable names
+// the seed issue, and the issue read runs only where it is set.
 func seeded(p spec.Product, s subject) bool {
 	return sandboxGate(p, s) == "" && os.Getenv(liveVar(p, "PR")) != "" && s.prInvalid == nil
 }
 
 // seedFixes are the cells the permanent read subject fixes on each read reaching
-// it. The one-pull-request reads address the seed pull request, and the
-// repository's open pull requests and open issues each hold a seed, so each list
-// holds a row and that row is open.
+// it. The one-pull-request reads address the seed pull request and the issue read
+// the seed issue, and the repository's open pull requests and open issues each hold
+// a seed, so each list holds a row and that row is open.
 var seedFixes = map[string]func(s subject) map[string]any{
 	"PullRequests.ReadPR": func(s subject) map[string]any {
 		return map[string]any{
@@ -506,6 +515,9 @@ var seedFixes = map[string]func(s subject) map[string]any{
 	},
 	"Issues.ListIssues": func(subject) map[string]any {
 		return map[string]any{"Items[].State": forgeapi.IssueStateOpen}
+	},
+	"Issues.ReadIssue": func(subject) map[string]any {
+		return map[string]any{"State": forgeapi.IssueStateOpen}
 	},
 }
 

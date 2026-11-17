@@ -4,9 +4,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/githubroot"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/githubroot"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // APIVersionHeader is the header that pins this family's REST API version. It
@@ -81,12 +81,13 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 	// can read off a response.
 	client := &Client{}
 	core, err := transport.Open(conn, &settings, transport.Options{
-		Mapper:        client.mapper,
-		Signal:        signal,
-		Pool:          pool,
-		DeriveAPIBase: githubroot.API,
-		Clock:         clock,
-		Family:        forgeapi.FamilyGitHub,
+		Mapper:         client.mapper,
+		Signal:         signal,
+		Pool:           pool,
+		DeriveAPIBase:  githubroot.API,
+		Clock:          clock,
+		Family:         forgeapi.FamilyGitHub,
+		MessageClasses: messageClasses,
 		// A not-modified answer to an authorized conditional request bills
 		// nothing here, which the transport checks per request:
 		// spec.Revalidations owns the fact.

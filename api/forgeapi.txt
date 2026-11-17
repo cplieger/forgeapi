@@ -15,6 +15,7 @@ func (a AccountKind) String() string
 const AccountKindBot AccountKind = iota + 2
 const AccountKindUnknown AccountKind = iota
 const AccountKindUser AccountKind = iota + 1
+func ActionReads(ctx context.Context, n int) context.Context
 type ActionState struct {
 	Mergeable Support
 	Checks CheckState
@@ -28,6 +29,8 @@ type ActionState struct {
 	QueueState QueueState
 	QueuePosition int
 	MergeBlocked MergeBlockReason
+	Approvals int
+	ChangesRequested int
 }
 type Budget struct {
 	ListPages int
@@ -75,6 +78,7 @@ const CheckUnknown CheckState = iota
 type Checks interface {
 	CommitStatus(ctx context.Context, repo RepoRef, ref string) (CommitChecks, error)
 	ListRuns(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Run], error)
+	RerunFailedRun(ctx context.Context, repo RepoRef, run RunRef) error
 }
 const CodeAPIVersionRetired = "api_version_retired"
 const CodeAlreadyEnqueued = "already_enqueued"
@@ -94,6 +98,7 @@ const CodeHeaderReserved = "header_reserved"
 const CodeLabelPageTruncated = "label_page_truncated"
 const CodeListMergeStateInvalid = "list_merge_state_invalid"
 const CodeListOwnerInvalid = "list_owner_invalid"
+const CodeListReviewsInvalid = "list_reviews_invalid"
 const CodeListSinceInvalid = "list_since_invalid"
 const CodeListStateInvalid = "list_state_invalid"
 const CodeMissingSHA = "missing_sha"
@@ -114,6 +119,8 @@ const CodeRepoOrPRNotVisible = "repo_or_pr_not_visible"
 const CodeRepoRefInvalid = "repo_ref_invalid"
 const CodeRepoRefStale = "repo_ref_stale"
 const CodeResponseTooLarge = "response_too_large"
+const CodeRunNotFailed = "run_not_failed"
+const CodeRunPageTruncated = "run_page_truncated"
 const CodeRunUndated = "run_undated"
 const CodeScopeInsufficient = "scope_insufficient"
 const CodeStaleHead = "stale_head"
@@ -158,8 +165,10 @@ type Core interface {
 	Issues
 	Capabilities
 	Governor
+	Labels
 	Close()
 }
+const CountUnknown = -1
 type Counters struct {
 	UnknownEnumValue func(family Family, field string)
 	CapabilityContradicted func(family Family, capability Capability)
@@ -225,6 +234,7 @@ type Error struct {
 	Successor *RepoRef
 	Capability Capability
 	Evidence Evidence
+	Needs string
 }
 func (e *Error) Error() string
 type ErrorKind int
@@ -275,6 +285,7 @@ type Issue struct {
 	AuthorKind AccountKind
 	WebURL string
 	Labels []Label
+	Comments int
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	State IssueState
@@ -290,8 +301,10 @@ const IssueStateUnknown IssueState = iota
 type Issues interface {
 	ListIssues(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Issue], error)
 	ListMyIssues(ctx context.Context, opts ...ListOption) (Page[Issue], error)
+	ReadIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
 	CreateIssue(ctx context.Context, repo RepoRef, req NewIssue) (Issue, error)
 	CloseIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
+	ReopenIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
 }
 const KindConflict ErrorKind = iota + 5
 const KindForbidden ErrorKind = iota + 2
@@ -307,8 +320,15 @@ type Label struct {
 	Color string
 	Description string
 }
+type LabelTarget struct {
+	PR PRRef
+	Issue IssueRef
+}
+func (t LabelTarget) Validate() error
 type Labels interface {
 	ListLabels(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Label], error)
+	AddLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
+	RemoveLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
 }
 type ListOption interface {
 	// contains unexported members
@@ -324,6 +344,8 @@ type ListSettings struct {
 	SinceSet bool
 	MergeState bool
 	MergeStateSet bool
+	Reviews bool
+	ReviewsSet bool
 }
 type ListState int
 func (l ListState) String() string
@@ -375,7 +397,9 @@ type MergeStatus struct {
 type Merges interface {
 	MergePR(ctx context.Context, repo RepoRef, pr PRRef, req MergeRequest) (MergeOutcome, error)
 	MergeStatus(ctx context.Context, repo RepoRef, pr PRRef) (MergeStatus, error)
+	CancelAutoMerge(ctx context.Context, repo RepoRef, pr PRRef) error
 }
+func Mutates(r *http.Request) bool
 type NewIssue struct {
 	Title string
 	Body string
@@ -415,6 +439,7 @@ type Page[T any] struct {
 	Next Cursor
 	Partial *Partial
 	Successor *RepoRef
+	Indexed bool
 }
 type Partial struct {
 	Reason PartialReason
@@ -451,6 +476,7 @@ type PullRequest struct {
 	WebURL string
 	HeadSHA string
 	Labels []Label
+	Comments int
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Action ActionState
@@ -602,6 +628,7 @@ func WithReadConcurrency(n int) Option
 func WithRefreshLead(d time.Duration) Option
 func WithRequestObserver(wrap func(next http.RoundTripper) http.RoundTripper) Option
 func WithRetries(n int) Option
+func WithReviews(read bool) ListOption
 func WithRotationCursor(c RotationCursor) Option
 func WithSince(t time.Time) ListOption
 func WithState(s ListState) ListOption
@@ -633,6 +660,13 @@ func (s *AppSource) Token(ctx context.Context) (string, error)
 type AppSourceConfig struct {
 	Installation Installation
 	Grant AppGrant
+}
+type Backend interface {
+	Load(key string) (Record, bool, error)
+	Keys() ([]string, error)
+	Put(key string, rec Record) error
+	Delete(key string) error
+	Swap(key string, prev, next Record) (bool, error)
 }
 type DeviceGrant struct {
 	UserCode string
@@ -668,6 +702,7 @@ type InstallationToken struct {
 }
 func NewAppKey(issuer string, signer crypto.Signer) (*AppKey, error)
 func NewAppSource(conn forgeapi.Connection, key *AppKey, cfg AppSourceConfig, opts ...forgeapi.Option) (*AppSource, error)
+func NewStore(b Backend) Store
 func NewStoredSource(store Store, key string, conn forgeapi.Connection, opts ...forgeapi.Option) (*StoredSource, error)
 func OnlyInstallation() Installation
 func OpenFileStore(dir string, opts ...forgeapi.Option) (*FileStore, error)
@@ -686,6 +721,7 @@ type Record struct {
 	Account string
 	Usability Usability
 }
+func (r *Record) Equal(o *Record) bool
 type Secret struct {
 	// contains unexported members
 }
@@ -734,7 +770,9 @@ func NewFor(store creds.Store, keys func() ([]string, error), opts ...forgeapi.O
 type Client struct {
 	// contains unexported members
 }
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) BudgetState() forgeapi.BudgetState
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error
 func (c *Client) Close()
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ClosePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
@@ -754,10 +792,14 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error)
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
+func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
+func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
 
@@ -768,7 +810,9 @@ const APIVersionHeader = "X-GitHub-Api-Version"
 type Client struct {
 	// contains unexported members
 }
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) BudgetState() forgeapi.BudgetState
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error
 func (c *Client) Close()
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ClosePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
@@ -788,10 +832,14 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error)
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
+func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
+func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
 
@@ -800,7 +848,9 @@ func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
 type Client struct {
 	// contains unexported members
 }
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
 func (c *Client) BudgetState() forgeapi.BudgetState
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error
 func (c *Client) Close()
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ClosePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
@@ -820,9 +870,13 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error)
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
+func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
+func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReopenPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.PullRequest, error)
 func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (forgeapi.RepoAffordances, error)
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)

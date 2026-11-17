@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/gitcred"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/gitcred"
 )
 
 // Two connections may share an origin, and git must get the same one on every

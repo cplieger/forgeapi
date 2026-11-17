@@ -1,7 +1,8 @@
 // Package creds is the credential machinery behind a forgeapi connection:
 // stored credentials, a personal access token or a rotating OAuth grant with
-// its refresh machine, device grant and file store; and derived ones, a GitHub
-// App's installation tokens, minted from its key.
+// its refresh machine, device grant and store, over a file or over a backend the
+// consumer supplies; and derived ones, a GitHub App's installation tokens, minted
+// from its key.
 //
 // The vocabulary it implements, [forgeapi.CredentialSource], [forgeapi.CredKind]
 // and [forgeapi.CredState], is the root package's. Nothing here reads the
@@ -16,7 +17,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // Usability is what a refresh learned about a record's stored pair that the
@@ -78,14 +79,15 @@ type Record struct { //nolint:govet // fieldalignment: the field order is a reco
 	Usability Usability
 }
 
-// same reports whether two records are the same record, comparing times as
-// instants. It is the comparison of the rotation's compare-and-swap.
-func same(a, b *Record) bool {
-	return a.Family == b.Family && a.WebBaseURL == b.WebBaseURL && a.Kind == b.Kind &&
-		a.Token == b.Token && a.Issued.Equal(b.Issued) && a.Expiry.Equal(b.Expiry) &&
-		a.RefreshToken == b.RefreshToken && a.RefreshExpiry.Equal(b.RefreshExpiry) &&
-		a.ClientID == b.ClientID && slices.Equal(a.Scopes, b.Scopes) && a.Account == b.Account &&
-		a.Usability == b.Usability
+// Equal reports whether r and o are the same record: every field equal, the times
+// as instants with [time.Time.Equal] and the scopes in order. It is the comparison
+// [Backend.Swap] commits a rotation by.
+func (r *Record) Equal(o *Record) bool {
+	return r.Family == o.Family && r.WebBaseURL == o.WebBaseURL && r.Kind == o.Kind &&
+		r.Token == o.Token && r.Issued.Equal(o.Issued) && r.Expiry.Equal(o.Expiry) &&
+		r.RefreshToken == o.RefreshToken && r.RefreshExpiry.Equal(o.RefreshExpiry) &&
+		r.ClientID == o.ClientID && slices.Equal(r.Scopes, o.Scopes) && r.Account == o.Account &&
+		r.Usability == o.Usability
 }
 
 // expired reports whether a record's token has an expiry and has reached it.

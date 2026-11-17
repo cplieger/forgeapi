@@ -1,10 +1,10 @@
 # forgeapi
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/forgeapi/v2.svg)](https://pkg.go.dev/github.com/cplieger/forgeapi/v2) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/forgeapi)](https://github.com/cplieger/forgeapi/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/forgeapi/badges/mutation.json)](https://github.com/cplieger/forgeapi/issues?q=label%3Agremlins-tracker)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cplieger/forgeapi/v3.svg)](https://pkg.go.dev/github.com/cplieger/forgeapi/v3) [![Go version](https://img.shields.io/github/go-mod/go-version/cplieger/forgeapi)](https://github.com/cplieger/forgeapi/blob/main/go.mod) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/forgeapi/badges/mutation.json)](https://github.com/cplieger/forgeapi/issues?q=label%3Agremlins-tracker)
 
 forgeapi lets your Go code read and write pull requests, issues, merges, checks, releases and labels on GitHub, GitLab, Gitea and Forgejo through one set of types.
 
-It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It has no operations for comments, reviews or file contents. It is at v2 and is licensed under Apache-2.0. It depends only on filesafe, httpcache, httpclient, jsonx, textsafe, ssrf and urlform, seven modules by the same author.
+It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It reads no file contents and writes no comments or reviews, only counting them. It is at v3 and is licensed under Apache-2.0. It depends only on filesafe, httpcache, httpclient, jsonx, textsafe, ssrf and urlform, seven modules by the same author.
 
 ## Why use it
 
@@ -21,7 +21,7 @@ Consider [go-github](https://github.com/google/go-github) if you target GitHub a
 ## Install
 
 ```sh
-go get github.com/cplieger/forgeapi/v2@latest
+go get github.com/cplieger/forgeapi/v3@latest
 ```
 
 ## Usage
@@ -55,15 +55,16 @@ The `github`, `gitlab` and `gitea` packages each hold one client, and `gitea` se
 
 ## API
 
-- `Core` is what every client satisfies. It joins eight interfaces, `Identity`, `Repos`, `PullRequests`, `Merges`, `Checks`, `Issues`, `Capabilities` and `Governor`, plus `Close`. Declare the narrowest one your code uses.
-- `Releases` and `Labels` sit outside `Core`, and all three clients implement both. Reach them from a `Core` with a type assertion such as `rel, ok := client.(forgeapi.Releases)`.
-- The writes are `CreatePR`, `ClosePR`, `ReopenPR`, `MergePR`, `RerunFailedChecks`, `CreateIssue`, `CloseIssue` and `CreateRelease`. Every other operation reads.
+- `Core` is what every client satisfies. It joins nine interfaces, `Identity`, `Repos`, `PullRequests`, `Merges`, `Checks`, `Issues`, `Capabilities`, `Governor` and `Labels`, plus `Close`. Declare the narrowest one your code uses.
+- `Releases` sits outside `Core`, and all three clients implement it. Reach it from a `Core` with a type assertion such as `rel, ok := client.(forgeapi.Releases)`.
+- The writes are `CreatePR`, `ClosePR`, `ReopenPR`, `MergePR`, `CancelAutoMerge`, `RerunFailedChecks`, `RerunFailedRun`, `CreateIssue`, `CloseIssue`, `ReopenIssue`, `AddLabels`, `RemoveLabels` and `CreateRelease`. Every other operation reads.
 - `Checks.CommitStatus` returns a commit's combined check verdict. `Checks.ListRuns` lists GitHub Actions runs, GitLab pipelines, and Gitea and Forgejo Actions runs.
 - `Connection` describes an instance, `RepoRef` and `PRRef` address a repository and a pull request, and `Option` and `ListOption` configure a client and a list call.
 - Every list answers a `Page` with a `Next` cursor, and [Pages and continuations](docs/pagination.md) covers short pages and resuming.
-- `creds` holds the device flow, `StoredSource` over the file store, and `AppKey` and `AppSource` for GitHub App credentials. `gitcred` holds the git credential helper.
+- `ActionReads` lets the reads around one of your own writes pass the mutation reserve, and `Mutates` tells an attempt observer which request is a write. [Request prices and the budget](docs/request-prices.md) covers both.
+- `creds` holds the device flow, `StoredSource` over the file store or over your own `Backend` through `NewStore`, and `AppKey` and `AppSource` for GitHub App credentials. `gitcred` holds the git credential helper.
 
-Per-symbol detail is on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v2).
+Per-symbol detail is on [pkg.go.dev](https://pkg.go.dev/github.com/cplieger/forgeapi/v3).
 
 ## Every call answers nil, an Error or a context error
 
@@ -76,7 +77,7 @@ if errors.As(err, &ferr) && ferr.Code == forgeapi.CodeRepoRefStale { ... }
 
 `Error` carries an `ErrorKind` and a `Code`, because one HTTP status means different things per product and per operation. `Error.Retryable` says whether another attempt may succeed: a network failure other than a TLS or address-policy refusal (see [Connecting to a forge](docs/connecting.md)), a throttle, and a 408, 429 or 5xx status other than 501, 505, 506, 508, 510 and 511, whose answer repeats. `Error.Message` is the forge's own text, so never branch on it. `Error` wraps no other error, and the library declares no sentinel errors of its own.
 
-A cancelled or expired context returns Go's own `context.Canceled` or `context.DeadlineExceeded` unchanged, so `errors.Is` works on it. Each operation also runs under its own deadline, `Budget.OperationTimeout`, 20 seconds by default, which expires as `context.DeadlineExceeded` too. A list that makes a further read per row, the checks on a Gitea or Forgejo pull-request list or the forks on a GitLab `ListMyPRs`, returns its rows instead when that deadline ends those reads, each row left unread marked `PartialBudget`. To tell whether your own context ended, check `ctx.Err()`. The `creds` file store and the `gitcred` helper return ordinary Go errors when a read or write fails.
+A cancelled or expired context returns Go's own `context.Canceled` or `context.DeadlineExceeded` unchanged, so `errors.Is` works on it. Each operation also runs under its own deadline, `Budget.OperationTimeout`, 20 seconds by default, which expires as `context.DeadlineExceeded` too. A list that makes a further read per row, the checks and reviews on a Gitea or Forgejo pull-request list or the forks on a GitLab `ListMyPRs`, returns its rows instead when that deadline ends those reads, each row left unread marked `PartialBudget`. To tell whether your own context ended, check `ctx.Err()`. The `creds` file store and the `gitcred` helper return ordinary Go errors when a read or write fails.
 
 ## Unsupported by design
 

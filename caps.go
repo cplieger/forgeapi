@@ -43,9 +43,9 @@ type Capability string
 // The capabilities named so far.
 const (
 	// CapRerunChecks is connection-scoped and sits behind
-	// [PullRequests.RerunFailedChecks]: a product with no re-run verb, or an
-	// instance too old to serve one, reports it no or unknown with its
-	// evidence.
+	// [PullRequests.RerunFailedChecks] and [Checks.RerunFailedRun]: an instance
+	// too old to serve a re-run verb, a Forgejo before 17, reports it no, and
+	// one whose evidence is unreadable reports it unknown, with its evidence.
 	CapRerunChecks Capability = "rerun_checks"
 	// CapReadMergeState is grant-scoped: the merge state a Merge control reads
 	// needs push permission on one product, so a token without it makes the
@@ -421,4 +421,13 @@ type ActionState struct {
 	QueuePosition int
 	// MergeBlocked is the cause a merge is refused, or MergeBlockNone.
 	MergeBlocked MergeBlockReason
+	// Approvals is the number of reviewers whose latest opinionated review, the
+	// latest one that approves or requests changes, approves; [CountUnknown]
+	// where the read does not carry it or [WithReviews] left it unread. It is a
+	// fact for the person deciding: whether the forge lets the merge through is
+	// MergeBlocked's.
+	Approvals int
+	// ChangesRequested is the number of reviewers whose latest opinionated
+	// review requests changes, on the same terms as Approvals.
+	ChangesRequested int
 }

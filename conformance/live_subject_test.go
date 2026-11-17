@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // namedPullRequest is the pull request the cases below name through the live lane's
@@ -35,6 +35,7 @@ func pullRequestInstance(t *testing.T, p spec.Product, method, repo string, numb
 		if head, ok := strings.CutSuffix(path, pull); ok {
 			path = head + "/pulls/" + strconv.Itoa(number)
 		}
+		path = strings.Replace(path, pull+"/", "/pulls/"+strconv.Itoa(number)+"/", 1)
 		f.Routes[i].Path = path
 	}
 	srv, rec := newFixtureServer(t, f)
@@ -167,16 +168,18 @@ const liveSetupCase = "FORGEAPI_CONFORMANCE_LIVE_SETUP_CASE"
 // instance received.
 const liveRequestsLine = "the instance received requests: "
 
-// withoutLiveVars is an environment with every live lane variable removed, so a
-// child process reads only the ones its case sets.
-func withoutLiveVars(environ []string) []string {
+// childEnviron is the environment of a child run of this test binary: every live
+// lane variable removed, so the child reads only the ones its case sets, and the
+// race detector's exit sleep (one second by default) turned off, keeping any other
+// GORACE option, since a child built with -race would otherwise pay it each time.
+func childEnviron(environ []string) []string {
 	var out []string
 	for _, kv := range environ {
 		if !strings.HasPrefix(kv, "FORGEAPI_LIVE_") {
 			out = append(out, kv)
 		}
 	}
-	return out
+	return append(out, "GORACE="+strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"))
 }
 
 // A pull request variable that is set and names no positive number fails the setup
@@ -206,7 +209,7 @@ func TestALiveReadOfOnePullRequestFailsItsSetupOnAMalformedNumber(t *testing.T) 
 			t.Run(method+"_"+name, func(t *testing.T) {
 				cmd := exec.CommandContext(t.Context(), os.Args[0],
 					"-test.run=^TestALiveReadOfOnePullRequestFailsItsSetupOnAMalformedNumber$", "-test.v")
-				cmd.Env = append(withoutLiveVars(os.Environ()),
+				cmd.Env = append(childEnviron(os.Environ()),
 					liveSetupCase+"="+method, liveVar(p, "REPO")+"="+selector, liveVar(p, "PR")+"="+raw)
 				out, err := cmd.CombinedOutput()
 				text := string(out)

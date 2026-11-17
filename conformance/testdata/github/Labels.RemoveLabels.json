@@ -1,0 +1,14 @@
+{
+  "//": "cut from a recorded ListLabels response, read 2026-09-18; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; no sandbox capture exists for this mutation on this product, so the response shape is the same product's read capture, which this product's API description gives the mutation as its response schema: the removal answers the labels the item still carries, none here",
+  "routes": [
+    {
+      "method": "DELETE",
+      "path": "/repos/example/example/issues/1/labels/example-label",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": []
+    }
+  ]
+}

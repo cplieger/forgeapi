@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded ListMyIssues-scope-viewer response beside a recorded ListMyIssues-scope-owner-user response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured under both scopes on 2026-10-01: the search answers Issue rows only where the query names the issue type, an owner qualifier resolves an organization as it resolves a user, and an owner the index holds no account for answers an empty page with no error",
+  "//": "cut from a recorded ListMyIssues-scope-viewer response beside a recorded ListMyIssues-scope-owner-user response, read 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; measured under both scopes on 2026-10-01: the search answers Issue rows only where the query names the issue type, an owner qualifier resolves an organization as it resolves a user, and an owner the index holds no account for answers an empty page with no error; the comments.totalCount key cut from a recorded ListMyIssues response, read 2026-11-16, its count replaced with the canonical subject's",
   "routes": [
     {
       "graphql": true,
@@ -43,6 +43,9 @@
                       "description": "Example label."
                     }
                   ]
+                },
+                "comments": {
+                  "totalCount": 3
                 },
                 "repository": {
                   "nameWithOwner": "example/example"

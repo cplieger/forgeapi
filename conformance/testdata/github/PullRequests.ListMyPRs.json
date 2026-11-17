@@ -1,5 +1,5 @@
 {
-  "//": "cut from a recorded ListMyPRs response beside a recorded ListMyPRs-scope-owner-user response, read 2026-09-18 and 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject",
+  "//": "cut from a recorded ListMyPRs response beside a recorded ListMyPRs-scope-owner-user response, read 2026-09-18 and 2026-10-01; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject; the totalCommentsCount key cut from a recorded ListMyPRs response, read 2026-11-16, its count replaced with the canonical subject's; the latestOpinionatedReviews key cut from a recorded PRMine response, read 2026-11-16, its states replaced with the canonical subject's two approvals and one change request",
   "routes": [
     {
       "graphql": true,
@@ -50,6 +50,21 @@
                       "name": "example-label",
                       "color": "ededed",
                       "description": "Example label."
+                    }
+                  ]
+                },
+                "totalCommentsCount": 3,
+                "latestOpinionatedReviews": {
+                  "totalCount": 3,
+                  "nodes": [
+                    {
+                      "state": "APPROVED"
+                    },
+                    {
+                      "state": "CHANGES_REQUESTED"
+                    },
+                    {
+                      "state": "APPROVED"
                     }
                   ]
                 },

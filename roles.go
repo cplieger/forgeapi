@@ -128,46 +128,54 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRList document, asking for at most 50 rows a page whatever the page bound asks, since a larger page of its rows answered 502 on every attempt on a large repository, 1 request per page
-	//	GitLab   the PRList document, or GET /api/v4/projects/{id}/merge_requests where this connection's setup found the documents refused, 1 request per page; needs read_merge_state
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus one per row
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus one per row
+	//	GitHub   the PRList document, asking for at most 30 rows a page whatever the page bound asks, since a page of 50 of its rows answered 502 on 8 of 15 attempts on two large repositories; each row selects latestOpinionatedReviews(first: 20), one review per reviewer, and a row naming more than 20 reviewers answers both counts CountUnknown with pagination_cap on its Partial, 1 request per page
+	//	GitLab   the PRList document, or GET /api/v4/projects/{id}/merge_requests where this connection's setup found the documents refused; each row selects approvedBy.count and the review state of its first 100 reviewers, and a row whose reviewers continue past them answers ChangesRequested CountUnknown with pagination_cap on its Partial; the REST route carries neither, so that arm answers both counts CountUnknown, 1 request per page; needs read_merge_state
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, then under the same per-interval admission one page of each row's reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on the row's Partial, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus 2 per row
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls, then each row's folded commit status, then under the same per-interval admission one page of each row's reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on the row's Partial, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 2 requests per page plus 2 per row
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Items[].Action.Checks, under a fine-grained token         cannot supply  CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup
-	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply  SupportUnknown on every row: the document leaves mergeable out of the request
-	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply  MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
+	//	Items[].Comments                                                                                               differs in shape  totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16
+	//	Items[].Action.Checks, under a fine-grained token                                                              cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on the PRMine search, which selects the same rollup
+	//	Items[].Action.Mergeable, under WithMergeState(false)                                                          cannot supply     SupportUnknown on every row: the document leaves mergeable out of the request
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)                                                       cannot supply     MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
+	//	Items[].Action.Approvals, under WithReviews(false), Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply     CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Items[].Ref                                               differs in spelling  iid, sigil "!"
-	//	Items[].Labels[].Name                                     differs in spelling  labels.nodes[].title, not name
-	//	Items[].Labels[].Color                                    differs in spelling  color string, leading #
-	//	Items[].Action.Checks                                     differs in shape     headPipeline.status scalar, no fold
-	//	Items[].Action.ChecksPassing .. ChecksTotal               cannot supply        absent: one scalar status
-	//	Items[].Action.QueueState                                 cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
-	//	Items[].Action.QueuePosition                              cannot supply        no position; train index null
-	//	Successor                                                 cannot supply        nil: GraphQL sends no successor
-	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply        SupportUnknown on every row: the document leaves mergeable out of the request, and the REST route reads none on a list row
-	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply        MergeBlockUnknown on every row: the document leaves detailedMergeStatus out of the request, and the REST route reads none on a list row
+	//	Items[].Ref                                                differs in spelling  iid, sigil "!"
+	//	Items[].Labels[].Name                                      differs in spelling  labels.nodes[].title, not name
+	//	Items[].Labels[].Color                                     differs in spelling  color string, leading #
+	//	Items[].Action.Checks                                      differs in shape     headPipeline.status scalar, no fold; CheckUnknown where the documents are refused, since a REST list row carries no head_pipeline
+	//	Items[].Action.ChecksPassing .. ChecksTotal                cannot supply        absent: one scalar status
+	//	Items[].Action.QueueState                                  cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
+	//	Items[].Action.QueuePosition                               cannot supply        no position; train index null
+	//	Successor                                                  cannot supply        nil: GraphQL sends no successor
+	//	Items[].Action.Mergeable, under WithMergeState(false)      cannot supply        SupportUnknown on every row: the document leaves mergeable out of the request, and the REST route reads none on a list row
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)   cannot supply        MergeBlockUnknown on every row: the document leaves detailedMergeStatus out of the request, and the REST route reads none on a list row
+	//	Items[].Action.Approvals                                   differs in shape     approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review
+	//	Items[].Action.ChangesRequested                            differs in shape     the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented
+	//	Items[].Action.Approvals, under WithReviews(false)         cannot supply        CountUnknown on every row: the document leaves approvedBy out of the request, and the REST route reads none
+	//	Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply        CountUnknown on every row: the document leaves reviewers out of the request, and the REST route reads none
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Items[].Action.AutoMergeArmed                          cannot supply  no auto_merge key: unknown
-	//	Items[].Action.QueueState                              cannot supply  QueueNone always
-	//	Items[].Action.QueuePosition                           cannot supply  QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked                            cannot supply  mergeable and draft, no reason
-	//	Items[].Action.Mergeable, under WithMergeState(false)  cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
+	//	Items[].Action.AutoMergeArmed                                                                                  cannot supply  no auto_merge key: unknown
+	//	Items[].Action.QueueState                                                                                      cannot supply  QueueNone always
+	//	Items[].Action.QueuePosition                                                                                   cannot supply  QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                                                                                    cannot supply  mergeable and draft, no reason
+	//	Items[].Action.Mergeable, under WithMergeState(false)                                                          cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
+	//	Items[].Action.Approvals, under WithReviews(false), Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply  CountUnknown on every row: no row's reviews are read, which spends one request per row less
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	Items[].AuthorKind                                     cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Items[].Action.AutoMergeArmed                          cannot supply  no auto_merge key: unknown
-	//	Items[].Action.QueueState                              cannot supply  QueueNone always
-	//	Items[].Action.QueuePosition                           cannot supply  QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked                            cannot supply  mergeable and draft, no reason
-	//	Items[].Action.Mergeable, under WithMergeState(false)  cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
+	//	Items[].AuthorKind                                                                                             cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Items[].Action.AutoMergeArmed                                                                                  cannot supply  no auto_merge key: unknown
+	//	Items[].Action.QueueState                                                                                      cannot supply  QueueNone always
+	//	Items[].Action.QueuePosition                                                                                   cannot supply  QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                                                                                    cannot supply  mergeable and draft, no reason
+	//	Items[].Action.Mergeable, under WithMergeState(false)                                                          cannot supply  SupportUnknown on every row: the row's mergeable key is left unread
+	//	Items[].Action.Approvals, under WithReviews(false), Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply  CountUnknown on every row: no row's reviews are read, which spends one request per row less
 	ListPRs(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[PullRequest], error)
 
 	// ListMyPRs lists the credential's OPEN pull requests across every repository it
@@ -181,18 +189,20 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRMine search document, asking for at most 25 rows a page whatever the page bound asks, since a larger page of its rows answered 502 under both owners measured, the smaller of them holding fewer than a hundred open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user, 1 request per page
+	//	GitHub   the PRMine search document, asking for at most 15 rows a page whatever the page bound asks, since a page of 25 of its rows answered 502 on 2 of 5 attempts under an owner holding 57,746 open pull requests; under an owner scope the same document with user:{owner} in place of the author keyword, which resolves an organization as it resolves a user; each row selects latestOpinionatedReviews(first: 20), one review per reviewer, and a row naming more than 20 reviewers answers both counts CountUnknown with pagination_cap on its Partial, 1 request per page
 	//	GitLab   GET /api/v4/merge_requests?scope=created_by_me; under an owner scope GET /api/v4/groups/{owner}/merge_requests with the open state, which answers 404 for a user's own namespace; an owner named by digits alone, which every namespace route reads as a numeric id, is first resolved by name through the OwnerLookup document to the id the route takes, one request more on every page; on either route, GET /api/v4/projects/{id} once for each distinct fork a row's source_project_id names, 1 to 2 requests per page plus up to one per row
 	//	Gitea    GET /api/v1/repos/issues/search filtered to pull requests and to the rows the authenticated credential created, whose rows carry no head commit and therefore no folded status; under an owner scope the same route filtered by owner={owner} in place of created=true, 1 request per page
 	//	Forgejo  GET /api/v1/repos/issues/search filtered to pull requests and to the rows the authenticated credential created, whose rows carry no head commit and therefore no folded status; under an owner scope the same route filtered by owner={owner} in place of created=true, 1 request per page
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Items[].Action.Checks, under a fine-grained token         cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on this document
-	//	Next                                                      differs in shape  a continuation while hasNextPage holds, as on a viewer's first page of 20 rows over issueCount 23; past the search connection's 1,000th result, where it answers hasNextPage false while issueCount states 2673, and a page asked for after it answers no rows and a null end cursor, so a walk ends there with no continuation and carries result_window
-	//	error, owner unresolved                                   cannot supply     empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open
-	//	Items[].Action.Mergeable, under WithMergeState(false)     cannot supply     SupportUnknown on every row: the document leaves mergeable out of the request
-	//	Items[].Action.MergeBlocked, under WithMergeState(false)  cannot supply     MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
+	//	Items[].Comments                                                                                               differs in shape  totalCommentsCount, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16
+	//	Items[].Action.Checks, under a fine-grained token                                                              cannot supply     CheckUnknown with no count, beside forbidden on the row's own Partial and no page marker: a fine-grained token holds no Checks permission, and on a private repository the document answered every field of the row and FORBIDDEN on its rollup's contexts nodes, measured 2026-10-11 on this document
+	//	Next                                                                                                           differs in shape  a continuation while hasNextPage holds, as on a viewer's first page of 20 rows over issueCount 23; past the search connection's 1,000th result, where it answers hasNextPage false while issueCount states 2673, and a page asked for after it answers no rows and a null end cursor, so a walk ends there with no continuation and carries result_window
+	//	error, owner unresolved                                                                                        cannot supply     empty: an owner the search index holds no account for answers issueCount 0 and no error, so no such owner reads as nothing open
+	//	Items[].Action.Mergeable, under WithMergeState(false)                                                          cannot supply     SupportUnknown on every row: the document leaves mergeable out of the request
+	//	Items[].Action.MergeBlocked, under WithMergeState(false)                                                       cannot supply     MergeBlockUnknown on every row: the document leaves mergeStateStatus out of the request
+	//	Items[].Action.Approvals, under WithReviews(false), Items[].Action.ChangesRequested, under WithReviews(false)  cannot supply     CountUnknown on every row: the document leaves latestOpinionatedReviews out of the request
 	//
 	// GitLab departs from the normalized contract:
 	//
@@ -208,37 +218,42 @@ type PullRequests interface {
 	//	Items[].Partial                                            cannot supply        nil: no status read runs for a list row, which carries no head_pipeline
 	//	error, owner unresolved                                    cannot supply        404 Group Not Found on a user's own namespace, an account the users route answers, exactly as on an owner no namespace holds
 	//	Items[], from an archived repository under an owner scope  cannot supply        none: the group route's non_archived defaults to true
+	//	Items[].Action.Approvals .. ChangesRequested               cannot supply        CountUnknown: a REST list row carries no approval count and no reviewer review state
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Items[].SourceBranch, Items[].SourceRepo     cannot supply     no head key on an issue-search row
-	//	Items[].TargetBranch                         cannot supply     no base key on an issue-search row
-	//	Items[].HeadSHA                              cannot supply     no head key on an issue-search row
-	//	Items[].Action.Mergeable                     cannot supply     no mergeable key on an issue-search row
-	//	Items[].Action.Checks                        cannot supply     CheckUnknown: no head commit on an issue-search row, so no status read addresses it
-	//	Items[].Action.ChecksPassing .. ChecksTotal  cannot supply     zero: no fold runs on a row that carries no head commit
-	//	Items[].Action.AutoMergeArmed                cannot supply     no auto-merge key on an issue-search row
-	//	Items[].Action.QueueState                    cannot supply     QueueNone always
-	//	Items[].Action.QueuePosition                 cannot supply     QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked                  cannot supply     no merge-blocked key on an issue-search row
-	//	Items[].Partial                              cannot supply     nil: no fold runs on a row that carries no head commit, so none can stop short
-	//	Items[].Draft                                differs in shape  draft on the pull_request object, not at the row's top level
+	//	Items[].Comments                              differs in shape  comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted
+	//	Items[].SourceBranch, Items[].SourceRepo      cannot supply     no head key on an issue-search row
+	//	Items[].TargetBranch                          cannot supply     no base key on an issue-search row
+	//	Items[].HeadSHA                               cannot supply     no head key on an issue-search row
+	//	Items[].Action.Mergeable                      cannot supply     no mergeable key on an issue-search row
+	//	Items[].Action.Checks                         cannot supply     CheckUnknown: no head commit on an issue-search row, so no status read addresses it
+	//	Items[].Action.ChecksPassing .. ChecksTotal   cannot supply     zero: no fold runs on a row that carries no head commit
+	//	Items[].Action.AutoMergeArmed                 cannot supply     no auto-merge key on an issue-search row
+	//	Items[].Action.QueueState                     cannot supply     QueueNone always
+	//	Items[].Action.QueuePosition                  cannot supply     QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                   cannot supply     no merge-blocked key on an issue-search row
+	//	Items[].Partial                               cannot supply     nil: no fold runs on a row that carries no head commit, so none can stop short
+	//	Items[].Draft                                 differs in shape  draft on the pull_request object, not at the row's top level
+	//	Items[].Action.Approvals .. ChangesRequested  cannot supply     CountUnknown: an issue-search row carries no review key, and this list reads nothing per row
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	Items[].AuthorKind                           cannot supply     AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Items[].SourceBranch, Items[].SourceRepo     cannot supply     no head key on an issue-search row
-	//	Items[].TargetBranch                         cannot supply     no base key on an issue-search row
-	//	Items[].HeadSHA                              cannot supply     no head key on an issue-search row
-	//	Items[].Action.Mergeable                     cannot supply     no mergeable key on an issue-search row
-	//	Items[].Action.Checks                        cannot supply     CheckUnknown: no head commit on an issue-search row, so no status read addresses it
-	//	Items[].Action.ChecksPassing .. ChecksTotal  cannot supply     zero: no fold runs on a row that carries no head commit
-	//	Items[].Action.AutoMergeArmed                cannot supply     no auto-merge key on an issue-search row
-	//	Items[].Action.QueueState                    cannot supply     QueueNone always
-	//	Items[].Action.QueuePosition                 cannot supply     QueuePositionUnknown: no queue
-	//	Items[].Action.MergeBlocked                  cannot supply     no merge-blocked key on an issue-search row
-	//	Items[].Partial                              cannot supply     nil: no fold runs on a row that carries no head commit, so none can stop short
-	//	Items[].Draft                                differs in shape  draft on the pull_request object, not at the row's top level
+	//	Items[].Comments                              differs in shape  comments alone: the issue-search row is the issue record, which carries no review_comments key, so comments on the diff are not counted
+	//	Items[].AuthorKind                            cannot supply     AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Items[].SourceBranch, Items[].SourceRepo      cannot supply     no head key on an issue-search row
+	//	Items[].TargetBranch                          cannot supply     no base key on an issue-search row
+	//	Items[].HeadSHA                               cannot supply     no head key on an issue-search row
+	//	Items[].Action.Mergeable                      cannot supply     no mergeable key on an issue-search row
+	//	Items[].Action.Checks                         cannot supply     CheckUnknown: no head commit on an issue-search row, so no status read addresses it
+	//	Items[].Action.ChecksPassing .. ChecksTotal   cannot supply     zero: no fold runs on a row that carries no head commit
+	//	Items[].Action.AutoMergeArmed                 cannot supply     no auto-merge key on an issue-search row
+	//	Items[].Action.QueueState                     cannot supply     QueueNone always
+	//	Items[].Action.QueuePosition                  cannot supply     QueuePositionUnknown: no queue
+	//	Items[].Action.MergeBlocked                   cannot supply     no merge-blocked key on an issue-search row
+	//	Items[].Partial                               cannot supply     nil: no fold runs on a row that carries no head commit, so none can stop short
+	//	Items[].Draft                                 differs in shape  draft on the pull_request object, not at the row's top level
+	//	Items[].Action.Approvals .. ChangesRequested  cannot supply     CountUnknown: an issue-search row carries no review key, and this list reads nothing per row
 	ListMyPRs(ctx context.Context, opts ...ListOption) (Page[PullRequest], error)
 
 	// ReadPR reads one pull request.
@@ -287,24 +302,27 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address, 0 to 3 requests
-	//	GitLab   the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused, 1 request; needs read_merge_state
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 2 to 4 requests
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 2 to 4 requests
+	//	GitHub   the PRRead document, then a further page of its contexts connection, or GET /repos/{owner}/{repo}/pulls/{number} where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where that record answered from another address; the document selects latestOpinionatedReviews(first: 20), and more than 20 reviewers answer both counts CountUnknown with pagination_cap on Partial, as does the REST record, which carries no review, 0 to 3 requests
+	//	GitLab   the PRRead document, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused; the document selects approvedBy.count and the review state of the first 100 reviewers, and reviewers continuing past them answer ChangesRequested CountUnknown with pagination_cap on Partial; the REST record carries neither, so that arm answers both counts CountUnknown, 1 request; needs read_merge_state
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial, 2 to 5 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{number}, then the complete commit-status fold, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries; then one page of its reviews, GET /api/v1/repos/{owner}/{repo}/pulls/{index}/reviews at the instance's stated maximum, a full page answering both counts CountUnknown with pagination_cap on Partial, 2 to 5 requests
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Action.Checks, under a fine-grained token  cannot supply  CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup
+	//	Comments                                   differs in shape  totalCommentsCount on the document, which counts each submitted review that carries a body beside the conversation and review comments: 8 on one pull request whose REST record answered comments 3 and review_comments 2, measured 2026-11-16; comments plus review_comments, with no review body, on the REST read a connection whose documents were refused falls back to
+	//	Action.Checks, under a fine-grained token  cannot supply     CheckUnknown with no count, beside forbidden on Partial: a fine-grained token holds no Checks permission, and the document refuses the rollup's contexts nodes on a private repository with FORBIDDEN, measured on the PRMine search, which selects the same rollup
 	//
 	// GitLab departs from the normalized contract:
 	//
 	//	Ref                                  differs in spelling  iid, sigil "!"
 	//	Labels[].Name                        differs in spelling  labels.nodes[].title, not name
 	//	Labels[].Color                       differs in spelling  color string, leading #
-	//	Action.Checks                        differs in shape     headPipeline.status scalar, no fold
+	//	Action.Checks                        differs in shape     headPipeline.status scalar, no fold; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a merged results one included, since that payload carries no source_sha to match it by
 	//	Action.ChecksPassing .. ChecksTotal  cannot supply        absent: one scalar status
 	//	Action.QueueState                    cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
 	//	Action.QueuePosition                 cannot supply        no position; train index null
+	//	Action.Approvals                     differs in shape     approvedBy.count: the users whose approval stands, an approval being its own action on this product rather than a review outcome, so it counts an approver nobody asked for a review
+	//	Action.ChangesRequested              differs in shape     the reviewers whose reviewState is REQUESTED_CHANGES, among the users a review was requested from; whether a user who was never asked and requests changes appears among them is not documented
 	//
 	// Gitea departs from the normalized contract:
 	//
@@ -328,8 +346,8 @@ type PullRequests interface {
 	//
 	//	GitHub   POST /repos/{owner}/{repo}/pulls, then POST /repos/{owner}/{repo}/issues/{number}/labels where the caller names labels, which is the route this product declares for them because its creation takes none, plus one read against the id-addressed location to resolve the successor where either of them answered from another address, 1 to 3 requests
 	//	GitLab   POST /api/v4/projects/{id}/merge_requests, 1 request
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/pulls, 1 to 2 requests
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/pulls, 1 to 2 requests
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls, 1 to 3 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/pulls, 1 to 3 requests
 	//
 	// GitHub departs from the normalized contract:
 	//
@@ -338,36 +356,40 @@ type PullRequests interface {
 	//	Action.QueueState                                    cannot supply  no merge-queue key among 46
 	//	Action.QueuePosition                                 cannot supply  no queue key, so unknown
 	//	Action.MergeBlocked                                  cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the creation lands, unknown on every creation measured
+	//	Action.Approvals .. ChangesRequested                 cannot supply  CountUnknown: the REST pull-request record a mutation answers carries no review
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Ref                                  differs in spelling  iid, sigil "!"
-	//	Labels[].Color                       cannot supply        no colour on the answer: its labels arrive as name strings
-	//	Labels[].Description                 cannot supply        no description on the answer: its labels arrive as name strings
-	//	Action.Mergeable                     cannot supply        merge_status checking and detailed_merge_status preparing on the answer, unknown until the asynchronous check settles
-	//	Action.Checks                        cannot supply        CheckUnknown: head_pipeline null on the creation answer, which the product sets after it, null here although the source branch's pipeline had already started on its head
-	//	Action.ChecksPassing .. ChecksTotal  cannot supply        zero: head_pipeline null on the answer, so no status to count
-	//	Action.QueueState                    cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
-	//	Action.QueuePosition                 cannot supply        QueuePositionUnknown: no merge-train key on the answer
-	//	Action.MergeBlocked                  cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the creation lands, preparing on every creation measured
-	//	State                                differs in spelling  state string, opened
+	//	Ref                                   differs in spelling  iid, sigil "!"
+	//	Labels[].Color                        cannot supply        no colour on the answer: its labels arrive as name strings
+	//	Labels[].Description                  cannot supply        no description on the answer: its labels arrive as name strings
+	//	Action.Mergeable                      cannot supply        merge_status checking and detailed_merge_status preparing on the answer, unknown until the asynchronous check settles
+	//	Action.Checks                         cannot supply        CheckUnknown: head_pipeline null on the creation answer, which the product sets after it, null here although the source branch's pipeline had already started on its head
+	//	Action.ChecksPassing .. ChecksTotal   cannot supply        zero: head_pipeline null on the answer, so no status to count
+	//	Action.QueueState                     cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
+	//	Action.QueuePosition                  cannot supply        QueuePositionUnknown: no merge-train key on the answer
+	//	Action.MergeBlocked                   cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the creation lands, preparing on every creation measured
+	//	State                                 differs in spelling  state string, opened
+	//	Action.Approvals .. ChangesRequested  cannot supply        CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	AuthorKind                            cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the creation lands, true on every creation measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	//
 	// GitHub sends this, where a wrong default would change the request silently:
 	//
@@ -396,43 +418,48 @@ type PullRequests interface {
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Action.Mergeable      cannot supply  unknown on a mutation's own answer, whose mergeable is the asynchronous check's state as the close lands: null before the check settles, true after it
-	//	Action.QueueState     cannot supply  no merge-queue key among 46
-	//	Action.QueuePosition  cannot supply  no queue key, so unknown
-	//	Action.MergeBlocked   cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the close lands: unknown before the check settles, clean after it
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable is the asynchronous check's state as the close lands: null before the check settles, true after it
+	//	Action.QueueState                     cannot supply  no merge-queue key among 46
+	//	Action.QueuePosition                  cannot supply  no queue key, so unknown
+	//	Action.MergeBlocked                   cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the close lands: unknown before the check settles, clean after it
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the REST pull-request record a mutation answers carries no review
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Ref                                  differs in spelling  iid, sigil "!"
-	//	SourceRepo                           differs in shape     source_project_id beside target_project_id, a fork named by id alone: the addressed project where the two are equal, the zero value otherwise
-	//	Labels[].Color                       cannot supply        no colour on the answer: its labels arrive as name strings
-	//	Labels[].Description                 cannot supply        no description on the answer: its labels arrive as name strings
-	//	Action.Mergeable                     cannot supply        merge_status checking and detailed_merge_status preparing on the answer before the asynchronous check settles, can_be_merged and not_open after it, unknown on both: the REST arm reads no mergeable flag
-	//	Action.Checks                        differs in shape     head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran
-	//	Action.ChecksPassing .. ChecksTotal  cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
-	//	Action.QueueState                    cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
-	//	Action.QueuePosition                 cannot supply        QueuePositionUnknown: no merge-train key on the answer
-	//	Action.MergeBlocked                  cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the close lands: preparing before the check settles, not_open after it, checking after a reopen
+	//	Ref                                   differs in spelling  iid, sigil "!"
+	//	SourceRepo                            differs in shape     source_project_id beside target_project_id, a fork named by id alone: the addressed project where the two are equal, the zero value otherwise
+	//	Labels[].Color                        cannot supply        no colour on the answer: its labels arrive as name strings
+	//	Labels[].Description                  cannot supply        no description on the answer: its labels arrive as name strings
+	//	Action.Mergeable                      cannot supply        merge_status checking and detailed_merge_status preparing on the answer before the asynchronous check settles, can_be_merged and not_open after it, unknown on both: the REST arm reads no mergeable flag
+	//	Action.Checks                         differs in shape     head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran
+	//	Action.ChecksPassing .. ChecksTotal   cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
+	//	Action.QueueState                     cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
+	//	Action.QueuePosition                  cannot supply        QueuePositionUnknown: no merge-train key on the answer
+	//	Action.MergeBlocked                   cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the close lands: preparing before the check settles, not_open after it, checking after a reopen
+	//	Action.Approvals .. ChangesRequested  cannot supply        CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	AuthorKind                            cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the close lands, true on every close measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	ClosePR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
 
-	// ReopenPR reopens a closed pull request and returns it.
+	// ReopenPR reopens a closed pull request and returns it. A pull request
+	// already open is answered as it stands, with no error.
 	//
 	// Per forge:
 	//
@@ -443,41 +470,45 @@ type PullRequests interface {
 	//
 	// GitHub departs from the normalized contract:
 	//
-	//	Action.Mergeable      cannot supply  unknown on a mutation's own answer, whose mergeable is the asynchronous check's state as the reopen lands, null on every reopen measured
-	//	Action.QueueState     cannot supply  no merge-queue key among 46
-	//	Action.QueuePosition  cannot supply  no queue key, so unknown
-	//	Action.MergeBlocked   cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the reopen lands, unknown on every reopen measured
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable is the asynchronous check's state as the reopen lands, null on every reopen measured
+	//	Action.QueueState                     cannot supply  no merge-queue key among 46
+	//	Action.QueuePosition                  cannot supply  no queue key, so unknown
+	//	Action.MergeBlocked                   cannot supply  unknown on a mutation's own answer, whose mergeable_state is the asynchronous check's state as the reopen lands, unknown on every reopen measured
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the REST pull-request record a mutation answers carries no review
 	//
 	// GitLab departs from the normalized contract:
 	//
-	//	Ref                                  differs in spelling  iid, sigil "!"
-	//	SourceRepo                           differs in shape     source_project_id beside target_project_id, a fork named by id alone: the addressed project where the two are equal, the zero value otherwise
-	//	Labels[].Color                       cannot supply        no colour on the answer: its labels arrive as name strings
-	//	Labels[].Description                 cannot supply        no description on the answer: its labels arrive as name strings
-	//	Action.Mergeable                     cannot supply        merge_status unchecked and detailed_merge_status unchecked on the answer, unknown until the asynchronous check settles
-	//	Action.Checks                        differs in shape     head_pipeline.status scalar on the answer, no fold: null where the head ran no pipeline, so CheckUnknown, and the head pipeline's own status, running here, where one ran
-	//	Action.ChecksPassing .. ChecksTotal  cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
-	//	Action.QueueState                    cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
-	//	Action.QueuePosition                 cannot supply        QueuePositionUnknown: no merge-train key on the answer
-	//	Action.MergeBlocked                  cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the reopen lands, unchecked on every reopen measured, the status a reopen resets to
-	//	State                                differs in spelling  state string, opened, closed_at cleared
+	//	Ref                                   differs in spelling  iid, sigil "!"
+	//	SourceRepo                            differs in shape     source_project_id beside target_project_id, a fork named by id alone: the addressed project where the two are equal, the zero value otherwise
+	//	Labels[].Color                        cannot supply        no colour on the answer: its labels arrive as name strings
+	//	Labels[].Description                  cannot supply        no description on the answer: its labels arrive as name strings
+	//	Action.Mergeable                      cannot supply        merge_status unchecked and detailed_merge_status unchecked on the answer, unknown until the asynchronous check settles
+	//	Action.Checks                         differs in shape     head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran
+	//	Action.ChecksPassing .. ChecksTotal   cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
+	//	Action.QueueState                     cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
+	//	Action.QueuePosition                  cannot supply        QueuePositionUnknown: no merge-train key on the answer
+	//	Action.MergeBlocked                   cannot supply        unknown on a mutation's own answer, whose detailed_merge_status is the asynchronous check's state as the reopen lands, unchecked on every reopen measured, the status a reopen resets to
+	//	State                                 differs in spelling  state string, opened, closed_at cleared
+	//	Action.Approvals .. ChangesRequested  cannot supply        CountUnknown: the REST merge-request record a mutation answers carries no approval count and no reviewer review state
 	//
 	// Gitea departs from the normalized contract:
 	//
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the reopen lands, true on every reopen measured
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the reopen lands, true on every reopen measured
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	AuthorKind             cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
-	//	Action.Mergeable       cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the reopen lands, false on one reopen measured and true on the others
-	//	Action.AutoMergeArmed  cannot supply  no auto_merge key: unknown
-	//	Action.QueueState      cannot supply  QueueNone always
-	//	Action.QueuePosition   cannot supply  QueuePositionUnknown: no queue
-	//	Action.MergeBlocked    cannot supply  mergeable and draft, no reason
+	//	AuthorKind                            cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
+	//	Action.Mergeable                      cannot supply  unknown on a mutation's own answer, whose mergeable bool is false while the instance's asynchronous check holds the pull request queued as the reopen lands, false on one reopen measured and true on the others
+	//	Action.AutoMergeArmed                 cannot supply  no auto_merge key: unknown
+	//	Action.QueueState                     cannot supply  QueueNone always
+	//	Action.QueuePosition                  cannot supply  QueuePositionUnknown: no queue
+	//	Action.MergeBlocked                   cannot supply  mergeable and draft, no reason
+	//	Action.Approvals .. ChangesRequested  cannot supply  CountUnknown: the pull-request record a mutation answers carries no review, and a mutation reads none
 	ReopenPR(ctx context.Context, repo RepoRef, pr PRRef) (PullRequest, error)
 
 	// RerunFailedChecks re-runs the failed CI of a pull request.
@@ -487,14 +518,22 @@ type PullRequests interface {
 	// [CodeStaleHead] rather than re-running when the pull request has moved
 	// since, because a re-run can carry deployment side effects and a row
 	// displaying one commit's red status must not act on another's. Empty means
-	// the forge reported no head, and the re-run then proceeds against the pull
-	// request's current one, which is the one case where the pin is unavailable
-	// rather than waived.
+	// the caller holds no head, and the call then reads the pull request's
+	// current one and pins that; a pull request the forge answers with no head
+	// is refused with [CodeMissingSHA] before any write.
+	//
+	// The run re-run is the one the forge links to the head's checks verdict. On
+	// GitHub, Gitea and Forgejo that is the commit's rollup or combined status, which
+	// counts every run on the head SHA, so the first run on it that failed or was
+	// cancelled, whatever its event or pull request, read on up to three pages at the
+	// most rows the instance serves; on GitLab, the head pipeline GitLab matches to the
+	// head (its departure below). Before any write, a head with no such run is refused
+	// with [CodeRunNotFailed], or [CodeRunPageTruncated] where its third page was full.
 	//
 	// Whether an instance can do this at all is [CapRerunChecks], read from
-	// [ConnectionCaps]: a product with no re-run verb reports the capability
-	// rather than failing to satisfy this role, because the two products of one
-	// family differ here and a family serves both.
+	// [ConnectionCaps]: an instance with no re-run verb reports the capability
+	// rather than failing to satisfy this role, because the products and versions
+	// of one family differ here and a family serves them all.
 	//
 	// Called against an instance detection says lacks the verb, it refuses with
 	// [CodeCapabilityUnsupported] and issues NO request, carrying the capability
@@ -504,26 +543,39 @@ type PullRequests interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   GET /repos/{owner}/{repo}/actions/runs to resolve the head commit's run, then POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where either of them answered from another address, 2 to 3 requests; needs rerun_checks
-	//	GitLab   GET /api/v4/projects/{id}/pipelines, filtered by the head SHA, to resolve the head commit's pipeline, then POST /api/v4/projects/{id}/pipelines/{run}/retry, 2 requests; needs rerun_checks
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/actions/runs, filtered by the head SHA, to resolve the head commit's run, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, both of which this product's swagger document names, 2 requests; needs rerun_checks
-	//	Forgejo  no route: this product carries no such verb, so the call is refused; needs rerun_checks
+	//	GitHub   GET /repos/{owner}/{repo}/pulls/{pull_number} for the pull request's current head where the caller brought none, then GET /repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages of 100, to resolve a run on it that failed or was cancelled, then POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where any of them answered from another address, 2 to 6 requests; needs rerun_checks
+	//	GitLab   the RerunHead document for the merge request's head and the head pipeline GitLab matches to it by sha or source_sha, or GET /api/v4/projects/{id}/merge_requests/{iid} where this connection's setup found the documents refused, then POST /api/v4/projects/{id}/pipelines/{run}/retry, addressed instead at the project that pipeline names where it is another, a fork's, 2 requests; needs rerun_checks
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, both of which this product's swagger document names, 2 to 5 requests; needs rerun_checks
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/pulls/{index} for the pull request's current head where the caller brought none, then GET /api/v1/repos/{owner}/{repo}/actions/runs filtered by that head, up to three pages at the instance's stated maximum, to resolve a run on it that failed or was cancelled, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 2 to 5 requests; needs rerun_checks
+	//
+	// GitHub departs from the normalized contract:
+	//
+	//	jobs re-run  differs in shape  the failed jobs and their dependent jobs, as the route documents
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	jobs re-run  differs in shape  failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict
+	//	run re-run   differs in shape  the head pipeline GitLab matches to the merge request's head rather than a run picked among the head's: on a project with merged results pipelines it ran on a merge commit of the head, and on a fork's merge request in the fork's project; none matched, an earlier head's pipeline included, is refused with CodeRunNotFailed, and so is a stored pipeline on another commit where the documents are refused, since the REST payload carries no source_sha to match it by
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	error, verb absent  cannot supply  no re-run verb in this product's API, which its swagger document settles
+	//	jobs re-run                    differs in shape  the whole finished run starts again, its passed jobs included: this product has no failed-jobs route, and its per-job route cannot be aimed at the failed roots alone, because a job's needs name workflow job keys the job list does not carry beside the integer id
+	//	error, verb absent, before 17  cannot supply     no re-run verb before Forgejo 17, which its swagger document settles
 	//
 	// GitHub sends this, where a wrong default would change the request silently:
 	//
-	//	head_sha  query  the head the caller pinned, as the filter this product's runs route declares, so the retry addresses the workflow run of the commit the caller's row was rendered from rather than whichever the instance returns first
-	//
-	// GitLab sends this, where a wrong default would change the request silently:
-	//
-	//	sha  query  the head the caller pinned, as the filter this product's pipelines route declares, so the retry addresses the pipeline of the commit the caller's row was rendered from rather than whichever the instance returns first
+	//	head_sha  query  the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the retry addresses a workflow run of that commit rather than one of another branch
+	//	per_page  query  this product's most rows on one page, so the walk for a failed run reads as few pages as it can
 	//
 	// Gitea sends this, where a wrong default would change the request silently:
 	//
-	//	head_sha  query  the head the caller pinned, as the filter this product's runs route declares, so the retry addresses the run of the commit the caller's row was rendered from rather than whichever the instance returns first
+	//	head_sha  query  the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the retry addresses a run of that commit rather than one of another branch
+	//	limit     query  the instance's stated maximum, here the maximum both public instances state, so the walk for a failed run reads as few pages as it can, and a page shorter than it ends the walk
+	//
+	// Forgejo sends this, where a wrong default would change the request silently:
+	//
+	//	head_sha  query  the head the caller pinned, or the pull request's current one where the caller brought none, as the filter this product's runs route declares, so the re-run addresses a run of that commit rather than one of another branch
+	//	limit     query  the instance's stated maximum, here the maximum both public instances state, so the walk for a failed run reads as few pages as it can, and a page shorter than it ends the walk
 	RerunFailedChecks(ctx context.Context, repo RepoRef, pr PRRef, headSHA string) error
 }
 
@@ -644,6 +696,27 @@ type Merges interface {
 	//
 	//	Queue  cannot supply  QueueNone always
 	MergeStatus(ctx context.Context, repo RepoRef, pr PRRef) (MergeStatus, error)
+
+	// CancelAutoMerge disarms a merge armed to complete once its requirements
+	// pass, as [MergeRequest.AutoMerge] arms one. A pull request with nothing
+	// armed answers nil, so a cancel sent twice, or after the forge merged and
+	// disarmed it, is no refusal. A pull request that does not exist answers
+	// [KindNotFound] with [CodeRepoOrPRNotVisible]. Where the answer shows the
+	// repository moved, the call cancels nothing and answers [CodeRepoRefStale],
+	// carrying the successor where the product names one.
+	//
+	// Per forge:
+	//
+	//	GitHub   GET /repos/{owner}/{repo}/pulls/{number}, whose auto_merge null says nothing is armed and ends the call, then the DisableAutoMerge document addressed by the node id that record names; where the repository moved, the read's hop and one read against the id-addressed location resolve the successor the stale refusal carries, and nothing is cancelled, 1 to 3 requests
+	//	GitLab   POST /api/v4/projects/{id}/merge_requests/{iid}/cancel_auto_merge where this connection's setup read a version at or past 19.5, whose 409 says nothing is armed, and otherwise POST /api/v4/projects/{id}/merge_requests/{iid}/cancel_merge_when_pipeline_succeeds, the route every version serves, whose 201 carrying status error says the same, 1 request
+	//	Gitea    DELETE /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, whose 404 answers a pull request with nothing scheduled and a missing one alike, so a 404 is followed by GET /api/v1/repos/{owner}/{repo}/pulls/{number}, which finding the pull request makes the answer nil; where the repository moved, the redirect the DELETE is refused names the successor the stale refusal carries, and so does the one 301 the read answers where the move came between the two, 1 to 3 requests
+	//	Forgejo  DELETE /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, whose 404 answers a pull request with nothing scheduled and a missing one alike, so a 404 is followed by GET /api/v1/repos/{owner}/{repo}/pulls/{number}, which finding the pull request makes the answer nil; where the repository moved, the redirect the DELETE is refused names the successor the stale refusal carries, and so does the one 301 the read answers where the move came between the two, 1 to 3 requests
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	merge train                                                        not measured      a merge request on a merge train is also removed from the train, as both routes document; unmeasured, needs a sandbox project that merges through a train
+	//	error, permission refused, on cancel_merge_when_pipeline_succeeds  differs in shape  KindUnauthorized: this route answers 401 to a caller who may not cancel, a status no member separates from a credential the instance rejects; it is the route sent before 19.5 and where setup read no version
+	CancelAutoMerge(ctx context.Context, repo RepoRef, pr PRRef) error
 }
 
 // Checks reads the CI verdict for a commit.
@@ -693,7 +766,7 @@ type Checks interface {
 	// Per forge:
 	//
 	//	GitHub   GET /repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with the page bound as its page size and no head filter, then one read against the id-addressed location to resolve the successor where it answered from another address; a run whose conclusion is action_required, a fork's run waiting for a maintainer's approval with no job run, reads pending, the verdict the Gitea family gives the same wait; under a since bound, a page that reaches the 1,000-run window the route serves a created-filtered listing through, or ends short of its total with no next relation, holds back the runs of the oldest second it served, and the next page asks created=<bound>..<that second> from page 1, the inclusive range the route's created filter takes from the search syntax (https://docs.github.com/en/search-github/getting-started-with-searching-on-github/understanding-the-search-syntax#query-for-dates); where an earlier page of the range served that second, the range already ends at that second, or a page's runs of its oldest second are more than a continuation names, the next page asks created=<that second>..<that second> instead (measured: it answers that second's runs alone), drops by id the runs of it the walk answered, and the walk then goes on with created=<bound>..<the second before>, so each range a walk crosses into reads the runs of one second twice and pays once more for the pages they fill, 0 to 3 requests per page
-	//	GitLab   GET /api/v4/projects/{id}/pipelines, the route the re-run resolves its pipeline on, with the page bound as its page size and no head filter, 1 request per page
+	//	GitLab   GET /api/v4/projects/{id}/pipelines, with the page bound as its page size and no head filter, 1 request per page
 	//	Gitea    GET /api/v1/repos/{owner}/{repo}/actions/runs, the route the re-run resolves its run on, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor; under a since bound no time filter, the route declaring none, so each page's rows created before the bound's second are dropped; the route answers runs by id descending, or from v28 by repository index descending, co-monotonic with id (models/actions/run_list.go, FindRunOptions.ToOrders), and stamps a run's creation once, at insert (models/actions/run.go, its Created field), so a page whose every run was created more than a minute before the bound, the step a host clock can take back between two inserts, ends the walk with no continuation, 1 to 2 requests per page
 	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/actions/runs, with page from 1, the smaller of the page bound and the instance's stated maximum as its page size and no head filter, continued from the body's total_count, since the route sends no paging header and an instance whose maximum was lowered after the connection read it still serves a page of its own maximum, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor; under a since bound no time filter, the route declaring none, so each page's rows created before the bound's second are dropped; the route answers runs by id descending (models/actions/run_list.go, FindRunOptions.ToOrders) and stamps a run's creation once, at insert (models/actions/run.go, its Created field), so a page whose every run was created more than a minute before the bound, the step a host clock can take back between two inserts, ends the walk with no continuation, 1 to 2 requests per page
 	//
@@ -738,6 +811,36 @@ type Checks interface {
 	//	page      query  the first page of a walk, sent with every limit: a Forgejo instance answers a request with no page with every run of the repository
 	//	limit     query  the smaller of the page bound and the instance's stated maximum, here the maximum both public instances state, the same on every page of one walk, which is what lets the stated total decide the continuation where an instance serves fewer rows than asked
 	ListRuns(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Run], error)
+
+	// RerunFailedRun re-runs what failed on one finished run, addressed by the
+	// [RunRef.ID] [Checks.ListRuns] answers, for a run no pull request resolves. It
+	// shares [CapRerunChecks] and its [CodeCapabilityUnsupported] refusal, sent with
+	// no request, with [PullRequests.RerunFailedChecks]. A run ID that is not
+	// positive is refused with [CodeRepoRefInvalid] before any request. A run that
+	// is not finished, or neither failed nor was cancelled, is the forge's own
+	// refusal, passed through, except where the forge would start it again: there
+	// it is refused with [CodeRunNotFailed] before any write.
+	//
+	// Per forge:
+	//
+	//	GitHub   POST /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, plus one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 2 requests; needs rerun_checks
+	//	GitLab   POST /api/v4/projects/{id}/pipelines/{run}/retry, 1 request; needs rerun_checks
+	//	Gitea    POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs, which this product's swagger document names, 1 request; needs rerun_checks
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/actions/runs/{run}, since this product's whole-run re-run starts any finished run again, so a run that neither failed nor was cancelled is refused before any write, then POST /api/v1/repos/{owner}/{repo}/actions/runs/{run}/rerun, the whole-run re-run this product's swagger document names from 17, 2 requests; needs rerun_checks
+	//
+	// GitHub departs from the normalized contract:
+	//
+	//	jobs re-run  differs in shape  the failed jobs and their dependent jobs, as the route documents
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	jobs re-run  differs in shape  failed or canceled jobs, as the route documents; from 19.6 a retry of a pipeline whose retry is in flight answers 409, read as KindConflict
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	jobs re-run                    differs in shape  the whole finished run starts again, its passed jobs included: this product has no failed-jobs route, and its per-job route cannot be aimed at the failed roots alone, because a job's needs name workflow job keys the job list does not carry beside the integer id
+	//	error, verb absent, before 17  cannot supply     no re-run verb before Forgejo 17, which its swagger document settles
+	RerunFailedRun(ctx context.Context, repo RepoRef, run RunRef) error
 }
 
 // Issues is the issue surface.
@@ -798,14 +901,40 @@ type Issues interface {
 	//	Items[].AuthorKind  cannot supply  AccountKindUnknown on every row: the user object carries no type key, measured on codeberg.org 2026-10-11
 	ListMyIssues(ctx context.Context, opts ...ListOption) (Page[Issue], error)
 
+	// ReadIssue reads one issue by number. A number naming a pull request, on a
+	// product whose issues and pull requests share one number space, answers
+	// [KindNotFound] with no code, since this role reads issues only. An issue
+	// the forge answers from another repository, where it now lives, carries
+	// that repository in [Issue.Repo] and its number there in [Issue.Ref].
+	//
+	// Per forge:
+	//
+	//	GitHub   GET /repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record carrying a pull-request key is answered not found; where the issue was transferred, the 301 its old address answers, whose name-addressed Location is the issue in the repository it now lives in, read there; and where the repository moved, one read against the id-addressed location to resolve the successor the stale refusal carries, 0 to 3 requests
+	//	GitLab   GET /api/v4/projects/{id}/issues/{iid}, 1 request
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record whose pull_request is set is answered not found, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 1 to 2 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/issues/{number}, whose population is issues and pull requests both, so a record whose pull_request is set is answered not found, and where the repository moved, the one 301 its first read answers, whose Location names the successor the stale refusal carries, 1 to 2 requests
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	Ref                   differs in spelling  iid int, the project's own sequence
+	//	AuthorKind            cannot supply        AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-11-16, while a merge request's author answers it
+	//	Labels[].Color        cannot supply        no colour on the answer: its labels arrive as name strings, the label detail parameter of the list routes ignored on this one, measured on gitlab.com 2026-11-16
+	//	Labels[].Description  cannot supply        no description on the answer: its labels arrive as name strings, the label detail parameter of the list routes ignored on this one, measured on gitlab.com 2026-11-16
+	//	State                 differs in spelling  state string, opened
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	AuthorKind  cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-11-16
+	ReadIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
+
 	// CreateIssue files an issue and returns the created object.
 	//
 	// Per forge:
 	//
 	//	GitHub   POST /repos/{owner}/{repo}/issues, whose own body carries the labels the caller named, then one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 2 requests
 	//	GitLab   POST /api/v4/projects/{id}/issues, 1 request
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues, 1 to 2 requests
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, then POST /api/v1/repos/{owner}/{repo}/issues, 1 to 2 requests
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues, 1 to 3 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels where the caller names labels, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues, 1 to 3 requests
 	//
 	// GitLab departs from the normalized contract:
 	//
@@ -832,7 +961,9 @@ type Issues interface {
 	//	labels  body  the labels the caller named, as the numeric ids this product's creation declares in place of their names, which is what the label read this row prices resolves
 	CreateIssue(ctx context.Context, repo RepoRef, req NewIssue) (Issue, error)
 
-	// CloseIssue closes an issue and returns it as the forge now reports it.
+	// CloseIssue closes an issue and returns it as the forge now reports it. On
+	// GitHub, Gitea and Forgejo a pull request's number reaches that pull request,
+	// whose numbers the issues share, while [Issues.ReadIssue] answers it not found.
 	//
 	// Per forge:
 	//
@@ -852,6 +983,31 @@ type Issues interface {
 	//
 	//	AuthorKind  cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
 	CloseIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
+
+	// ReopenIssue reopens an issue and returns it as the forge now reports it. An
+	// issue already open is answered as it stands, with no error. On GitHub, Gitea
+	// and Forgejo a pull request's number reaches that pull request, as with
+	// [Issues.CloseIssue].
+	//
+	// Per forge:
+	//
+	//	GitHub   PATCH /repos/{owner}/{repo}/issues/{number}, then one read against the id-addressed location to resolve the successor where it answered from another address, 1 to 2 requests
+	//	GitLab   PUT /api/v4/projects/{id}/issues/{iid}, 1 request
+	//	Gitea    PATCH /api/v1/repos/{owner}/{repo}/issues/{number}, 1 request
+	//	Forgejo  PATCH /api/v1/repos/{owner}/{repo}/issues/{number}, 1 request
+	//
+	// GitLab departs from the normalized contract:
+	//
+	//	Ref                   differs in spelling  iid int, the project's own sequence
+	//	AuthorKind            cannot supply        AccountKindUnknown: the issue's author carries no bot key, measured on gitlab.com 2026-10-11, while a merge request's author answers it
+	//	Labels[].Color        cannot supply        no colour on the answer: its labels arrive as name strings
+	//	Labels[].Description  cannot supply        no description on the answer: its labels arrive as name strings
+	//	State                 differs in spelling  state string, opened
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	AuthorKind  cannot supply  AccountKindUnknown: the user object carries no type key, measured on codeberg.org 2026-10-11
+	ReopenIssue(ctx context.Context, repo RepoRef, issue IssueRef) (Issue, error)
 }
 
 // Capabilities reads the three response-level capability scopes, so a consumer
@@ -878,7 +1034,7 @@ type Capabilities interface {
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	Caps[rerun_checks]  cannot supply  swagger has no rerun verb: no
+	//	Caps[rerun_checks], before 17  cannot supply  no: the swagger document declares no re-run verb before Forgejo 17
 	ConnectionCaps(ctx context.Context) (ConnectionCaps, error)
 
 	// GrantCaps reports what this credential can do on it.
@@ -1015,9 +1171,8 @@ type Releases interface {
 	CreateRelease(ctx context.Context, repo RepoRef, req NewRelease) (Release, error)
 }
 
-// Labels reads the labels a repository defines. It is OPTIONAL for the same
-// reason [Releases] is: a family whose product has no pull-request labels does
-// not implement it.
+// Labels reads the labels a repository defines and changes the labels a pull
+// request or an issue carries.
 type Labels interface {
 	// ListLabels returns labels defined on repo.
 	//
@@ -1033,20 +1188,61 @@ type Labels interface {
 	//	Items[].Color  differs in spelling  color string, leading #, on 23 of 23, upper-case hex on 3
 	//	Successor      cannot supply        nil: no successor key
 	ListLabels(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Label], error)
+
+	// AddLabels puts labels the repository already defines on target, matched by
+	// name exactly as the repository spells them, and never creates a label: a name
+	// the first page of the labels the repository can use lacks (its own, and its
+	// group's or organization's where the forge has them) is refused before any
+	// write, with [CodeValidation], or [CodeLabelPageTruncated] where a page came
+	// back full. No names send nothing. It answers no item: read it back with
+	// [PullRequests.ReadPR] or [Issues.ReadIssue].
+	//
+	// Per forge:
+	//
+	//	GitHub   GET /repos/{owner}/{repo}/labels, its first page at the most a page serves, to refuse a name the repository does not define before anything is written, then POST /repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the read's hop and one read against the id-addressed location resolve the successor the stale refusal carries, and nothing is written, 2 to 3 requests
+	//	GitLab   GET /api/v4/projects/{id}/labels, its first page at the most a page serves, to refuse a name the project does not define, since this product's add_labels creates one, then PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}, 2 requests
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written, 2 to 3 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/labels, its first page at the instance's stated maximum, whose ids this product's option takes in place of their names, and where a name is missing from that page and it was the whole list, GET /api/v1/orgs/{owner}/labels, the first page of its organization's labels at the same bound, whose ids that option also takes, a 404 there being a user's repository with none, then POST /api/v1/repos/{owner}/{repo}/issues/{number}/labels, the issue route a pull request shares; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is written, 2 to 3 requests
+	//
+	// GitHub sends this, where a wrong default would change the request silently:
+	//
+	//	labels  body  the labels the caller named, as the NAMES this product's addition takes, each one the label read found defined
+	//
+	// GitLab sends this, where a wrong default would change the request silently:
+	//
+	//	add_labels  body  the labels the caller named, as the NAMES this product's update takes, each one the label read found defined
+	//
+	// Gitea and Forgejo send this, where a wrong default would change the request silently:
+	//
+	//	labels  body  the labels the caller named, as the numeric ids this product's option takes, which is what the label read this row prices resolves
+	AddLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
+
+	// RemoveLabels takes names off target. A name the item does not carry is no
+	// error, and no names send nothing. A refusal met after a name was removed
+	// leaves that removal in place, and its Message names every label removed
+	// before it. It answers no item: read it back with [PullRequests.ReadPR] or
+	// [Issues.ReadIssue].
+	//
+	// Per forge:
+	//
+	//	GitHub   DELETE /repos/{owner}/{repo}/issues/{number}/labels/{name} for each name, the issue route a pull request shares; its 404 answers a label the item lacks and a missing item alike, so the first one is followed by one GET /repos/{owner}/{repo}/issues/{number}, which finding the item makes that removal and every later 404 a name not carried; where a removal answered from another address, one read against the id-addressed location resolves the successor the stale refusal carries, 0 to 1 request plus one per label name
+	//	GitLab   PUT /api/v4/projects/{id}/issues/{iid} or /api/v4/projects/{id}/merge_requests/{iid}, whose remove_labels ignores a name the item does not carry; a name with a comma or with surrounding space names no label of this product and is not sent, 1 request
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries with its id, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{label_id} for each name it carries, by the id this product's route takes, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed, 1 to 2 requests plus up to one per label name
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/issues/{number}/labels, every label the item carries, an organization's included, then DELETE /api/v1/repos/{owner}/{repo}/issues/{number}/labels/{name} for each name it carries, by name, since this product reads digits as an id only where no label has that name, a 404 or 422 for a label or item gone since the read read as a name not carried; where the repository moved, the one 301 the read answers names the successor the stale refusal carries, and nothing is removed, 1 to 2 requests plus up to one per label name
+	//
+	// Forgejo departs from the normalized contract:
+	//
+	//	removal, a name the repository and its organization share  cannot supply  the repository's label alone: this product's removal resolves a name to the repository's label before the organization's and an id to a repository label only, so an organization label the item carries stays where the repository defines a label of its name, and the call answers nil
+	RemoveLabels(ctx context.Context, repo RepoRef, target LabelTarget, names []string) error
 }
 
-// Core is the union of the roles EVERY family satisfies, and the union is
-// therefore the INTERSECTION of what they can do.
+// Core is the union of the roles EVERY family satisfies, so it is the
+// INTERSECTION of what they can do; [Releases] stays out so a family whose
+// product has no release object is still a Core. A consumer declares the
+// narrowest role it uses.
 //
-// A union of everything would re-import the god-interface failure and could not
-// be satisfied by a family whose product lacks releases or pull-request labels,
-// so those two roles stay out of Core and are asserted separately. A consumer
-// declares the narrowest role it actually uses; Core exists for the one place
-// that has to hand out a single value a route might ask anything of.
-//
-// Adding a method to any of these interfaces is a breaking change for every
-// implementor, so what is additive is a NEW role, a new family, a new struct
-// field and a new enum member, never a method here.
+// Adding a method to any of these interfaces breaks every implementor, so an
+// additive change is a NEW role, family, struct field or enum member.
 type Core interface {
 	Identity
 	Repos
@@ -1056,6 +1252,7 @@ type Core interface {
 	Issues
 	Capabilities
 	Governor
+	Labels
 
 	// Close releases the client's pool, the idle connections of the transport the
 	// library built for its connection: a caller that disconnects or re-addresses a

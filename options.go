@@ -423,11 +423,11 @@ func WithRotationCursor(c RotationCursor) Option {
 
 // WithMutationReserve sets the budget the governor holds back from reads, in the
 // instance's own units: a read is deferred, marked [PartialRateLimited] and counted
-// by [Counters.ReadDeferred] while a rate-limit pool it draws on reports n or less,
-// and no mutation is held back. A read is held against the pool its operation's last
-// answer named, and on GitLab also against the authenticated API throttle; a pool
-// whose whole limit is n or less is not held, and Gitea reports no figure to hold.
-// Zero holds nothing back, and a family's constructor refuses a negative n with [CodeBudgetInvalid].
+// by [Counters.ReadDeferred] while a rate-limit pool it draws on reports n or less;
+// no mutation is deferred, nor an [ActionReads] read within its bound above zero.
+// A read is held against its operation's last-answered pool, and on GitLab the API
+// throttle too; a pool whose whole limit is n or less is not held, and Gitea reports
+// none. Zero holds nothing back, and a negative n is refused with [CodeBudgetInvalid].
 // Default: [DefaultMutationReserve].
 func WithMutationReserve(n int) Option {
 	return optionFunc(func(s *Settings) { s.MutationReserve = n })
@@ -578,6 +578,14 @@ type ListSettings struct { //nolint:govet // fieldalignment: each field was appe
 	// named, for the reason StateSet exists. The pull request lists read
 	// MergeState; every other list refuses whenever it is true.
 	MergeStateSet bool
+	// Reviews is whether a pull request list answers each row's
+	// [ActionState.Approvals] and [ActionState.ChangesRequested], true where the
+	// caller named none.
+	Reviews bool
+	// ReviewsSet reports that the caller named [WithReviews], whatever it named,
+	// for the reason StateSet exists. The pull request lists read Reviews; every
+	// other list refuses whenever it is true.
+	ReviewsSet bool
 }
 
 // ListOption configures one list call. Like [Option] it cannot be implemented
@@ -592,10 +600,10 @@ type ListOption interface {
 // [CodeListOwnerInvalid] for an owner outside the form [WithOwner] states,
 // [CodeListSinceInvalid] for the zero time, and [CodeCursorInvalid] for a malformed
 // [WithAfter] cursor. It is not told which list it resolves for, so it records a
-// named filter, owner, bound or merge state choice in the matching Set field, and the
-// family method refuses one its list cannot take, under that option's code.
+// named filter, owner, bound, merge state or reviews choice in the matching Set field,
+// and the family method refuses one its list cannot take, under that option's code.
 func ResolveList(opts ...ListOption) (ListSettings, error) {
-	s := ListSettings{PageBound: DefaultPageBound, State: ListStateOpen, MergeState: true}
+	s := ListSettings{PageBound: DefaultPageBound, State: ListStateOpen, MergeState: true, Reviews: true}
 	for _, o := range opts {
 		if o != nil {
 			o.applyListOption(&s)
@@ -743,5 +751,18 @@ func WithMergeState(read bool) ListOption {
 	return listOptionFunc(func(ls *ListSettings) {
 		ls.MergeState = read
 		ls.MergeStateSet = true
+	})
+}
+
+// WithReviews sets whether [PullRequests.ListPRs] and [PullRequests.ListMyPRs] read
+// each row's [ActionState.Approvals] and [ActionState.ChangesRequested]. False sends no
+// review selection or per-row review read and answers both as [CountUnknown]. Every
+// other list refuses it, at either value, with [CodeListReviewsInvalid].
+//
+// Default: true.
+func WithReviews(read bool) ListOption {
+	return listOptionFunc(func(ls *ListSettings) {
+		ls.Reviews = read
+		ls.ReviewsSet = true
 	})
 }

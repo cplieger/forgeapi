@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // documentPath is this product's GraphQL endpoint, which sits beside the versioned
@@ -27,15 +27,18 @@ const varFullPath = "fullPath"
 
 // mergeRequestFields is the node selection both pull-request documents and the schema
 // probe share, all a normalized pull request needs. gate is a directive both merge
-// state fields carry, "" for none. `diffHeadSha` is the head a merge and a re-run pin
+// state fields carry and reviews the one both review fields carry, "" for none. `diffHeadSha` is the head a merge and a re-run pin
 // to; `headPipeline.sha` is a merged-results SHA. `labels` is one page of an uncapped
 // set, measured by `count` and `hasNextPage` ([Client.labelCut]). `headPipeline.status`
 // is one scalar, so no checks fold here can truncate. No merge-train field is selected:
 // `Project.mergeTrains` and `MergeTrain.cars` are deprecated (introspected 2026-09-20),
 // which the schema gate refuses.
-func mergeRequestFields(gate string) string {
+func mergeRequestFields(gate, reviews string) string {
 	if gate != "" {
 		gate = " " + gate
+	}
+	if reviews != "" {
+		reviews = " " + reviews
 	}
 	return `
       iid
@@ -60,6 +63,12 @@ func mergeRequestFields(gate string) string {
         pageInfo { hasNextPage }
         nodes { title color description }
       }
+      userNotesCount
+      approvedBy` + reviews + ` { count }
+      reviewers(first: 100)` + reviews + ` {
+        pageInfo { hasNextPage }
+        nodes { mergeRequestInteraction { reviewState } }
+      }
       headPipeline { status }`
 }
 
@@ -78,16 +87,17 @@ type document struct {
 // prList is the pull-request LIST document. Its callers are [Client.ListPRs]. The
 // state filter and the merge state gate are variables rather than literals because
 // published list options reach them, and the page size is a variable because the
-// per-call page bound does.
+// per-call page bound does. A page of 100 scored 128 of the 200 complexity limit on
+// gitlab.com, 2026-11-16, and 104 with the review fields left out.
 var prList = document{
 	name: "PRList",
-	text: `query PRList($fullPath: ID!, $state: MergeRequestState, $first: Int!, $after: String, $mergeState: Boolean!) {
+	text: `query PRList($fullPath: ID!, $state: MergeRequestState, $first: Int!, $after: String, $mergeState: Boolean!, $reviews: Boolean!) {
   project(fullPath: $fullPath) {
     fullPath
     userPermissions { pushCode readMergeRequest }
     mergeRequests(state: $state, first: $first, after: $after) {
       pageInfo { hasNextPage endCursor }
-      nodes {` + mergeRequestFields("@include(if: $mergeState)") + `
+      nodes {` + mergeRequestFields("@include(if: $mergeState)", "@include(if: $reviews)") + `
       }
     }
   }
@@ -106,7 +116,7 @@ var prRead = document{
   project(fullPath: $fullPath) {
     fullPath
     userPermissions { pushCode readMergeRequest }
-    mergeRequest(iid: $iid) {` + mergeRequestFields("") + `
+    mergeRequest(iid: $iid) {` + mergeRequestFields("", "") + `
     }
   }
   queryComplexity { score limit }
@@ -130,25 +140,49 @@ var ownerLookup = document{
 `,
 }
 
+// rerunHeadFields is the merge request selection a re-run resolves its pipeline
+// from. GraphQL `headPipeline` is GitLab's diff_head_pipeline, the stored head
+// pipeline only where its sha or source_sha matches `diffHeadSha`
+// (app/graphql/types/merge_request_type.rb), so a merged results pipeline of the
+// head answers and one of an earlier head answers null.
+const rerunHeadFields = `
+      diffHeadSha
+      headPipeline { id status project { id } }`
+
+// rerunHead is the re-run's document. Its caller is [Client.rerunTarget]; the
+// project's id tells the addressed project from a fork's.
+var rerunHead = document{
+	name: "RerunHead",
+	text: `query RerunHead($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    id
+    mergeRequest(iid: $iid) {` + rerunHeadFields + `
+    }
+  }
+  queryComplexity { score limit }
+}
+`,
+}
+
 // docAcceptance is the ONE bounded question a connection asks at setup: does this
-// schema carry every field, argument and member the two pull-request documents above
-// select (their variables are literals here, so those are ruled on too). The answer
-// decides documents or REST for the connection's life. The empty project selector
-// resolves nothing while validation still rules on every field: 68 bytes at complexity
-// 53 of 200 on gitlab.com, and an undeclared field answers 200 undefinedField with no
-// data, the refusal [Client.refuseDocument] classifies. Introspection cannot ask it: a
-// named operation cannot select __type, and an unnamed one answers the 8.2 MB schema.
+// schema carry every field, argument and member the pull-request and re-run
+// documents above select. The answer decides documents or REST for the connection's
+// life. The empty project selector resolves nothing while validation rules on every
+// field (complexity 74 of 200 on gitlab.com, 2026-11-17); an undeclared field answers
+// 200 undefinedField with no data, which [Client.refuseDocument] classifies.
+// Introspection cannot ask it: a named operation cannot select __type.
 var docAcceptance = document{
 	name: "DocumentAcceptance",
 	text: `query DocumentAcceptance {
   project(fullPath: "") {
+    id
     fullPath
     userPermissions { pushCode readMergeRequest }
     mergeRequests(state: opened, first: 1, after: null) {
       pageInfo { hasNextPage endCursor }
       nodes { iid }
     }
-    mergeRequest(iid: "0") {` + mergeRequestFields("") + `
+    mergeRequest(iid: "0") {` + mergeRequestFields("", "") + rerunHeadFields + `
     }
   }
   queryComplexity { score limit }

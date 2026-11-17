@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // cursorPrefix opens this family's continuation encoding. The continuation is this
@@ -141,6 +141,21 @@ func (c *Client) send(ctx context.Context, op, method string, a *address, rest s
 	return resp, err
 }
 
+// removeAt sends one DELETE under the call's repository whose last segment, already
+// escaped, names what it removes, and reports whether it removed anything: a 404 or
+// 422 is read as an answer, the thing to remove being gone already.
+func (c *Client) removeAt(ctx context.Context, op string, a *address, rest, segment string) (bool, error) {
+	resp, err := c.core.Do(ctx, &transport.Request{
+		Op: op, Method: http.MethodDelete, EscapedPath: (&url.URL{Path: a.route(rest)}).EscapedPath() + segment,
+		Answers: []int{http.StatusNotFound, http.StatusUnprocessableEntity},
+	})
+	if err != nil {
+		c.nameRefusedSuccessor(a, resp, err)
+		return false, err
+	}
+	return resp.Status < http.StatusMultipleChoices, nil
+}
+
 // listKind is what a list's own route lets a caller select beside the page, which
 // decides which list options it reads and which it refuses.
 type listKind int
@@ -189,8 +204,8 @@ func listOptions(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi
 // inapplicable is the refusal of an option the list cannot apply, nil where every
 // option set applies: a state filter on every list but a stateful one, an owner on
 // every list but the scoped ones and the repository listing, a since bound on every
-// list but the run listing, and a merge state option on every list but the pull
-// request lists.
+// list but the run listing, and a merge state or reviews option on every list but
+// the pull request lists.
 func inapplicable(op string, kind listKind, set *forgeapi.ListSettings) *forgeapi.Error {
 	switch {
 	case set.StateSet && kind != statefulList:
@@ -205,6 +220,9 @@ func inapplicable(op string, kind listKind, set *forgeapi.ListSettings) *forgeap
 	case set.MergeStateSet && op != "ListPRs" && op != "ListMyPRs":
 		return transport.Local(forgeapi.CodeListMergeStateInvalid,
 			op+" lists rows that carry no merge state, so a merge state option cannot apply")
+	case set.ReviewsSet && op != "ListPRs" && op != "ListMyPRs":
+		return transport.Local(forgeapi.CodeListReviewsInvalid,
+			op+" lists rows that carry no review counts, so a reviews option cannot apply")
 	}
 	return nil
 }

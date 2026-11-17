@@ -1,31 +1,19 @@
 package creds
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	"log/slog"
-	"maps"
-	"slices"
 	"sync"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/credfile"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/credfile"
 )
-
-// fileName is the one file a [FileStore] keeps its records in.
-const fileName = "credentials.json"
-
-// errNotDurable is a write that reached the file and could not be proved to
-// survive a crash. A rotated pair has no other copy, so it is a failed write.
-var errNotDurable = errors.New("creds: the credential file was written but not proved durable, so the write is treated as failed")
 
 // Store holds the credential records of a consumer's connections under keys that
 // are the consumer's own connection identities, opaque here.
 //
 // Its unexported methods are a refresh's custody of a key: the single owner a
-// rotation runs under and its compare-and-swap over the whole record. So
-// [FileStore] is its only implementation.
+// rotation runs under and its compare-and-swap over the whole record. So a store
+// comes from [OpenFileStore] or [NewStore], and from nowhere else.
 type Store interface {
 	// Load answers the record under key, and false with no error where none is.
 	Load(key string) (Record, bool, error)
@@ -43,19 +31,121 @@ type Store interface {
 	release(r *rotation, gone bool)
 }
 
+// NewStore returns the [Store] over b, with the library's custody around it: one
+// rotation per key, the rotated pair held where b could not take it, and the mark
+// owed where b could not take that. The custody lives in the returned store, not
+// in b, so call NewStore once per backend and share the store between every
+// [StoredSource] over it. Exactly one process may refresh from b, the one calling
+// [StoredSource.Token]; readers such as the git credential helper may share it.
+// Nothing detects a second store or a second refresher, either of which can lose
+// a rotated pair.
+func NewStore(b Backend) Store {
+	return newCustodian(b)
+}
+
+// custodian is the [Store] over a [Backend]: the backend holds the records and
+// the custodian each key's refresh custody.
+type custodian struct {
+	backend Backend
+	custody map[string]*rotation
+	// mu guards custody alone, so a refresh in flight never holds it while it
+	// waits on the network or the backend.
+	mu sync.Mutex
+}
+
+var _ Store = (*custodian)(nil)
+
+func newCustodian(b Backend) *custodian {
+	return &custodian{backend: b, custody: map[string]*rotation{}}
+}
+
+func (c *custodian) Load(key string) (Record, bool, error) { return c.backend.Load(key) }
+
+//nolint:gocritic // hugeParam: the record by value is the Store method's own parameter
+func (c *custodian) Save(key string, rec Record) error { return c.backend.Put(key, rec) }
+
+func (c *custodian) Keys() ([]string, error) { return c.backend.Keys() }
+
+// Delete removes the record under key and marks the key's refresh custody gone,
+// freed after its last holder unless a rotated pair or an owed mark is pending.
+func (c *custodian) Delete(key string) error {
+	if err := c.backend.Delete(key); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r, held := c.custody[key]; held {
+		r.gone = true
+		c.free(r)
+	}
+	return nil
+}
+
+// swap replaces the record under key with next only where the stored record is
+// still prev, and reports whether it did. A record a consumer saved while the
+// refresh was in flight is newer than the rotation, so it stays.
+func (c *custodian) swap(key string, prev, next *Record) (bool, error) {
+	return c.backend.Swap(key, *prev, *next)
+}
+
+// acquire answers key's refresh custody, creating it, and counts the caller as a
+// holder until its release. Only a token call acquires, so a state read cannot
+// recreate the custody of a deleted key.
+func (c *custodian) acquire(key string) *rotation {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r, ok := c.custody[key]
+	if !ok {
+		r = &rotation{owner: newOwner(), store: c, key: key}
+		c.custody[key] = r
+	}
+	r.holders++
+	return r
+}
+
+// peek answers key's refresh custody where one exists, and otherwise a fresh one
+// that holds nothing and is never stored.
+func (c *custodian) peek(key string) *rotation {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r, ok := c.custody[key]; ok {
+		return r
+	}
+	return &rotation{owner: newOwner(), store: c, key: key}
+}
+
+// release ends one holder's use of r; gone records that the holder found no
+// record under the key.
+func (c *custodian) release(r *rotation, gone bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r.holders--
+	if gone {
+		r.gone = true
+	}
+	c.free(r)
+}
+
+// free deletes a gone custody nobody holds, unless it holds the only copy of a
+// rotated pair or a mark the store still owes. It is deleted only at zero holders,
+// else a paused token call and a later one would own one key twice. Called under
+// mu.
+func (c *custodian) free(r *rotation) {
+	if r.holders > 0 || !r.gone || c.custody[r.key] != r {
+		return
+	}
+	if _, _, pending := r.held(); pending || r.owes() {
+		return
+	}
+	delete(c.custody, r.key)
+}
+
 // FileStore is the [Store] over one file, credentials.json at mode 0600, in a
 // directory at mode 0700 this process owns. Every read re-reads the file, so two
 // stores on one directory, a server's and a git credential helper's, each read what
 // the other last wrote. It is safe for concurrent use.
 type FileStore struct {
-	dir      *credfile.Dir
-	logger   *slog.Logger
-	custody  map[string]*rotation
-	counters forgeapi.Counters
-	// mu serializes the file's read-modify-write, and custodyMu the custody map,
-	// so a refresh in flight holds neither while it waits on the network.
-	mu        sync.Mutex
-	custodyMu sync.Mutex
+	store *custodian
 }
 
 var _ Store = (*FileStore)(nil)
@@ -78,190 +168,27 @@ func OpenFileStore(dir string, opts ...forgeapi.Option) (*FileStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileStore{dir: d, logger: logger, counters: set.Counters, custody: map[string]*rotation{}}, nil
+	return &FileStore{store: newCustodian(&fileBackend{dir: d, logger: logger, counters: set.Counters})}, nil
 }
 
 // Load answers the record under key, and false with no error where none is.
-func (s *FileStore) Load(key string) (Record, bool, error) {
-	recs, err := s.read()
-	if err != nil {
-		return Record{}, false, err
-	}
-	rec, ok := recs[key]
-	return rec, ok, nil
-}
+func (s *FileStore) Load(key string) (Record, bool, error) { return s.store.Load(key) }
 
 // Save stores rec under key in place of any record there.
 //
 //nolint:gocritic // hugeParam: the record by value is the published signature's own parameter
-func (s *FileStore) Save(key string, rec Record) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	recs, err := s.read()
-	if err != nil {
-		return err
-	}
-	recs[key] = rec
-	return s.write(recs, rec.Family)
-}
+func (s *FileStore) Save(key string, rec Record) error { return s.store.Save(key, rec) }
 
-// Delete removes the record under key and marks the key's refresh custody gone,
-// freed after its last holder unless a rotated pair or an owed mark is pending.
-func (s *FileStore) Delete(key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	recs, err := s.read()
-	if err != nil {
-		return err
-	}
-	rec, ok := recs[key]
-	if !ok {
-		return nil
-	}
-	delete(recs, key)
-	if err := s.write(recs, rec.Family); err != nil {
-		return err
-	}
-	s.custodyMu.Lock()
-	defer s.custodyMu.Unlock()
-	if r, held := s.custody[key]; held {
-		r.gone = true
-		s.free(r)
-	}
-	return nil
-}
+// Delete removes the record under key, which is a disconnect. Deleting a key that
+// holds no record is not an error.
+func (s *FileStore) Delete(key string) error { return s.store.Delete(key) }
 
 // Keys answers every key that holds a record.
-func (s *FileStore) Keys() ([]string, error) {
-	recs, err := s.read()
-	if err != nil {
-		return nil, err
-	}
-	return slices.Collect(maps.Keys(recs)), nil
-}
+func (s *FileStore) Keys() ([]string, error) { return s.store.Keys() }
 
-// swap replaces the record under key with next only where the stored record is
-// still prev, and reports whether it did. A record a consumer saved while the
-// refresh was in flight is newer than the rotation, so it stays.
-func (s *FileStore) swap(key string, prev, next *Record) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	recs, err := s.read()
-	if err != nil {
-		return false, err
-	}
-	stored, ok := recs[key]
-	if !ok || !same(&stored, prev) {
-		return false, nil
-	}
-	recs[key] = *next
-	if err := s.write(recs, next.Family); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// acquire answers key's refresh custody, creating it, and counts the caller as a
-// holder until its [FileStore.release]. Only a token call acquires, so a state read
-// cannot recreate the custody of a deleted key.
-func (s *FileStore) acquire(key string) *rotation {
-	s.custodyMu.Lock()
-	defer s.custodyMu.Unlock()
-	r, ok := s.custody[key]
-	if !ok {
-		r = &rotation{owner: newOwner(), store: s, key: key}
-		s.custody[key] = r
-	}
-	r.holders++
-	return r
-}
-
-// peek answers key's refresh custody where one exists, and otherwise a fresh one
-// that holds nothing and is never stored.
-func (s *FileStore) peek(key string) *rotation {
-	s.custodyMu.Lock()
-	defer s.custodyMu.Unlock()
-	if r, ok := s.custody[key]; ok {
-		return r
-	}
-	return &rotation{owner: newOwner(), store: s, key: key}
-}
-
-// release ends one holder's use of r; gone records that the holder found no
-// record under the key.
-func (s *FileStore) release(r *rotation, gone bool) {
-	s.custodyMu.Lock()
-	defer s.custodyMu.Unlock()
-	r.holders--
-	if gone {
-		r.gone = true
-	}
-	s.free(r)
-}
-
-// free deletes a gone custody nobody holds, unless it holds the only copy of a
-// rotated pair or a mark the store still owes. It is deleted only at zero holders,
-// else a paused token call and a later one would own one key twice. Called under
-// custodyMu.
-func (s *FileStore) free(r *rotation) {
-	if r.holders > 0 || !r.gone || s.custody[r.key] != r {
-		return
-	}
-	if _, _, pending := r.held(); pending || r.owes() {
-		return
-	}
-	delete(s.custody, r.key)
-}
-
-// fileContents is the whole credential file.
-type fileContents struct {
-	Records map[string]fileRecord `json:"records"`
-}
-
-// read answers every stored record, none where the file does not exist yet. A file
-// that does not decode is reported without the decoder's text, which can quote it.
-func (s *FileStore) read() (map[string]Record, error) {
-	data, found, err := s.dir.Read(context.Background(), fileName)
-	if err != nil || !found {
-		return map[string]Record{}, err
-	}
-	var contents fileContents
-	if err := json.Unmarshal(data, &contents); err != nil {
-		return nil, errors.New("creds: the credential file does not decode")
-	}
-	recs := make(map[string]Record, len(contents.Records))
-	for key := range contents.Records {
-		f := contents.Records[key]
-		recs[key] = fromFile(&f)
-	}
-	return recs, nil
-}
-
-// write replaces the file with recs. family is the family of the record the write
-// is for, which the non-durable counter names.
-func (s *FileStore) write(recs map[string]Record, family forgeapi.Family) error {
-	contents := fileContents{Records: make(map[string]fileRecord, len(recs))}
-	for key := range recs {
-		rec := recs[key]
-		contents.Records[key] = toFile(&rec)
-	}
-	data, err := json.Marshal(contents)
-	if err != nil {
-		return errors.New("creds: the credential file does not encode")
-	}
-	durable, err := s.dir.Write(context.Background(), fileName, data)
-	if err != nil {
-		return err
-	}
-	if !durable {
-		if s.counters.NonDurableCredentialWrite != nil {
-			s.counters.NonDurableCredentialWrite(family)
-		}
-		s.logger.Warn("forgeapi credential write not proved durable", "family", family.String())
-		return errNotDurable
-	}
-	return nil
-}
+func (s *FileStore) acquire(key string) *rotation   { return s.store.acquire(key) }
+func (s *FileStore) peek(key string) *rotation      { return s.store.peek(key) }
+func (s *FileStore) release(r *rotation, gone bool) { s.store.release(r, gone) }
 
 // rotation is one key's refresh custody in one store: the owner a refresh runs
 // under, whether one is in flight, the terminal outcome a refresh reached for one
@@ -271,7 +198,7 @@ func (s *FileStore) write(recs map[string]Record, family forgeapi.Family) error 
 // is owed until a later write for the key succeeds.
 type rotation struct {
 	owner *owner
-	store *FileStore
+	store *custodian
 	// ended is the record the outcome was reached for, and mark what the outcome
 	// writes to it: UsabilityUnmarked for a refresh token past its own expiry,
 	// which every reader derives from the record.
@@ -285,7 +212,7 @@ type rotation struct {
 	key  string
 	mark Usability
 	mu   sync.Mutex
-	// holders and gone are the store's, under its custodyMu.
+	// holders and gone are the custodian's, under its mu.
 	holders int
 	owed    bool
 	gone    bool
@@ -299,7 +226,7 @@ func (r *rotation) swap(prev, next *Record) (bool, error) { return r.store.swap(
 func (r *rotation) end(rec *Record, mark Usability, owed bool) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.ended != nil && same(r.ended, rec) {
+	if r.ended != nil && r.ended.Equal(rec) {
 		return false
 	}
 	ended := *rec
@@ -332,7 +259,7 @@ func (r *rotation) held() (base, pair Record, ok bool) {
 func (r *rotation) holds(rec *Record) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.base != nil && same(r.base, rec)
+	return r.base != nil && r.base.Equal(rec)
 }
 
 // drop forgets the held pair, once it is stored or belongs to a record the key no
@@ -355,7 +282,7 @@ func (r *rotation) owes() bool {
 func (r *rotation) markFor(rec *Record) Usability {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.ended == nil || !same(r.ended, rec) {
+	if r.ended == nil || !r.ended.Equal(rec) {
 		return UsabilityUnmarked
 	}
 	return r.mark
@@ -380,7 +307,7 @@ func (r *rotation) settle() {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.ended != nil && same(r.ended, &prev) {
+	if r.ended != nil && r.ended.Equal(&prev) {
 		r.owed = false
 	}
 }

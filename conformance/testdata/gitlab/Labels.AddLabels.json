@@ -1,0 +1,44 @@
+{
+  "//": "cut from a recorded list-labels-bot response, read 2026-10-01, beside a recorded ReadIssue response, the answer gitlab.com gave anonymously, read 2026-11-16; trimmed to the fields the case asserts; owner, repository, login, ids and URLs replaced with the canonical subject, times and counts too; no sandbox capture exists for this mutation on this product, so the response shape is the same product's read capture, which this product's API description gives the mutation as its response schema: the update answers the issue record, its labels as name strings",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v4/projects/example%2Fexample/labels",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": [
+        {
+          "name": "example-label",
+          "color": "#ededed",
+          "description": "Example label."
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v4/projects/example%2Fexample/issues/1",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "iid": 1,
+        "state": "opened",
+        "title": "Example issue",
+        "description": "Example issue body.",
+        "author": {
+          "username": "example-user"
+        },
+        "web_url": "https://forge.example/example/example/issues/1",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-02T00:00:00Z",
+        "labels": [
+          "example-label"
+        ],
+        "user_notes_count": 3
+      }
+    }
+  ]
+}

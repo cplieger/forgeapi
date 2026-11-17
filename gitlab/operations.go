@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // maxStatusPageItems is the page size the folded-status read asks for, which is this
@@ -16,10 +16,10 @@ import (
 // computed over, so a smaller page spends more requests for the same verdict.
 const maxStatusPageItems = 100
 
-// maxPipelinePageItems is the page size the re-run's resolving read asks for. It is
-// small because that read wants ONE pipeline, the one carrying the head the caller
-// pinned, and upstream applies the pin as a declared filter.
-const maxPipelinePageItems = 20
+// maxLabelPageItems is the page size an addition's label read asks for, the most a
+// REST page serves: "per_page ... (default: 20, max: 100)", per the REST API's
+// pagination (https://docs.gitlab.com/api/rest/#offset-based-pagination).
+const maxLabelPageItems = 100
 
 // The request-body fields several mutations share.
 const (
@@ -172,12 +172,20 @@ func globalID(n *docGlobalID) (string, bool) {
 	if n == nil {
 		return "", true
 	}
-	tail := n.ID[strings.LastIndexByte(n.ID, '/')+1:]
-	id, err := strconv.ParseInt(tail, 10, 64)
-	if !strings.HasPrefix(n.ID, "gid://gitlab/") || err != nil || id <= 0 {
+	id, ok := gidNumber(n.ID)
+	if !ok {
 		return "", false
 	}
 	return strconv.FormatInt(id, 10), true
+}
+
+// gidNumber is the positive id a global id ends in, false for any other string.
+func gidNumber(gid string) (int64, bool) {
+	id, err := strconv.ParseInt(gid[strings.LastIndexByte(gid, '/')+1:], 10, 64)
+	if !strings.HasPrefix(gid, "gid://gitlab/") || err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 // ownerUnresolved is the answer for an owner no namespace the route needs holds.
@@ -266,6 +274,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		"first":      set.PageBound,
 		"after":      nullableString(after),
 		"mergeState": set.MergeState,
+		"reviews":    set.Reviews,
 	}, &payload)
 	if err != nil {
 		if page, ok := c.deferredPage[forgeapi.PullRequest](err); ok {
@@ -286,9 +295,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
 		item := c.normalizeDocPull(&rows.Nodes[i], documentRepo(payload.Project, repo))
-		if !set.MergeState {
-			blankMergeState(&item)
-		}
+		blankUnread(&item, &set)
 		items = append(items, item)
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items}
@@ -299,6 +306,17 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		page.Partial = c.partial(forgeapi.PartialGraphQLPartial, len(items))
 	}
 	return page, nil
+}
+
+// blankUnread answers unknown what a listed row was asked not to read: its merge
+// state, and its review counts.
+func blankUnread(item *forgeapi.PullRequest, set *forgeapi.ListSettings) {
+	if !set.MergeState {
+		blankMergeState(item)
+	}
+	if !set.Reviews {
+		item.Action.Approvals, item.Action.ChangesRequested = forgeapi.CountUnknown, forgeapi.CountUnknown
+	}
 }
 
 // nullableString is a cursor variable a document takes as null rather than as an
@@ -633,35 +651,17 @@ func (c *Client) setPullState(ctx context.Context, op string, repo forgeapi.Repo
 	return c.normalizeRESTPull(&record, repo, restMutated), nil
 }
 
-// RerunFailedChecks implements [forgeapi.PullRequests].
-//
-// It is TWO requests: the pipeline carrying the head the caller pinned has to be
-// resolved before it can be retried, because this product's retry verb is addressed by
-// a server-allocated pipeline id rather than by a commit.
-//
-// Those two are all of them, on a fresh connection as on a used one. The capability
-// this operation is gated on is the CONNECTION's, resolved and priced at setup by
-// [Client.ConnectionCaps], so this call reads the verdict it holds and sends nothing to
-// obtain one.
-//
-// The head pin binds and costs no request of its own: the resolving read is filtered BY
-// the caller's SHA, which this product declares as a parameter of that route, and a SHA
-// no pipeline carries means the merge request has moved since the caller's row was
-// rendered. That is refused rather than retried, because a re-run can carry deployment
-// side effects and a row displaying one commit's red status must not act on another's.
-// An empty SHA means the forge reported no head, and the re-run then proceeds against
-// the FIRST pipeline the instance returns, which is the one case where the pin is
-// unavailable rather than waived.
-//
-// The verb retries the failed and canceled jobs of that pipeline rather than the whole
-// pipeline, which is what this operation publishes.
-//
-//nolint:revive // unused-parameter: the pull-request reference is the published signature's; this product's route is addressed by the head commit's own pipeline, which the head SHA pins
+// RerunFailedChecks implements [forgeapi.PullRequests]: the pipeline retried is the
+// one [Client.rerunTarget] resolves, at the project holding it. The capability is the
+// connection's, priced at setup by [Client.ConnectionCaps].
 func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, headSHA string) error {
 	const op = "RerunFailedChecks"
 	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return err
+	}
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
 	}
 	if headSHA != "" {
 		if err := forgeapi.ValidateRef(headSHA); err != nil {
@@ -671,49 +671,165 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if err := c.capability(ctx, op, forgeapi.CapRerunChecks); err != nil {
 		return err
 	}
-	query := url.Values{keyPerPage: {strconv.Itoa(maxPipelinePageItems)}}
-	if headSHA != "" {
-		query.Set("sha", headSHA)
-	}
-	pipelines, _, err := c.readPipelines(ctx, op, repo, query)
+	target, err := c.rerunTarget(ctx, op, repo, pr, headSHA)
 	if err != nil {
 		return err
 	}
-	pipeline, ok := pickPipeline(pipelines, headSHA)
-	if !ok {
-		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeStaleHead, forgeapi.KindConflict, http.StatusOK,
-			"no pipeline carries the head this caller pinned")
+	project := projectPath(repo)
+	if target.Project != 0 {
+		project = strconv.FormatInt(target.Project, 10)
 	}
-	path := projectRoute(repo, "/pipelines/"+strconv.FormatInt(pipeline.ID, 10)+"/retry")
+	path := "/projects/" + project + "/pipelines/" + strconv.FormatInt(target.ID, 10) + "/retry"
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
-// pickPipeline is the head pin read off the resolving read's own rows: the pipeline
-// whose head matches what the caller pinned, or the FIRST row the instance returned
-// where the caller brought no pin.
-//
-// That second arm claims no more than it knows. This product's pipelines route declares
-// a sha filter and an order parameter, and this read sends no order, so the first row is
-// the instance's own choice rather than the newest pipeline. The PINNED arm is sound for
-// a different reason: the SHA is a declared filter, so upstream applies it and the
-// comparison here is a second check rather than the only one.
-func pickPipeline(pipelines []restPipeline, headSHA string) (restPipeline, bool) {
-	for i := range pipelines {
-		p := &pipelines[i]
-		if p.ID == 0 {
-			continue
-		}
-		if headSHA == "" || p.SHA == headSHA {
-			return *p, true
-		}
+var _ transport.RerunResolver = (*Client)(nil).rerunTarget
+
+// rerunTarget is this family's [transport.RerunResolver]: the pipeline GitLab itself
+// matches to the merge request's head, read through [rerunHead]. A merged results
+// pipeline runs on a merge commit and a fork's in the fork's project, so a pipeline
+// listing filtered by the head finds neither. Where the documents are refused it
+// reads the REST merge request instead, which answers the STORED head pipeline
+// unmatched (lib/api/entities/merge_request.rb), so there one whose sha differs from
+// the head is refused, since nothing on that payload proves it belongs to the head.
+func (c *Client) rerunTarget(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, pin string) (transport.RunTarget, error) {
+	if c.isDegraded() {
+		return c.restRerunTarget(ctx, op, repo, pr, pin)
 	}
-	return restPipeline{}, false
+	var payload docPayload
+	result, err := c.execute(ctx, op, rerunHead, map[string]any{varFullPath: repo.Selector, "iid": strconv.Itoa(pr.Number)}, &payload)
+	if err != nil {
+		return transport.RunTarget{}, err
+	}
+	ex := transport.Document(http.MethodPost)
+	refuse := func(code string, kind forgeapi.ErrorKind, message string) error {
+		return c.core.Fail(ctx, op, ex, code, kind, result.Status, message)
+	}
+	var node *docMergeRequest
+	switch {
+	case result.Partial:
+		return transport.RunTarget{}, refuse("", forgeapi.KindUpstream, "the RerunHead document answered in part: "+result.Refusal)
+	case payload.Project == nil:
+		return transport.RunTarget{}, refuse(forgeapi.CodeRepoOrPRNotVisible, forgeapi.KindNotFound, "the document resolved no project for this selector")
+	case payload.Project.MergeRequest == nil:
+		return transport.RunTarget{}, refuse(forgeapi.CodePRNotFound, forgeapi.KindNotFound, "the document resolved the project and no merge request with that number")
+	default:
+		node = payload.Project.MergeRequest
+	}
+	p := node.HeadPipeline
+	state := pipelineAbsent
+	if p != nil {
+		state = pipelineState(p.Status)
+	}
+	if r := pipelineRefusal(node.DiffHeadSHA, pin, state); r != nil {
+		return transport.RunTarget{}, refuse(r.code, r.kind, r.message)
+	}
+	id, idRead := gidNumber(p.ID)
+	target, projectRead := transport.RunTarget{ID: id}, true
+	if p.Project != nil && p.Project.ID != payload.Project.ID {
+		target.Project, projectRead = gidNumber(p.Project.ID)
+	}
+	if !idRead || !projectRead {
+		return transport.RunTarget{}, c.core.FailBody(ctx, op, ex, result.Status, errPipelineIDUnreadable)
+	}
+	return target, nil
 }
 
-// readPipelines is the one read of a project's pipelines, which the re-run and the run
-// listing share: the re-run filters it by the head it pins, and the listing pages it
-// with no head filter at all. It answers the headers beside the rows, because the
-// listing's continuation rides there.
+// restRerunTarget is [Client.rerunTarget] on a connection whose documents are refused.
+func (c *Client) restRerunTarget(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef, pin string) (transport.RunTarget, error) {
+	var record restMergeRequest
+	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/merge_requests/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
+		return transport.RunTarget{}, err
+	}
+	p := record.HeadPipeline
+	state := pipelineAbsent
+	switch {
+	case p == nil || p.ID == 0:
+	case p.SHA != record.SHA:
+		state = pipelineUnmatched
+	default:
+		state = pipelineState(p.Status)
+	}
+	if r := pipelineRefusal(record.SHA, pin, state); r != nil {
+		return transport.RunTarget{}, c.core.Fail(ctx, op, transport.REST(http.MethodGet), r.code, r.kind, http.StatusOK, r.message)
+	}
+	target := transport.RunTarget{ID: p.ID}
+	if p.ProjectID != 0 && (record.TargetProjectID == nil || *record.TargetProjectID != p.ProjectID) {
+		target.Project = p.ProjectID
+	}
+	return target, nil
+}
+
+// headPipelineState is what a merge request answered of its head pipeline.
+type headPipelineState int
+
+const (
+	pipelineAbsent headPipelineState = iota
+	// pipelineUnmatched is a stored head pipeline on another commit than the head,
+	// which only the REST arm can answer.
+	pipelineUnmatched
+	pipelineNotFailed
+	pipelineFailed
+)
+
+// pipelineState is the state of a head pipeline answering status, spelled in either
+// transport's case.
+func pipelineState(status string) headPipelineState {
+	switch strings.ToLower(status) {
+	case "failed", "canceled":
+		return pipelineFailed
+	default:
+		return pipelineNotFailed
+	}
+}
+
+// refusal is a re-run refused before any write, by code, kind and message.
+type refusal struct {
+	code, message string
+	kind          forgeapi.ErrorKind
+}
+
+// pipelineRefusal is the refusal both arms of [Client.rerunTarget] share, nil where
+// the head's pipeline may be retried.
+func pipelineRefusal(head, pin string, state headPipelineState) *refusal {
+	conflict := func(message string) *refusal {
+		return &refusal{code: forgeapi.CodeRunNotFailed, kind: forgeapi.KindConflict, message: message}
+	}
+	switch {
+	case head == "":
+		return &refusal{code: forgeapi.CodeMissingSHA, kind: forgeapi.KindUpstream, message: "the merge request answered no head commit"}
+	case pin != "" && pin != head:
+		return &refusal{code: forgeapi.CodeStaleHead, kind: forgeapi.KindConflict, message: "the merge request's head is no longer the one this caller pinned"}
+	case state == pipelineAbsent:
+		return conflict("the merge request answered no pipeline of its head, which it omits where none ran on the head yet or this caller cannot view the project's pipelines")
+	case state == pipelineUnmatched:
+		return conflict("the merge request's stored head pipeline ran on another commit, and with this connection's documents refused nothing proves GitLab matches it to the head")
+	case state == pipelineNotFailed:
+		return conflict("the merge request's head pipeline did not fail and was not canceled")
+	}
+	return nil
+}
+
+// RerunFailedRun implements [forgeapi.Checks]: one POST to the pipeline's retry,
+// gated on [forgeapi.CapRerunChecks] as [Client.RerunFailedChecks] is.
+func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error {
+	const op = "RerunFailedRun"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if run.ID <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "run id is not positive")
+	}
+	if err := c.capability(ctx, op, forgeapi.CapRerunChecks); err != nil {
+		return err
+	}
+	path := projectRoute(repo, "/pipelines/"+strconv.FormatInt(run.ID, 10)+"/retry")
+	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
+}
+
+// readPipelines is [Client.ListRuns]' read of a project's pipelines. It answers the
+// headers beside the rows, because the listing's next page rides there.
 func (c *Client) readPipelines(ctx context.Context, op string, repo forgeapi.RepoRef, query url.Values) ([]restPipeline, http.Header, error) {
 	var pipelines []restPipeline
 	header, err := c.readJSON(ctx, op, projectRoute(repo, "/pipelines"), query, &pipelines)
@@ -722,12 +838,11 @@ func (c *Client) readPipelines(ctx context.Context, op string, repo forgeapi.Rep
 
 // ListRuns implements [forgeapi.Checks].
 //
-// A run is a pipeline, the row the re-run resolves its pipeline from: its state is
-// the status folded through the merge request's head-pipeline table, its branch the
-// ref as this product spells it, a refs/ path on the pipelines a merge request or a
-// workload starts, and its name the pipeline's own, empty unless configured. It is
-// not gated on [forgeapi.CapRerunChecks], the re-run verb's, since every project
-// carries the route.
+// A run is a pipeline: its state is the status folded through the merge request's
+// head-pipeline table, its branch the ref as this product spells it, a refs/ path on
+// the pipelines a merge request or a workload starts, and its name the pipeline's
+// own, empty unless configured. It is not gated on [forgeapi.CapRerunChecks], the
+// re-run verb's, since every project carries the route.
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error) {
 	const op = "ListRuns"
 	ctx = transport.Call(ctx, op)
@@ -903,6 +1018,48 @@ func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forg
 		Queue:  forgeapi.QueueNone,
 		WebURL: read.item.WebURL,
 	}, nil
+}
+
+// CancelAutoMerge implements [forgeapi.Merges].
+//
+// The route is the one the version setup read serves ([Client.cancelsAutoMerge]),
+// so choosing it costs no request. Each route has its own "nothing armed" answer,
+// both nil here: the current route's 409, and the deprecated route's 201 whose status
+// is error. A deprecated answer whose status is neither success nor error says
+// nothing about the auto-merge, so it stays upstream.
+func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) error {
+	const op = "CancelAutoMerge"
+	ctx = transport.CallWrite(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return err
+	}
+	if pr.Number <= 0 {
+		return errorf(forgeapi.CodeRepoRefInvalid, "pull-request number is not positive")
+	}
+	route := projectRoute(repo, "/merge_requests/"+strconv.Itoa(pr.Number))
+	if c.cancelsAutoMerge() {
+		_, err := c.do(ctx, &transport.Request{
+			Op: op, Method: http.MethodPost, EscapedPath: route + "/cancel_auto_merge",
+			Answers: []int{http.StatusConflict},
+		})
+		return err
+	}
+	resp, err := c.do(ctx, &transport.Request{
+		Op: op, Method: http.MethodPost, EscapedPath: route + "/cancel_merge_when_pipeline_succeeds",
+	})
+	if err != nil {
+		return err
+	}
+	var answer restCancelStatus
+	if err := transport.Decode(resp.Body, &answer); err != nil {
+		return c.core.FailDecode(ctx, op, transport.REST(http.MethodPost), resp, err)
+	}
+	switch answer.Status {
+	case "success", "error":
+		return nil
+	}
+	return c.core.Fail(ctx, op, transport.REST(http.MethodPost), "", forgeapi.KindUpstream, resp.Status,
+		"the cancel answered status "+strconv.Quote(resp.Quote(answer.Status))+", which says neither that it disarmed the auto-merge nor that none was armed")
 }
 
 // CommitStatus implements [forgeapi.Checks].
@@ -1158,7 +1315,17 @@ func (c *Client) CreateIssue(ctx context.Context, repo forgeapi.RepoRef, req for
 
 // CloseIssue implements [forgeapi.Issues].
 func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
-	const op = "CloseIssue"
+	return c.setIssueState(ctx, "CloseIssue", repo, issue, "close")
+}
+
+// ReopenIssue implements [forgeapi.Issues].
+func (c *Client) ReopenIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	return c.setIssueState(ctx, "ReopenIssue", repo, issue, "reopen")
+}
+
+// setIssueState is the one transition both issue lifecycle operations make, event
+// being the state_event value the update route takes.
+func (c *Client) setIssueState(ctx context.Context, op string, repo forgeapi.RepoRef, issue forgeapi.IssueRef, event string) (forgeapi.Issue, error) {
 	ctx = transport.Call(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.Issue{}, err
@@ -1168,7 +1335,24 @@ func (c *Client) CloseIssue(ctx context.Context, repo forgeapi.RepoRef, issue fo
 	}
 	var record restIssue
 	path := projectRoute(repo, "/issues/"+strconv.Itoa(issue.Number))
-	if err := c.sendJSON(ctx, op, http.MethodPut, path, map[string]any{keyStateEvent: "close"}, &record); err != nil {
+	if err := c.sendJSON(ctx, op, http.MethodPut, path, map[string]any{keyStateEvent: event}, &record); err != nil {
+		return forgeapi.Issue{}, err
+	}
+	return c.normalizeIssue(&record, repo), nil
+}
+
+// ReadIssue implements [forgeapi.Issues].
+func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error) {
+	const op = "ReadIssue"
+	ctx = transport.Call(ctx, op)
+	if err := checkRepo(repo); err != nil {
+		return forgeapi.Issue{}, err
+	}
+	if issue.Number <= 0 {
+		return forgeapi.Issue{}, errorf(forgeapi.CodeRepoRefInvalid, "issue number is not positive")
+	}
+	var record restIssue
+	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/issues/"+strconv.Itoa(issue.Number)), nil, &record); err != nil {
 		return forgeapi.Issue{}, err
 	}
 	return c.normalizeIssue(&record, repo), nil
@@ -1271,4 +1455,86 @@ func (c *Client) ListLabels(ctx context.Context, repo forgeapi.RepoRef, opts ...
 		Next:    next,
 		Partial: c.pagePartial(len(rows), next, walk.page),
 	}, nil
+}
+
+// AddLabels implements [forgeapi.Labels]. This product's add_labels creates a
+// project label for a name the project lacks, so the names are read against the
+// project's labels first.
+func (c *Client) AddLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "AddLabels"
+	ctx = transport.CallWrite(ctx, op)
+	route, err := labelRoute(repo, target)
+	if err != nil || len(names) == 0 {
+		return err
+	}
+	if err := c.checkDefined(ctx, op, repo, names); err != nil {
+		return err
+	}
+	return c.sendJSON(ctx, op, http.MethodPut, route, map[string]any{"add_labels": names}, nil)
+}
+
+// labelRoute is the update route of the item a label change addresses, refused
+// before any request where the repository or the target cannot be addressed.
+func labelRoute(repo forgeapi.RepoRef, target forgeapi.LabelTarget) (string, error) {
+	if err := checkRepo(repo); err != nil {
+		return "", err
+	}
+	if err := target.Validate(); err != nil {
+		return "", err
+	}
+	if target.PR.Number != 0 {
+		return projectRoute(repo, "/merge_requests/"+strconv.Itoa(target.PR.Number)), nil
+	}
+	return projectRoute(repo, "/issues/"+strconv.Itoa(target.Issue.Number)), nil
+}
+
+// checkDefined refuses the first name the first page of repo's labels does not
+// define, which on this product carries the labels of the groups above it too.
+func (c *Client) checkDefined(ctx context.Context, op string, repo forgeapi.RepoRef, names []string) error {
+	query := url.Values{keyPage: {"1"}, keyPerPage: {strconv.Itoa(maxLabelPageItems)}}
+	var rows []restLabel
+	if _, err := c.readJSON(ctx, op, projectRoute(repo, "/labels"), query, &rows); err != nil {
+		return err
+	}
+	defined := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		defined[row.Name] = true
+	}
+	for _, name := range names {
+		if defined[name] {
+			continue
+		}
+		code, read := forgeapi.CodeValidation, "which was the whole list"
+		if len(rows) >= maxLabelPageItems {
+			code, read = forgeapi.CodeLabelPageTruncated, "which came back full, so the list continues past it"
+		}
+		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), code, forgeapi.KindUpstream, http.StatusOK,
+			"no label named "+name+" on the first page of this project's labels, bounded at "+
+				strconv.Itoa(maxLabelPageItems)+", "+read)
+	}
+	return nil
+}
+
+// RemoveLabels implements [forgeapi.Labels]. This product's label titles carry no
+// comma and no surrounding space (app/models/concerns/base_label.rb), and its update
+// splits each name it is sent at commas and strips it
+// (lib/api/validations/types/comma_separated_to_array.rb), so a name that is no
+// title is dropped here rather than sent as the different names it would split into.
+func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error {
+	const op = "RemoveLabels"
+	ctx = transport.CallWrite(ctx, op)
+	route, err := labelRoute(repo, target)
+	if err != nil {
+		return err
+	}
+	titles := make([]string, 0, len(names))
+	for _, name := range transport.DistinctNames(names) {
+		if name == strings.TrimSpace(name) && !strings.Contains(name, ",") {
+			titles = append(titles, name)
+		}
+	}
+	if len(titles) == 0 {
+		return nil
+	}
+	return c.sendJSON(ctx, op, http.MethodPut, route, map[string]any{"remove_labels": titles}, nil)
 }

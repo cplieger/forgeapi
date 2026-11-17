@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // documentPrefix opens the continuation a LIST DOCUMENT mints, which is a different
@@ -83,16 +83,13 @@ func rollupSelection(pageSize int, after string) string {
             }`
 }
 
-// pullRequestFields is the node selection every pull-request document shares, which
-// is the whole of what a normalized pull request needs from this product.
-//
-// Five choices in it are load-bearing. `headRefOid` is the head a merge and a re-run
-// pin to, not the rollup commit's oid. `mergeable` and `mergeStateStatus` answer
-// different questions, measured MERGEABLE beside BLOCKED on one pull request.
-// `autoMergeRequest` is a nullable object whose presence is the armed answer.
-// `mergeQueueEntry` carries the five-member queue state and the position. And
-// `labels(first: 100)` is this product's limit on one row's labels, so the page is
-// the whole set rather than a cut nothing marks.
+// pullRequestFields is the node selection every pull-request document shares. Its
+// load-bearing choices: `headRefOid` is the head a merge and a re-run pin to, not the
+// rollup commit's; `mergeable` and `mergeStateStatus` answer different questions,
+// measured MERGEABLE beside BLOCKED; `autoMergeRequest`'s presence is the armed
+// answer; `labels(first: 100)` is this product's per-row label limit, so the page is
+// the whole set; `latestOpinionatedReviews` is already the latest opinionated review
+// per reviewer.
 func pullRequestFields(foldPage int, foldAfter string) string {
 	return `
         number
@@ -114,6 +111,8 @@ func pullRequestFields(foldPage int, foldAfter string) string {
         autoMergeRequest { enabledAt mergeMethod }
         mergeQueueEntry { state position }
         labels(first: 100) { totalCount nodes { name color description } }
+        totalCommentsCount
+        latestOpinionatedReviews(first: 20) @include(if: $reviews) { totalCount nodes { state } }
         commits(last: 1) {
           nodes {
             commit {
@@ -143,7 +142,7 @@ type document struct {
 // reach them.
 var prList = document{
 	name: "PRList",
-	text: `query PRList($owner: String!, $name: String!, $first: Int!, $after: String, $states: [PullRequestState!], $mergeState: Boolean!) {` + rateLimitSelection + `
+	text: `query PRList($owner: String!, $name: String!, $first: Int!, $after: String, $states: [PullRequestState!], $mergeState: Boolean!, $reviews: Boolean!) {` + rateLimitSelection + `
   repository(owner: $owner, name: $name) {
     nameWithOwner
     viewerPermission
@@ -159,14 +158,14 @@ var prList = document{
 }
 
 // prListPageCeiling is the most rows [prList] asks for on one page, whatever the page
-// bound asks. Its rows carry the selection [prMine]'s do, the check rollup and the
-// merge state, and on a repository with many open pull requests a larger page outruns
-// the upstream's evaluation time: measured on one such repository, a page of 50
-// answered on every attempt, the slowest in under 8 s, and a page of 75 answered 502
-// on every attempt after about 10.6 s. A gateway answer is retried and still charged,
-// so a larger page spends the budget and serves nothing; a page this ceiling shortened
+// bound asks. Its rows carry the check rollup and the merge state, and a larger page
+// outruns the upstream's evaluation time: measured 2026-11-16 on two repositories
+// holding 1,355 and 3,128 open pull requests, a page of 50 answered 502 on 8 of 15
+// attempts after 10.8 to 12 s, 40 answered in up to 10.9 s, and 30 answered all six
+// attempts in at most 9.1 s. A gateway answer is retried and still charged, so a
+// larger page spends the budget and serves nothing; a page this ceiling shortened
 // carries its continuation like any other.
-const prListPageCeiling = 50
+const prListPageCeiling = 30
 
 // prRead is the single-pull-request document, whose callers are [Client.ReadPR] and
 // [Client.MergeStatus]. Its field set is the list's minus the list machinery plus the
@@ -175,7 +174,7 @@ const prListPageCeiling = 50
 // [forgeapi.Budget.StatusPages].
 var prRead = document{
 	name: "PRRead",
-	text: `query PRRead($owner: String!, $name: String!, $number: Int!, $checksAfter: String, $mergeState: Boolean = true) {` + rateLimitSelection + `
+	text: `query PRRead($owner: String!, $name: String!, $number: Int!, $checksAfter: String, $mergeState: Boolean = true, $reviews: Boolean = true) {` + rateLimitSelection + `
   repository(owner: $owner, name: $name) {
     nameWithOwner
     viewerPermission
@@ -196,7 +195,7 @@ var prRead = document{
 // the whole property this operation exists for.
 var prMine = document{
 	name: "PRMine",
-	text: `query PRMine($q: String!, $first: Int!, $after: String, $mergeState: Boolean!) {` + rateLimitSelection + `
+	text: `query PRMine($q: String!, $first: Int!, $after: String, $mergeState: Boolean!, $reviews: Boolean!) {` + rateLimitSelection + `
   search(query: $q, type: ISSUE, first: $first, after: $after) {
     issueCount
     pageInfo { hasNextPage endCursor }
@@ -212,15 +211,14 @@ var prMine = document{
 }
 
 // prSearchPageCeiling is the most rows [prMine] asks for on one page, whatever the
-// page bound asks, under either scope. Its rows' own selection, the check rollup and
-// the merge state, outruns the upstream's evaluation time at a larger page: measured,
-// a page of 100 answered 502 under two owners whatever the labels page, the smaller of
-// them holding 99 open pull requests, and a page of 50 under the larger, while 25
-// answered under both and [issueMine] answered a page of 100 under the larger. So the
-// page decides it, not the owner's size. A gateway answer is retried and still
-// charged, so a larger page spends the budget and serves nothing; a page this ceiling
-// shortened carries its continuation like any other.
-const prSearchPageCeiling = 25
+// page bound asks, under either scope. Both the page and the owner's size move its
+// evaluation time: measured 2026-11-16 under an owner holding 57,746 open pull
+// requests, a page of 25 answered 502 on 2 of 5 attempts, 20 answered in up to 10.2
+// s and 15 answered all three attempts in at most 8.1 s, while 25 answered in 6 s
+// under an owner holding few. A gateway answer is retried and still charged, so a
+// larger page spends the budget and serves nothing; a page this ceiling shortened
+// carries its continuation like any other.
+const prSearchPageCeiling = 15
 
 // issueMine is the cross-repository ISSUE document, whose caller is
 // [Client.ListMyIssues]. It is the same search connection [prMine] reads, selecting
@@ -248,6 +246,7 @@ var issueMine = document{
         state
         author { __typename login }
         labels(first: 100) { totalCount nodes { name color description } }
+        comments { totalCount }
         repository { nameWithOwner }
       }
     }
@@ -294,6 +293,20 @@ var enableAutoMerge = document{
 	text: `mutation EnableAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!, $expectedHeadOid: GitObjectID!) {
   enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: $mergeMethod, expectedHeadOid: $expectedHeadOid}) {
     pullRequest { number mergeStateStatus autoMergeRequest { enabledAt mergeMethod } }
+  }
+}
+`,
+	mutation: true,
+}
+
+// disableAutoMerge is the disarm document, whose caller is [Client.CancelAutoMerge]
+// on a pull request whose record names an armed auto-merge. It selects no budget
+// object for the reason [enableAutoMerge] gives.
+var disableAutoMerge = document{
+	name: "DisableAutoMerge",
+	text: `mutation DisableAutoMerge($pullRequestId: ID!) {
+  disablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId}) {
+    pullRequest { number autoMergeRequest { enabledAt } }
   }
 }
 `,

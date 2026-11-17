@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
+	"github.com/cplieger/forgeapi/v3"
 )
 
 // TestTheLastCostIsTheCallsOwnPrice holds the three properties the published price
@@ -164,7 +164,7 @@ func TestTheDeferralRendersWithNoGapWhereACauseWouldBe(t *testing.T) {
 	if fe.Code != "" {
 		t.Fatalf("the deferral = code %q, want none: this is the one failure with no code, and a code here would be a second spelling of the throttle", fe.Code)
 	}
-	if got, want := fe.Error(), "ListPRs: this read was deferred to hold the mutation reserve"; got != want {
+	if got, want := fe.Error(), "ListPRs: this read was deferred: a rate-limit pool it draws on is at or under the mutation reserve"; got != want {
 		t.Errorf("the deferral renders as %q, want %q: the separator belongs to the cause, so a failure with no cause has no slot for one", got, want)
 	}
 }
@@ -315,26 +315,26 @@ func TestAFoldedReadPastTheCountCapWaitsForTheNextInterval(t *testing.T) {
 	clock := newFakeClock()
 	c := foldConn(t, clock, 2)
 	for read := 1; read <= 2; read++ {
-		if reason, ok := c.AdmitFold("ListPRs"); !ok {
+		if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 			t.Fatalf("folded read %d of 2 = (%v, false), want it admitted", read, reason)
 		}
 	}
-	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); ok || reason != forgeapi.PartialBudget {
 		t.Fatalf("folded read 3 of 2 = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
 	}
 	clock.advance(time.Minute)
-	if reason, ok := c.AdmitFold("ListPRs"); !ok {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 		t.Errorf("a folded read one minute into a one-minute interval = (%v, false), want it admitted: that minute began the next interval", reason)
 	}
 }
 
 func TestAFoldedReadIsNotSentOnceTheIntervalsClockIsSpent(t *testing.T) {
 	c := foldConn(t, newFakeClock(), 10)
-	if reason, ok := c.AdmitFold("ListPRs"); !ok {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 		t.Fatalf("the first folded read = (%v, false), want it admitted", reason)
 	}
 	c.SpendFold(time.Minute)
-	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); ok || reason != forgeapi.PartialBudget {
 		t.Errorf("a folded read after one that took the whole minute = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
 	}
 }
@@ -343,22 +343,22 @@ func TestAFoldedReadIsAdmittedOnlyWhereItsMeasuredCostFitsTheIntervalLeft(t *tes
 	clock := newFakeClock()
 	c := foldConn(t, clock, 10)
 	for read := 1; read <= 2; read++ {
-		if reason, ok := c.AdmitFold("ListPRs"); !ok {
+		if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 			t.Fatalf("folded read %d = (%v, false), want it admitted", read, reason)
 		}
 		c.SpendFold(10 * time.Second)
 	}
 	clock.advance(50 * time.Second)
-	if reason, ok := c.AdmitFold("ListPRs"); !ok {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); !ok {
 		t.Errorf("a folded read costing 10s with 10s of the interval left = (%v, false), want it admitted: it fits exactly", reason)
 	}
 	clock.advance(time.Second)
-	if reason, ok := c.AdmitFold("ListPRs"); ok || reason != forgeapi.PartialBudget {
+	if reason, ok := c.AdmitFold(t.Context(), "ListPRs"); ok || reason != forgeapi.PartialBudget {
 		t.Errorf("a folded read costing 10s with 9s of the interval left = (%v, %v), want (%v, false)", reason, ok, forgeapi.PartialBudget)
 	}
 }
 
-func pooledConn(t *testing.T, pools map[string][3]string, reserve int, parent budgetParent) (*Conn, func(path string) int64) {
+func pooledConn(t *testing.T, pools map[string][3]string, reserve int, parent budgetParent, extra ...forgeapi.Option) (*Conn, func(path string) int64) {
 	t.Helper()
 	var mu sync.Mutex
 	sent := map[string]int64{}
@@ -383,7 +383,7 @@ func pooledConn(t *testing.T, pools map[string][3]string, reserve int, parent bu
 		return h.Get("X-Pool"), limit
 	}
 	opts.PoolParent = parent
-	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, forgeapi.WithMutationReserve(reserve))
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, append([]forgeapi.Option{forgeapi.WithMutationReserve(reserve)}, extra...)...)
 	return c, func(path string) int64 {
 		mu.Lock()
 		defer mu.Unlock()

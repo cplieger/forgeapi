@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // searchPageRoutes answers both cross-repository documents with a next page, so a
@@ -41,7 +41,7 @@ func sentFirst(t *testing.T, body string) int {
 
 // TestThePullRequestSearchAsksForAtMostItsPageCeiling holds the two cross-repository
 // documents to the page each asks for: the pull-request search sends the page bound
-// up to 25 under either scope, because a larger page of its rows outruns the
+// up to 15 under either scope, because a larger page of its rows outruns the
 // upstream's evaluation time, and the issue search sends the bound as asked, since a
 // page of 100 of its rows answered where the pull-request search's did not.
 func TestThePullRequestSearchAsksForAtMostItsPageCeiling(t *testing.T) {
@@ -51,9 +51,9 @@ func TestThePullRequestSearchAsksForAtMostItsPageCeiling(t *testing.T) {
 		opts []forgeapi.ListOption
 		want int
 	}{
-		{name: "ListMyPRs_default", list: listMyPRs, want: 25},
-		{name: "ListMyPRs_owner_default", list: listMyPRs, opts: []forgeapi.ListOption{forgeapi.WithOwner(testOwner)}, want: 25},
-		{name: "ListMyPRs_bound_over_the_ceiling", list: listMyPRs, opts: []forgeapi.ListOption{forgeapi.WithPageBound(26)}, want: 25},
+		{name: "ListMyPRs_default", list: listMyPRs, want: 15},
+		{name: "ListMyPRs_owner_default", list: listMyPRs, opts: []forgeapi.ListOption{forgeapi.WithOwner(testOwner)}, want: 15},
+		{name: "ListMyPRs_bound_over_the_ceiling", list: listMyPRs, opts: []forgeapi.ListOption{forgeapi.WithPageBound(16)}, want: 15},
 		{name: "ListMyPRs_bound_under_the_ceiling", list: listMyPRs, opts: []forgeapi.ListOption{forgeapi.WithPageBound(10)}, want: 10},
 		{name: "ListMyIssues_default", list: listMyIssues, want: forgeapi.DefaultPageBound},
 		{name: "ListMyIssues_owner_bound", list: listMyIssues, opts: []forgeapi.ListOption{forgeapi.WithOwner(testOwner), forgeapi.WithPageBound(60)}, want: 60},

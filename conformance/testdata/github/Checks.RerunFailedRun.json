@@ -1,0 +1,40 @@
+{
+  "//": "cut from a recorded ConnectionCaps response, read 2026-09-18, beside the version set, read 2026-09-20; the first two routes are connection setup, which establishes the family from the header this product sends on every response and reads the version set; no sandbox capture exists for this mutation on this product, so the re-run's answer is the 201 with an empty body this product's REST description gives re-run-workflow-failed-jobs, read 2026-11-16",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/meta",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Github-Request-Id": "EXAMPLE:REQUEST:ID"
+      },
+      "body": {
+        "verifiable_password_authentication": false,
+        "installed_version": "3.20.0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/versions",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Github-Request-Id": "EXAMPLE:REQUEST:ID"
+      },
+      "body": [
+        "2026-03-10",
+        "2022-11-28"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/repos/example/example/actions/runs/{}/rerun-failed-jobs",
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {}
+    }
+  ]
+}

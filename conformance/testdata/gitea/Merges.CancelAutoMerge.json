@@ -1,0 +1,14 @@
+{
+  "//": "cut from this product's swagger document, read 2026-11-16, whose cancel-scheduled-auto-merge operation answers 204 with no body; no sandbox capture exists for this mutation on this product",
+  "routes": [
+    {
+      "method": "DELETE",
+      "path": "/api/v1/repos/example/example/pulls/1/merge",
+      "status": 204,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": null
+    }
+  ]
+}

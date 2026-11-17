@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 )
 
 // The canonical subject. Every fixture on every product carries these values,
@@ -40,6 +40,9 @@ const (
 	issueWebURL   = "https://forge.example/example/example/issues/1"
 	labelName     = "example-label"
 	labelDesc     = "Example label."
+	commentCount  = 3
+	approvalCount = 2
+	changesCount  = 1
 	repoDesc      = "Example repository."
 	repoWebURL    = "https://forge.example/example/example"
 	repoCloneURL  = "https://forge.example/example/example.git"
@@ -129,29 +132,25 @@ func prRef(p spec.Product) forgeapi.PRRef {
 }
 
 // subject is what one case addresses: the canonical one offline, and the one the
-// live lane's environment names live. It is a parameter rather than a constant
-// because an offline fixture answers for example/example and a live instance
-// answers for whatever repository the operator pointed the lane at.
-//
-// The fields after ref are what a mutation writes: the text a created title starts
-// with, the label it applies, the two branches a pull request joins, and the tag a
-// release is cut at. Offline they are the canonical values; live, the mutation's
-// own setup points them at what it made in the sandbox.
-//
+// live lane's environment names live. The fields after ref are what a mutation
+// writes, which a live mutation's setup points at what it made in the sandbox.
 // prInvalid and prUnnamed say why a live subject holds no pull request a read may
-// address: the lane's pull-request variable does not hold a number, or the lane
-// named a repository and no pull request on it. Both are empty offline and wherever
-// pr is one the lane or the harness vouches for.
+// address, a variable holding no number or a named repository with none named on
+// it; issueInvalid and issueUnnamed say the same of issue, which no default
+// subject names. All four are empty offline.
 type subject struct {
-	prInvalid error
-	product   spec.Product
-	ref       string
-	prefix    string
-	label     string
-	source    string
-	target    string
-	tag       string
-	prUnnamed string
+	prInvalid    error
+	issueInvalid error
+	product      spec.Product
+	ref          string
+	prefix       string
+	label        string
+	source       string
+	target       string
+	tag          string
+	prUnnamed    string
+	// issueUnnamed is why a live subject names no issue, empty offline.
+	issueUnnamed string
 	// owner scopes the cross-repository lists to one owner's open items; empty is
 	// the viewer's own.
 	owner string
@@ -161,6 +160,8 @@ type subject struct {
 	repo  forgeapi.RepoRef
 	pr    forgeapi.PRRef
 	issue forgeapi.IssueRef
+	// run is the failed run a run's re-run addresses.
+	run forgeapi.RunRef
 }
 
 // canonicalSubject is the subject every offline case addresses.
@@ -175,6 +176,7 @@ func canonicalSubject(p spec.Product) subject {
 		repo:    repoRef(p),
 		pr:      prRef(p),
 		issue:   forgeapi.IssueRef{Number: issueNumber},
+		run:     forgeapi.RunRef{ID: 1},
 		since:   createdAt.Add(-time.Hour),
 	}
 }
@@ -192,6 +194,7 @@ func liveSubject(p spec.Product) subject {
 	}
 	s.ref = env(p, "REF", defaultLiveRef(p))
 	s.pr, s.prUnnamed, s.prInvalid = livePullRequest(p)
+	s.issue, s.issueUnnamed, s.issueInvalid = liveIssue(p)
 	s.since = time.Time{}
 	return s
 }
@@ -217,6 +220,23 @@ func livePullRequest(p spec.Product) (forgeapi.PRRef, string, error) {
 		return forgeapi.PRRef{}, "", fmt.Errorf("%sPR = %q, want the positive number of the pull request the live reads address", prefix, raw)
 	}
 	return forgeapi.PRRef{Number: n, Sigil: sigil(p)}, "", nil
+}
+
+// liveIssue is the issue a live read of one issue addresses: the number the
+// product's ISSUE variable names, and none where it is unset, with the reason, since
+// no default project vouches for an issue at any number. A variable that is set and
+// holds no positive number is an error, as on [livePullRequest].
+func liveIssue(p spec.Product) (forgeapi.IssueRef, string, error) {
+	name := liveVar(p, "ISSUE")
+	raw := os.Getenv(name)
+	if raw == "" {
+		return forgeapi.IssueRef{}, name + " is unset, so no issue is known to exist on the live subject to read", nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return forgeapi.IssueRef{}, "", fmt.Errorf("%s = %q, want the positive number of the issue the live reads address", name, raw)
+	}
+	return forgeapi.IssueRef{Number: n}, "", nil
 }
 
 // env reads one of the live lane's per-product variables.
@@ -370,6 +390,15 @@ func (f fixture) checkProvenance() error {
 }
 
 // matches reports whether one recorded response answers this request.
+// payload is the body a server writes for this route: none on a 204, whose status
+// allows none, which the fixture spells as null to stay valid JSON.
+func (w *wire) payload() []byte {
+	if w.Status == http.StatusNoContent {
+		return nil
+	}
+	return w.Body
+}
+
 func (w *wire) matches(r *http.Request, body []byte) bool {
 	if w.GraphQL {
 		return r.Method == http.MethodPost && isGraphQL(body)
@@ -431,13 +460,14 @@ func departureFor(e *spec.Entry, path string) (spec.Departure, bool) {
 	return spec.Departure{}, false
 }
 
-// checkRuns are the two ordered runs of count fields a collapsed departure row can
+// checkRuns are the ordered runs of count fields a collapsed departure row can
 // name, in the order the exported surface declares them: a row reading
 // "ChecksPassing .. ChecksTotal" covers every member between its two endpoints, so
 // the expansion has to know the order rather than guess it.
 var checkRuns = [][]string{
 	{"ChecksPassing", "ChecksFailing", "ChecksPending", "ChecksNeutral", "ChecksUnknown", "ChecksTotal"},
 	{"Passing", "Failing", "Pending", "Neutral", "Unknown", "Total"},
+	{"Approvals", "ChangesRequested"},
 }
 
 // coveredPaths returns every field path one departure row covers: itself, or the run
@@ -479,10 +509,12 @@ func indexOf(list []string, want string) int {
 // price is what one entry's published request count comes to on the canonical
 // fixture, whose every list carries one item: the call's own figure plus the
 // per-item figure for the products whose list rows carry no check state and cost one
-// read each, failed attempts included, and the per-item ceiling above the high end.
-func price(e *spec.Entry, items int) (low, high int) {
+// read each, failed attempts included, the per-name figure for the label names the
+// call named, and each ceiling above the high end.
+func price(e *spec.Entry, items, names int) (low, high int) {
 	r := e.Requests
-	return r.Min + r.PerItem*items, r.Max + (r.PerItem+r.PerItemCeiling)*items
+	return r.Min + r.PerItem*items + r.PerName*names,
+		r.Max + (r.PerItem+r.PerItemCeiling)*items + (r.PerName+r.PerNameCeiling)*names
 }
 
 // wanted is what one of the table's request facts expects on the wire, resolved
@@ -568,16 +600,11 @@ func numberList(raw json.RawMessage) bool {
 	return len(rows) > 0
 }
 
-// preludeFor is the capability accessor a case calls before the operation itself,
-// derived from the capability the entry needs: a call gated on a capability cannot
-// be priced at its published figure unless detection has already run, and the
-// accessor's own requests are the accessor's price rather than this operation's.
-//
-// The connection read is also the prelude of every Gitea-family operation whose
-// requests ask for at most the instance's stated maximum page size, for the same
-// reason: the connection reads that maximum at setup and prices the read on its own
-// row, so the operation's published figure is its figure on a connection already
-// set up.
+// preludeFor is the read a case runs first, so the operation is priced on a
+// connection already set up: the capability accessor of a call gated on a
+// capability, and on the Gitea family the connection read of an operation that pages
+// at the instance's stated maximum or whose route turns on the product, both of
+// which that read establishes and prices on its own row.
 func preludeFor(e *spec.Entry) string {
 	switch forgeapi.Capability(e.Needs) {
 	case forgeapi.CapRerunChecks:
@@ -585,7 +612,7 @@ func preludeFor(e *spec.Entry) string {
 	case forgeapi.CapReadMergeState:
 		return "Capabilities.GrantCaps"
 	}
-	if family(e.Product) == forgeapi.FamilyGitea && pagesAtTheStatedMaximum[e.Method] {
+	if family(e.Product) == forgeapi.FamilyGitea && (pagesAtTheStatedMaximum[e.Method] || readsTheProduct[e.Method]) {
 		return "Capabilities.ConnectionCaps"
 	}
 	return ""
@@ -608,7 +635,12 @@ var pagesAtTheStatedMaximum = map[string]bool{
 	"Issues.CreateIssue":     true,
 	"Releases.ListReleases":  true,
 	"Labels.ListLabels":      true,
+	"Labels.AddLabels":       true,
 }
+
+// readsTheProduct are the operations whose route on the Gitea family turns on which
+// of the two products answers, which the connection read establishes first.
+var readsTheProduct = map[string]bool{"Labels.RemoveLabels": true}
 
 // guard runs one operation and turns a panic into an error naming it, so an
 // implementation whose methods panic fails each case in turn rather than aborting

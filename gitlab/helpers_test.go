@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // The canonical subject these tests address. The selector is NESTED, which is this
@@ -195,6 +195,20 @@ type harness struct {
 // GraphQL endpoint sits beside the versioned REST root rather than under it.
 const documentRoute = "POST /api/graphql"
 
+// documentAt is the route key of one named document, the document route followed by
+// the operation name, which a test registers to answer that document apart from the
+// others; it is recorded under that key where registered, and empty for any other
+// request.
+func documentAt(key, body string) string {
+	var request struct {
+		Name string `json:"operationName"`
+	}
+	if key != documentRoute || json.Unmarshal([]byte(body), &request) != nil || request.Name == "" {
+		return ""
+	}
+	return documentRoute + " " + request.Name
+}
+
 // newHarness builds a client over an httptest server answering from routes, which map
 // "METHOD /escaped-path" onto the body to serve. A route no entry matches answers 500
 // with a message naming it, so a client reaching an undocumented route fails the test
@@ -207,12 +221,17 @@ func newHarness(t *testing.T, routes map[string]string, opts ...forgeapi.Option)
 		key := r.Method + " " + r.URL.EscapedPath()
 		body := readAll(t, r)
 		in.mu.Lock()
+		if named := documentAt(key, body); named != "" {
+			if _, ok := in.routes[named]; ok {
+				key = named
+			}
+		}
 		in.requests = append(in.requests, key)
 		in.tokens = append(in.tokens, r.Header.Get("Authorization"))
 		in.queries[key] = r.URL.Query()
 		if body != "" {
 			in.bodies[key] = body
-			if key == documentRoute {
+			if strings.HasPrefix(key, documentRoute) {
 				in.documents = append(in.documents, body)
 			}
 		}

@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2/internal/spec"
+	"github.com/cplieger/forgeapi/v3/internal/spec"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/textsafe"
 )
@@ -478,6 +478,55 @@ func (l *lane) closeIssue(ctx context.Context, n int) error {
 	return err
 }
 
+// labelIssue puts one label on one issue with the lane's credential, by name, which
+// the issue label route takes on every product but GitLab, whose update does.
+func (l *lane) labelIssue(ctx context.Context, n int, name string) error {
+	if l.product == spec.GitLab {
+		_, err := l.call(ctx, http.MethodPut, l.issuePath(n), map[string]string{"add_labels": name}, nil)
+		return err
+	}
+	_, err := l.call(ctx, http.MethodPost, l.issuePath(n)+"/labels", map[string][]string{"labels": {name}}, nil)
+	return err
+}
+
+// issueLabels reads the names of the labels one issue carries, which GitLab answers
+// as bare names and the other products as label objects.
+func (l *lane) issueLabels(ctx context.Context, n int) ([]string, error) {
+	var record struct {
+		Labels []json.RawMessage `json:"labels"`
+	}
+	if _, err := l.call(ctx, http.MethodGet, l.issuePath(n), nil, &record); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(record.Labels))
+	for _, raw := range record.Labels {
+		var name string
+		if json.Unmarshal(raw, &name) != nil {
+			var label struct {
+				Name string `json:"name"`
+			}
+			if err := json.Unmarshal(raw, &label); err != nil {
+				return nil, fmt.Errorf("reading issue %d's labels: %w", n, err)
+			}
+			name = label.Name
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// reopen sends the reopening the library sends to the issue or pull request at path,
+// with the lane's credential, so a case can read what the forge answers when the
+// object is already open.
+func (l *lane) reopen(ctx context.Context, path string) error {
+	if l.product == spec.GitLab {
+		_, err := l.call(ctx, http.MethodPut, path, map[string]string{"state_event": "reopen"}, nil)
+		return err
+	}
+	_, err := l.call(ctx, http.MethodPatch, path, map[string]string{"state": "open"}, nil)
+	return err
+}
+
 // The statuses a removal reads as "already gone": GitHub answers a missing ref with
 // 422 as well as 404.
 var (
@@ -750,10 +799,12 @@ func laneWait(ctx context.Context) error {
 // gitlab.com answers every pipeline of an account whose identity it has not
 // verified: there is a failed run and no failed job to re-run.
 type runVerdict struct {
-	summary  string
-	finished bool
-	failed   bool
-	refused  bool
+	summary string
+	// failedRun is the id of the first failed run, zero where none failed.
+	failedRun int64
+	finished  bool
+	failed    bool
+	refused   bool
 }
 
 // waitForRuns waits up to bound for every CI run on one commit to finish, and
@@ -803,6 +854,9 @@ func (l *lane) runs(ctx context.Context, sha string) (runVerdict, error) {
 		failed := r.Conclusion == "failure" || r.Conclusion == "failed"
 		v.finished = v.finished && r.Status == "completed"
 		v.failed = v.failed || failed
+		if failed && v.failedRun == 0 {
+			v.failedRun = r.ID
+		}
 		v.refused = v.refused && failed && r.StartedAt == nil && l.product == spec.GitLab
 		parts = append(parts, r.Status+"/"+r.Conclusion)
 	}

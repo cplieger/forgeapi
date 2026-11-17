@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/forgeapi/v2"
-	"github.com/cplieger/forgeapi/v2/internal/transport"
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
 // cursorPrefix opens this family's continuation encoding. The continuation is this
@@ -183,9 +183,8 @@ const (
 	runList
 )
 
-// listing resolves one list call's options. It refuses with a local code a state filter
-// off the stateful lists, an owner off the scoped lists and the project listing, a since
-// bound off the pipeline listing, and a merge state option off the pull request lists.
+// listing resolves one list call's options and refuses with a local code an option
+// its list cannot apply, as [inapplicable] states, or a merged filter on the issue list.
 // A group nests, so an owner may be a PATH; [Client.ownerRoutes] decides its address.
 //
 // It resolves NOT the continuation, which is the caller's: this family mints two
@@ -196,27 +195,39 @@ func listing(op string, kind listKind, opts []forgeapi.ListOption) (forgeapi.Lis
 	if err != nil {
 		return set, err
 	}
-	if set.StateSet && kind != statefulList {
-		return set, transport.Local(forgeapi.CodeListStateInvalid,
-			op+" lists rows whose state the endpoint fixes, so a state filter cannot apply")
-	}
-	if set.OwnerSet && kind != scopedList && kind != repoList {
-		return set, transport.Local(forgeapi.CodeListOwnerInvalid,
-			op+" lists rows no owner scopes, so an owner cannot apply")
-	}
-	if set.SinceSet && kind != runList {
-		return set, transport.Local(forgeapi.CodeListSinceInvalid,
-			op+" lists rows no creation bound narrows, so a since bound cannot apply")
-	}
-	if set.MergeStateSet && op != opListPRs && op != opListMyPRs {
-		return set, transport.Local(forgeapi.CodeListMergeStateInvalid,
-			op+" lists rows that carry no merge state, so a merge state option cannot apply")
+	if fe := inapplicable(op, kind, &set); fe != nil {
+		return set, fe
 	}
 	if kind == statefulList && set.State == forgeapi.ListStateMerged && op == opListIssues {
 		return set, transport.Local(forgeapi.CodeListStateInvalid,
 			"an issue has no merged state")
 	}
 	return set, nil
+}
+
+// inapplicable is the refusal of an option the list cannot apply, nil where every
+// option set applies: a state filter off the stateful lists, an owner off the scoped
+// lists and the project listing, a since bound off the pipeline listing, and a merge
+// state or reviews option off the pull request lists.
+func inapplicable(op string, kind listKind, set *forgeapi.ListSettings) *forgeapi.Error {
+	switch {
+	case set.StateSet && kind != statefulList:
+		return transport.Local(forgeapi.CodeListStateInvalid,
+			op+" lists rows whose state the endpoint fixes, so a state filter cannot apply")
+	case set.OwnerSet && kind != scopedList && kind != repoList:
+		return transport.Local(forgeapi.CodeListOwnerInvalid,
+			op+" lists rows no owner scopes, so an owner cannot apply")
+	case set.SinceSet && kind != runList:
+		return transport.Local(forgeapi.CodeListSinceInvalid,
+			op+" lists rows no creation bound narrows, so a since bound cannot apply")
+	case set.MergeStateSet && op != opListPRs && op != opListMyPRs:
+		return transport.Local(forgeapi.CodeListMergeStateInvalid,
+			op+" lists rows that carry no merge state, so a merge state option cannot apply")
+	case set.ReviewsSet && op != opListPRs && op != opListMyPRs:
+		return transport.Local(forgeapi.CodeListReviewsInvalid,
+			op+" lists rows that carry no review counts, so a reviews option cannot apply")
+	}
+	return nil
 }
 
 // restQuery turns one REST list call's resolved options into this product's page
