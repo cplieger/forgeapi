@@ -219,6 +219,9 @@ func TestTheDefaultIntentTakesTheBaseBranchsMergeQueueMethod(t *testing.T) {
 			if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeStrategyRequired || fe.Kind != forgeapi.KindNotMergeable {
 				t.Fatalf("MergePR at the default intent with %s = %v, want %q / %v", tc.name, err, forgeapi.CodeStrategyRequired, forgeapi.KindNotMergeable)
 			}
+			if strings.Contains(fe.Message, "no merge queue rule") {
+				t.Errorf("MergePR at the default intent with %s = message %q, want a message true whatever the rules held", tc.name, fe.Message)
+			}
 			if arrived, want := h.instance.arrived(), []string{repoRouteBase, pullsRoute, rulesRoute}; !slices.Equal(arrived, want) {
 				t.Errorf("MergePR at the default intent with %s sent %v, want the reads alone, %v", tc.name, arrived, want)
 			}

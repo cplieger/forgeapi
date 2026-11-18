@@ -1297,7 +1297,7 @@ func (c *Client) allowedMethod(ctx context.Context, repo forgeapi.RepoRef, pr fo
 		message = "the repository allows the merge methods " + strings.Join(allowed, ", ") + " and configures no default among them"
 	}
 	return "", c.core.Fail(ctx, opMergePR, transport.REST(http.MethodGet), resp, forgeapi.CodeStrategyRequired,
-		forgeapi.KindNotMergeable, message+", and no merge queue rule on the base branch names one, so a merge at the default intent names its strategy")
+		forgeapi.KindNotMergeable, message+", and the base branch's rules name no one merge method this family can send, so a merge at the default intent names its strategy")
 }
 
 // rulesPage is the page the branch rules read asks for, this product's maximum: a rule
