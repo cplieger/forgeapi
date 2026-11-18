@@ -81,6 +81,10 @@ const (
 	primaryEnvelope   = `{"data":null,"errors":[{"type":"RATE_LIMITED","message":"` + primaryMessage + `"}]}`
 	retiredEnvelope   = `{"data":null,"errors":[{"message":"` + retiredMessage + `"}]}`
 	secondaryEnvelope = `{"data":null,"errors":[{"message":"` + secondaryMessage + `"}]}`
+
+	// restErrorsBody is a REST answer whose secondary-limit message sits only in an
+	// errors member, with no top-level message, which the REST reading never matches.
+	restErrorsBody = `{"errors":[{"message":"` + secondaryMessage + `"}]}`
 )
 
 // poolLimit is each pool's whole limit for an authenticated user: requests on
@@ -91,8 +95,9 @@ const poolLimit = 5000
 // epoch seconds after now. On REST, at the core pool: a secondary limit by its
 // Retry-After, by its message at remaining 0 and alone at remaining 4000, the
 // retired abuse-detection wording with Retry-After, a primary limit, any other
-// 429, a 401, a 403 that is no limit, a 404, and a proxy's non-JSON page carrying
-// the term. On a document, at the graphql pool: a primary limit at 200, secondary
+// 429, a 401, a 403 that is no limit, a 404, a proxy's non-JSON page carrying the
+// term, and a JSON 403 carrying it only in errors[].message with no top-level
+// message, each of the last four no limit. On a document, at the graphql pool: a primary limit at 200, secondary
 // limits at 200 by Retry-After and by the message, at 403 by the message, and at
 // 403 and 429 at remaining 0 with the message in the envelope's errors.
 func LimitCases(now time.Time) []LimitCase {
@@ -159,6 +164,11 @@ func restCases(now time.Time) []LimitCase {
 		{
 			Name: "a_proxy_page_carrying_the_term", Status: http.StatusForbidden,
 			Header: header(pool, 4000, later, 0), Body: []byte(proxyBody),
+			Read: read(pool, false, false, 4000, later, 0), Kind: forgeapi.KindForbidden,
+		},
+		{
+			Name: "a_403_with_the_term_only_in_errors", Status: http.StatusForbidden,
+			Header: header(pool, 4000, later, 0), Body: []byte(restErrorsBody),
 			Read: read(pool, false, false, 4000, later, 0), Kind: forgeapi.KindForbidden,
 		},
 	}
