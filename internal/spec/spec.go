@@ -3190,13 +3190,13 @@ var Table = []Entry{
 //
 // Header is the response header that makes the status a throttle, empty where
 // the status alone does, and Value the value it carries, empty where any does.
-// Message is the phrase the refusal's message member carries that makes the
-// status a throttle, or beside a Header a secondary one, matched in any case,
-// empty where no message does.
 type Throttle struct {
 	Product Product
 	Header  string
 	Value   string
+	// Message is the phrase the refusal's message member carries that makes the
+	// status a throttle, or beside a Header a secondary one, matched in any
+	// case, empty where no message does.
 	Message string
 	Says    string
 	Status  int

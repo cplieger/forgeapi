@@ -14,8 +14,9 @@ func hookAttempts(next http.RoundTripper, wrap func(http.RoundTripper) http.Roun
 }
 
 // passedKey carries one attempt's flag, which [passedOn] sets once the hook has
-// passed that attempt on. The hook derives the request it passes from the one
-// it got, so the flag reaches beneath it whatever the hook changes.
+// passed that attempt on. The flag rides the request's context, so it reaches
+// beneath the hook because a request the hook passes on keeps a context derived
+// from the one it got, as [forgeapi.WithAttemptObserver] requires.
 type passedKey struct{}
 
 type attemptHook struct{ hook http.RoundTripper }

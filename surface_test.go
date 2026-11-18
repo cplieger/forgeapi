@@ -120,12 +120,11 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 	}
 }
 
-// TestFamilyPackagesExportOnlyWhatTheirFunctionsAnswer is the mechanical form of
-// the rule that a family's own types stay inside it: the normalizers, the wire
-// shapes and the family's own vocabulary are facts about one upstream API, and the
-// day one of them is exported it becomes something a consumer can name and this
-// library has to keep. A family exports a type only as the answer of one of its
-// package-level functions: the client New builds, and GitHub's ReadLimit reading.
+// TestFamilyPackagesExportOnlyWhatTheirFunctionsAnswer holds a family's own types
+// inside it: the normalizers, the wire shapes and the family's vocabulary are facts
+// about one upstream API, and an exported one is something this library has to
+// keep. Each exported type is a package-level function's answer (New's Client,
+// ReadLimit's RateLimit).
 //
 // The complementary half needs no test: the root package cannot import a family
 // package without a cycle, so no family type can reach the root's surface at all.
