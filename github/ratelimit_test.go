@@ -230,6 +230,52 @@ func carries(c *githubtest.LimitCase, phrase string) bool {
 	})
 }
 
+// TestErrorRetryAfterUncapped holds a Retry-After of 120 seconds to a 120 s
+// wait on ReadLimit and on the error of a REST read and of a document read: the
+// figure is the answer's own, never bounded by a retry loop's cap.
+func TestErrorRetryAfterUncapped(t *testing.T) {
+	const want = 120 * time.Second
+	header := http.Header{
+		"Retry-After": {"120"}, "X-Ratelimit-Limit": {"5000"}, "X-Ratelimit-Remaining": {"4000"},
+		"X-Ratelimit-Reset": {"1790000000"}, "X-Ratelimit-Resource": {"core"},
+	}
+	rest := []byte(`{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}`)
+	document := []byte(`{"data":null,"errors":[{"type":"RATE_LIMITED","message":"You have exceeded a secondary rate limit."}]}`)
+
+	if got := github.ReadLimit(http.StatusForbidden, header, rest).RetryAfter; got != want {
+		t.Errorf("ReadLimit = retry after %v, want %v", got, want)
+	}
+	for _, test := range []struct {
+		read   func(*github.Client) error
+		name   string
+		body   []byte
+		status int
+	}{
+		{
+			name: "a_rest_403", status: http.StatusForbidden, body: rest,
+			read: func(c *github.Client) error { _, err := c.Whoami(t.Context()); return err },
+		},
+		{
+			name: "a_document_at_200", status: http.StatusOK, body: document,
+			read: func(c *github.Client) error {
+				_, err := c.ReadPR(t.Context(), limitRepo, forgeapi.PRRef{Number: 1, Sigil: "#"})
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.read(newStub(t, test.status, header, test.body).client)
+			fe, ok := errors.AsType[*forgeapi.Error](err)
+			if !ok {
+				t.Fatalf("the read answered %v, want a *forgeapi.Error", err)
+			}
+			if fe.Kind != forgeapi.KindRateLimited || fe.RetryAfter != want {
+				t.Errorf("the read = kind %v retry after %v, want %v, %v", fe.Kind, fe.RetryAfter, forgeapi.KindRateLimited, want)
+			}
+		})
+	}
+}
+
 // TestReadLimitReadsEveryAnswer holds ReadLimit to the figures of an answer
 // that is no limit, a success's included, and to the one secondary match: the
 // phrase outside the message member, or in a body that is not JSON, is none.

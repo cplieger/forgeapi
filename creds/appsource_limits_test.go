@@ -1,10 +1,12 @@
 package creds_test
 
 import (
+	"net/http"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
 	"github.com/cplieger/forgeapi/v3/github/githubtest"
 )
@@ -49,4 +51,20 @@ func TestReadLimit(t *testing.T) {
 			})
 		})
 	}
+}
+
+// TestErrorRetryAfterUncapped holds the App mint to a Retry-After of 120
+// seconds as a 120 s wait: the figure is GitHub's own, never bounded by a retry
+// loop's cap.
+func TestErrorRetryAfterUncapped(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		header := http.Header{"Retry-After": {"120"}, "X-Ratelimit-Remaining": {"4000"}, "X-Ratelimit-Resource": {"core"}}
+		body := `{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}`
+		g := newFakeGitHub(t, answering(appReply{status: http.StatusForbidden, header: header, body: body}))
+		_, err := appSource(t, g, creds.InstallationByID(42)).Token(t.Context())
+		fe := forgeError(t, err)
+		if fe.Kind != forgeapi.KindRateLimited || fe.RetryAfter != 120*time.Second {
+			t.Errorf("Token() = kind %v retry after %v, want %v, 2m0s", fe.Kind, fe.RetryAfter, forgeapi.KindRateLimited)
+		}
+	})
 }

@@ -107,9 +107,9 @@ type BudgetState struct { //nolint:govet // fieldalignment: field order is the r
 // PoolState is one rate-limit pool as its last answer reported it, named as
 // [Error.Pool] names it (GitHub's X-RateLimit-Resource, GitLab's RateLimit-Name),
 // empty for a figure reported under no name, as every Forgejo answer's is.
-// Remaining is less the requests counted against the pool since by answers that
-// named only a narrower pool overlapping it. Limit and Reset are zero where the
-// answer stated none. A pool whose window has renewed is left out, because only
+// Remaining is the figure the pool's own last answer reported, less the requests
+// counted since then by answers that named only a narrower pool overlapping it.
+// Limit and Reset are zero where the answer stated none. A pool whose window has renewed is left out, because only
 // an answer can report its new figure.
 type PoolState struct {
 	Reset     time.Time
