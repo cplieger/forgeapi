@@ -65,11 +65,9 @@ func Message(body []byte) string {
 
 // Signal reads the budget signal riding every answer on both of GitHub's
 // surfaces: the remaining units of the pool the answer drew on, ok false where
-// the answer carries no readable remaining figure, and the instant that window
-// renews, as epoch seconds, whatever ok reads; the zero time where the answer
-// carries no reset.
-//
-// It is read from the answer and never from the rate-limit endpoint, which is
+// none is readable, and the instant that window renews, as epoch seconds,
+// whatever ok reads, the zero time where the answer carries no reset. It is
+// read from the answer and never from the rate-limit endpoint, which is
 // measured to report a full pool with a fresh window while the same
 // credential's document budget was demonstrably drawn down.
 func Signal(header http.Header) (remaining int, reset time.Time, ok bool) {
