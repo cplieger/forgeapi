@@ -303,9 +303,6 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	for i := range rows.Nodes {
 		item := c.normalizeDocPull(&rows.Nodes[i], documentRepo(payload.Project, repo))
 		blankUnread(&item, &set)
-		if result.Partial {
-			unreadNone(&item)
-		}
 		items = append(items, item)
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items}
@@ -316,15 +313,6 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		page.Partial = c.partial(forgeapi.PartialGraphQLPartial, len(items))
 	}
 	return page, nil
-}
-
-// unreadNone answers unknown a verdict of no check on an answer that came beside
-// envelope errors: they name no row, and an error nulls the head pipeline the
-// verdict was read from.
-func unreadNone(item *forgeapi.PullRequest) {
-	if item.Action.Checks == forgeapi.CheckNone {
-		item.Action.Checks = forgeapi.CheckUnknown
-	}
 }
 
 // blankUnread answers unknown what a listed row was asked not to read: its merge
@@ -594,7 +582,6 @@ func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.
 	}
 	item := c.normalizeDocPull(node, documentRepo(payload.Project, repo))
 	if result.Partial {
-		unreadNone(&item)
 		item.Partial = c.partial(forgeapi.PartialGraphQLPartial, 0)
 	}
 	return mergeRequestRead{

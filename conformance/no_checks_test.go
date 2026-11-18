@@ -109,10 +109,17 @@ func struckCase(t *testing.T, e spec.Entry, nulledBy string) (items []refusedIte
 	return refusedItems(t, got), struck, pagePartial
 }
 
+// noneUnproven is the reads whose answer cannot tell a head carrying no check from a
+// verdict the credential may not read: GitLab's documents null a pipeline the
+// credential may not view, with no error, exactly as they null one that never ran.
+var noneUnproven = map[spec.Product]map[string]bool{
+	spec.GitLab: {"PullRequests.ListPRs": true, "PullRequests.ReadPR": true},
+}
+
 // A head whose checks were read and found absent is CheckNone with no count, on every
-// product whose answer can tell that from a verdict nobody read. A product whose table
-// row says it cannot supply the verdict at all answers CheckUnknown, as it does for a
-// head that carries checks.
+// product whose answer can tell that from a verdict nobody read. A read that cannot
+// tell them apart, or whose table row says it cannot supply the verdict at all,
+// answers CheckUnknown, as it does for a head that carries checks.
 func TestAHeadCarryingNoCheckIsCheckNone(t *testing.T) {
 	for _, e := range spec.Table {
 		field, reads := noCheckFields[e.Method]
@@ -121,7 +128,7 @@ func TestAHeadCarryingNoCheckIsCheckNone(t *testing.T) {
 		}
 		t.Run(e.Method+"_"+string(e.Product), func(t *testing.T) {
 			want := forgeapi.CheckNone
-			if d, departs := departureFor(&e, field); departs && d.Kind == spec.CannotSupply {
+			if d, departs := departureFor(&e, field); noneUnproven[e.Product][e.Method] || departs && d.Kind == spec.CannotSupply {
 				want = forgeapi.CheckUnknown
 			}
 			items, struck, _ := struckCase(t, e, "")

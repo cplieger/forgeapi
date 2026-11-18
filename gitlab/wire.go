@@ -669,14 +669,12 @@ func (c *Client) normalizeDocPull(n *docMergeRequest, repo forgeapi.RepoRef) for
 	if n.Author != nil {
 		author, kind = n.Author.Username, accountKind(n.Author.Bot)
 	}
+	// A null headPipeline stays unknown: GraphQL nulls a pipeline the credential may
+	// not view, with no error, as it nulls one that never ran
+	// (app/graphql/types/ci/pipeline_type.rb authorize :read_pipeline).
 	checks := forgeapi.CheckUnknown
-	switch {
-	case n.HeadPipeline != nil:
+	if n.HeadPipeline != nil {
 		checks = c.checkState("pipeline status (document)", n.HeadPipeline.Status)
-	case n.DiffHeadSHA != "":
-		// headPipeline is diff_head_pipeline, null where no pipeline ran on the head
-		// (app/models/merge_request.rb); a caller holding a partial answer clears it.
-		checks = forgeapi.CheckNone
 	}
 	approvals, changes := approvalCount(n.ApprovedBy), changesRequested(n.Reviewers)
 	partial := c.labelCut(n.Labels)

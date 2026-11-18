@@ -429,7 +429,7 @@ var Table = []Entry{
 			{
 				Field: "Items[].Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold; CheckNone where headPipeline is null on a row with a diffHeadSha, GitLab's GraphQL answers an object the credential may not read as null, so a credential that may not view the project's pipelines reads CheckNone too; CheckUnknown on a document answered in part, and where the documents are refused, since a REST list row carries no head_pipeline and so cannot tell no pipeline from one unread",
+				Says:  "headPipeline.status scalar, no fold; CheckUnknown where headPipeline is null, since GitLab's GraphQL nulls a pipeline the credential may not view with no error (Ci::PipelineType authorize :read_pipeline) and so cannot tell a head with no pipeline from one unread; CheckUnknown too where the documents are refused, since a REST list row carries no head_pipeline and so cannot tell no pipeline from one unread",
 			},
 			{
 				Field: "Items[].Action.ChecksPassing .. ChecksTotal",
@@ -927,7 +927,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold; CheckNone where headPipeline is null on a merge request with a diffHeadSha, GitLab's GraphQL answers an object the credential may not read as null, so a credential that may not view the project's pipelines reads CheckNone too; CheckUnknown on a document answered in part; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a null head_pipeline and a merged results one included, since the record leaves the key out for a credential that may not view pipelines and that payload carries no source_sha to match it by",
+				Says:  "headPipeline.status scalar, no fold; CheckUnknown where headPipeline is null, since GitLab's GraphQL nulls a pipeline the credential may not view with no error (Ci::PipelineType authorize :read_pipeline) and so cannot tell a head with no pipeline from one unread; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a null head_pipeline and a merged results one included, since the record leaves the key out for a credential that may not view pipelines and that payload carries no source_sha to match it by",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
