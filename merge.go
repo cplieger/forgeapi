@@ -16,10 +16,10 @@ const (
 	// IntentDefault merges as the repository is configured to: on GitLab by the
 	// project's merge method and squash option; on Gitea and Forgejo by the
 	// repository's default merge style, read from its record before the merge.
-	// GitHub configures no default method, only allowed ones, so there it is the
-	// one method the repository allows, read the same way. A repository whose
-	// record names no one merge is refused with [CodeStrategyRequired] before any
-	// write.
+	// GitHub configures no repository-wide default method, so there it is the one
+	// method the repository allows, else the base branch's merge queue method. A
+	// repository naming no one merge is refused with [CodeStrategyRequired] before
+	// any write.
 	IntentDefault MergeIntent = iota
 	// IntentSquash asks for one commit.
 	IntentSquash

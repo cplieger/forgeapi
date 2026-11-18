@@ -286,7 +286,7 @@ func TestAStrategyOutsideThisFamilysSetIsRefusedLocally(t *testing.T) {
 		t.Errorf("MergePR with a foreign strategy sent %d request(s), want 0", got)
 	}
 	for _, method := range mergeMethods {
-		if _, err := h.client.mergeMethod(t.Context(), testRef(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, Strategy: method}); err != nil {
+		if _, err := h.client.mergeMethod(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, Strategy: method}, new(*restPull)); err != nil {
 			t.Errorf("mergeMethod(%q) = %v, want nil: that member is this product's own", method, err)
 		}
 	}

@@ -19,7 +19,7 @@ const autoMergeNode = "PR_kwDOexample"
 // that decides between merging now and arming.
 func autoMergePull(state string) string {
 	return `{"number":1,"state":"open","title":"t","node_id":"` + autoMergeNode + `","merged":false,` +
-		`"mergeable":true,"mergeable_state":"` + state + `","head":{"ref":"feature","sha":"` + testHeadSHA + `"},` +
+		`"mergeable":true,"mergeable_state":"` + state + `","head":{"ref":"feature","sha":"` + testHeadSHA + `"},"base":{"ref":"main"},` +
 		`"html_url":"https://forge.example/example/example/pull/1"}`
 }
 
@@ -167,6 +167,63 @@ func TestTheDefaultIntentTakesTheOneMethodTheRepositoryAllows(t *testing.T) {
 			t.Errorf("MergePR(AutoMerge) at the default intent armed with %q, want SQUASH", got)
 		}
 	})
+}
+
+// rulesRoute is the base branch's rules read, where a merge queue names its method.
+const rulesRoute = "GET /api/v3/repos/example/example/rules/branches/main"
+
+// queueRule is a merge_queue rule as the rules route answers it, merging by method.
+func queueRule(method string) string {
+	return `[{"type":"deletion","ruleset_id":1},{"type":"merge_queue","ruleset_id":2,"parameters":{"merge_method":"` + method + `","grouping_strategy":"ALLGREEN"}}]`
+}
+
+// TestTheDefaultIntentTakesTheBaseBranchsMergeQueueMethod holds a repository allowing
+// several methods to its base branch's merge queue, which merges by its own method
+// whatever is sent: the pull request is read once for its base, and the queue's method
+// is sent. Rules naming no queue, or queues that disagree, refuse before any write.
+func TestTheDefaultIntentTakesTheBaseBranchsMergeQueueMethod(t *testing.T) {
+	const several = `{"full_name":"example/example","allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true}`
+	t.Run("merge_now", func(t *testing.T) {
+		h := newHarness(t, map[string]string{repoRouteBase: several, pullsRoute: autoMergePull("clean"), rulesRoute: queueRule("SQUASH"), mergeRoute: `{"status":"merged"}`})
+		if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA}); err != nil {
+			t.Fatalf("MergePR at the default intent under a merge queue = %v, want the merge", err)
+		}
+		if arrived, want := h.instance.arrived(), []string{repoRouteBase, pullsRoute, rulesRoute, mergeRoute}; !slices.Equal(arrived, want) {
+			t.Errorf("MergePR at the default intent under a merge queue sent %v, want %v", arrived, want)
+		}
+		if got := sentBody(t, h, mergeRoute)["merge_method"]; got != "squash" {
+			t.Errorf("MergePR at the default intent under a merge queue sent merge_method %v, want the queue's, squash", got)
+		}
+	})
+	t.Run("armed", func(t *testing.T) {
+		h := newHarness(t, map[string]string{repoRouteBase: several, pullsRoute: autoMergePull("blocked"), rulesRoute: queueRule("REBASE"), documentRoute: autoMergeArmed})
+		if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true}); err != nil {
+			t.Fatalf("MergePR(AutoMerge) at the default intent under a merge queue = %v, want the armed outcome", err)
+		}
+		if arrived, want := h.instance.arrived(), []string{repoRouteBase, pullsRoute, rulesRoute, documentRoute}; !slices.Equal(arrived, want) {
+			t.Errorf("MergePR(AutoMerge) at the default intent under a merge queue sent %v, want %v: the pull request read once", arrived, want)
+		}
+		if got := postedArm(t, h).Variables.MergeMethod; got != "REBASE" {
+			t.Errorf("MergePR(AutoMerge) at the default intent under a merge queue armed with %q, want REBASE", got)
+		}
+	})
+	for _, tc := range []struct{ name, rules string }{
+		{name: "no_queue", rules: `[{"type":"deletion","ruleset_id":1}]`},
+		{name: "queues_disagreeing", rules: `[{"type":"merge_queue","parameters":{"merge_method":"SQUASH"}},{"type":"merge_queue","parameters":{"merge_method":"MERGE"}}]`},
+		{name: "unmapped_method", rules: queueRule("OCTOPUS")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{repoRouteBase: several, pullsRoute: autoMergePull("clean"), rulesRoute: tc.rules})
+			_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeStrategyRequired || fe.Kind != forgeapi.KindNotMergeable {
+				t.Fatalf("MergePR at the default intent with %s = %v, want %q / %v", tc.name, err, forgeapi.CodeStrategyRequired, forgeapi.KindNotMergeable)
+			}
+			if arrived, want := h.instance.arrived(), []string{repoRouteBase, pullsRoute, rulesRoute}; !slices.Equal(arrived, want) {
+				t.Errorf("MergePR at the default intent with %s sent %v, want the reads alone, %v", tc.name, arrived, want)
+			}
+		})
+	}
 }
 
 // TestAMergeNotAskedToWaitSendsTheMergeAlone holds the price of the default: without
