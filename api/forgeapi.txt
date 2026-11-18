@@ -891,20 +891,23 @@ func ReadLimit(status int, h http.Header, body []byte) RateLimit
 
 ## package githubtest (./github/githubtest)
 
-type Hold struct {
+type Effect struct {
 	Reset time.Time
 	Pool string
 	RetryAfter time.Duration
 	Limited bool
+	Refused bool
+	Attributed bool
 }
 type LimitCase struct {
 	Header http.Header
 	Body []byte
 	Name string
-	Hold Hold
+	Effect Effect
 	Read github.RateLimit
 	Status int
 	Kind forgeapi.ErrorKind
+	Document bool
 }
 func LimitCases(now time.Time) []LimitCase
 

@@ -9,12 +9,15 @@ import (
 	"github.com/cplieger/forgeapi/v3/github/githubtest"
 )
 
-// TestReadLimit runs every GitHub rate-limit case through the App mint: a limit
-// answers rate-limited with the wait the case's hold names (its Retry-After,
-// else its reset, else the back-off's first minute), any other answer the
-// case's kind, and both carry the figures github.ReadLimit reads.
+// TestReadLimit runs every GitHub REST rate-limit case through the App mint: a
+// limit answers rate-limited with the wait the case's effect names (its
+// Retry-After, else its reset, else the back-off's first minute), any other
+// answer the case's kind, and both carry the figures github.ReadLimit reads.
 func TestReadLimit(t *testing.T) {
 	for i, named := range githubtest.LimitCases(time.Time{}) {
+		if named.Document {
+			continue
+		}
 		t.Run(named.Name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				now := time.Now()
@@ -35,13 +38,13 @@ func TestReadLimit(t *testing.T) {
 				}
 				wait := time.Minute
 				switch {
-				case c.Hold.RetryAfter > 0:
-					wait = c.Hold.RetryAfter
-				case !c.Hold.Reset.IsZero():
-					wait = c.Hold.Reset.Sub(now)
+				case c.Effect.RetryAfter > 0:
+					wait = c.Effect.RetryAfter
+				case !c.Effect.Reset.IsZero():
+					wait = c.Effect.Reset.Sub(now)
 				}
 				if fe.RetryAfter != wait {
-					t.Errorf("Token() = retry after %v, want the hold's %v", fe.RetryAfter, wait)
+					t.Errorf("Token() = retry after %v, want the effect's %v", fe.RetryAfter, wait)
 				}
 			})
 		})
