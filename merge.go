@@ -17,9 +17,9 @@ const (
 	// project's merge method and squash option; on Gitea and Forgejo by the
 	// repository's default merge style, read from its record before the merge.
 	// GitHub configures no repository-wide default method, so there it is the one
-	// method the repository allows, else the base branch's merge queue method. A
-	// repository naming no one merge is refused with [CodeStrategyRequired] before
-	// any write.
+	// method the repository allows, else the base branch's merge queue method, else
+	// the one allowed method its branch rules leave. A repository naming no one
+	// merge is refused with [CodeStrategyRequired] before any write.
 	IntentDefault MergeIntent = iota
 	// IntentSquash asks for one commit.
 	IntentSquash

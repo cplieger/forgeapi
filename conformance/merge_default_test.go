@@ -40,6 +40,19 @@ func repositoryRecord(t *testing.T, p spec.Product, set map[string]any) wire {
 // default branch answers them.
 var noQueue = wire{Method: "GET", Path: "/repos/example/example/rules/branches/main", Status: 200, Body: json.RawMessage(`[]`)}
 
+// oneMethodRule is GitHub's base branch rules allowing one merge method, cut from a
+// recorded branch-rules read of a public repository whose default branch's
+// pull_request rule allows merge alone, read 2026-11-18, its deletion and
+// pull_request rules kept and their ruleset ids and source replaced with the
+// canonical subject.
+var oneMethodRule = wire{
+	Method: "GET", Path: "/repos/example/example/rules/branches/main", Status: 200,
+	Body: json.RawMessage(`[{"type":"deletion","ruleset_source_type":"Repository","ruleset_source":"example/example","ruleset_id":1},` +
+		`{"type":"pull_request","parameters":{"required_approving_review_count":1,"dismiss_stale_reviews_on_push":true,"required_reviewers":[],` +
+		`"require_code_owner_review":true,"require_last_push_approval":false,"required_review_thread_resolution":false,"allowed_merge_methods":["merge"]},` +
+		`"ruleset_source_type":"Repository","ruleset_source":"example/example","ruleset_id":1}]`),
+}
+
 // mergeAtTheDefault sends a merge at IntentDefault naming no strategy to p's merge
 // fixture, served behind record where record is non-nil and behind first, and answers
 // the requests that arrived and what the merge returned.
@@ -76,7 +89,8 @@ func mergeAtTheDefault(t *testing.T, p spec.Product, record *wire, first ...wire
 // style (MergePullRequestOption's Do), and the repository record carries the
 // configured one as default_merge_style. GitHub configures no repository-wide default
 // method, only allowed ones, so the one method a repository allows is sent, else the
-// method of the base branch's merge queue, which merges by it whatever is sent.
+// method of the base branch's merge queue, which merges by it whatever is sent, else
+// the one method the branch's pull_request rules leave of the allowed ones.
 func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 	for _, tc := range []struct {
 		set     map[string]any
@@ -84,6 +98,7 @@ func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 		name    string
 		field   string
 		want    string
+		first   []wire
 		reads   int
 	}{
 		{
@@ -93,6 +108,11 @@ func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 		{
 			name: "GitHub_allowing_several_behind_a_merge_queue", product: spec.GitHub, field: "merge_method", want: `"squash"`, reads: 3,
 			set: map[string]any{"allow_merge_commit": true, "allow_squash_merge": true, "allow_rebase_merge": true},
+		},
+		{
+			name: "GitHub_allowing_several_with_a_branch_rule_allowing_one", product: spec.GitHub, field: "merge_method", want: `"merge"`, reads: 3,
+			set:   map[string]any{"allow_merge_commit": true, "allow_squash_merge": true, "allow_rebase_merge": true},
+			first: []wire{oneMethodRule},
 		},
 		{name: "Gitea", product: spec.Gitea, field: "Do", want: `"rebase-merge"`, reads: 1, set: map[string]any{"default_merge_style": "rebase-merge"}},
 		{name: "Forgejo", product: spec.Forgejo, field: "Do", want: `"squash"`, reads: 1, set: map[string]any{"default_merge_style": "squash"}},
@@ -104,7 +124,7 @@ func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 				w := repositoryRecord(t, tc.product, tc.set)
 				record = &w
 			}
-			arrived, err := mergeAtTheDefault(t, tc.product, record)
+			arrived, err := mergeAtTheDefault(t, tc.product, record, tc.first...)
 			if err != nil {
 				t.Fatalf("MergePR at the default intent on %s = %v, want the merge sent", tc.product, err)
 			}

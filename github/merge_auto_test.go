@@ -229,6 +229,64 @@ func TestTheDefaultIntentTakesTheBaseBranchsMergeQueueMethod(t *testing.T) {
 	}
 }
 
+// pullRequestRule is a pull_request rule as the rules route answers it, allowing methods.
+func pullRequestRule(methods ...string) string {
+	return `{"type":"pull_request","ruleset_id":3,"parameters":{"required_approving_review_count":1,"allowed_merge_methods":["` + strings.Join(methods, `","`) + `"]}}`
+}
+
+// A branch's pull_request rules narrow the methods a merge into it may use
+// (https://docs.github.com/en/rest/repos/rules), so where no merge queue names a method
+// the one method both the record and every such rule allow is sent, and a set of
+// several or none is refused before any write.
+func TestTheDefaultIntentTakesTheOneMethodTheBaseBranchsRulesAllow(t *testing.T) {
+	const (
+		several  = `{"full_name":"example/example","allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true}`
+		noRebase = `{"full_name":"example/example","allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":false}`
+	)
+	for _, tc := range []struct{ name, record, rules, want string }{
+		{name: "one_allowed", record: several, rules: `[{"type":"deletion","ruleset_id":1},` + pullRequestRule("merge") + `]`, want: "merge"},
+		{name: "meeting_the_record_in_one", record: noRebase, rules: `[` + pullRequestRule("squash", "rebase") + `]`, want: "squash"},
+		{name: "rules_meeting_in_one", record: several, rules: `[` + pullRequestRule("merge", "squash") + `,` + pullRequestRule("squash", "rebase") + `]`, want: "squash"},
+		{name: "an_unmapped_method_dropped", record: several, rules: `[` + pullRequestRule("octopus", "rebase") + `]`, want: "rebase"},
+		{name: "a_queue_over_a_narrower_rule", record: several, rules: `[` + pullRequestRule("merge") + `,{"type":"merge_queue","parameters":{"merge_method":"REBASE"}}]`, want: "rebase"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{repoRouteBase: tc.record, pullsRoute: autoMergePull("clean"), rulesRoute: tc.rules, mergeRoute: `{"status":"merged"}`})
+			if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA}); err != nil {
+				t.Fatalf("MergePR at the default intent with %s = %v, want the merge", tc.name, err)
+			}
+			if arrived, want := h.instance.arrived(), []string{repoRouteBase, pullsRoute, rulesRoute, mergeRoute}; !slices.Equal(arrived, want) {
+				t.Errorf("MergePR at the default intent with %s sent %v, want %v", tc.name, arrived, want)
+			}
+			if got := sentBody(t, h, mergeRoute)["merge_method"]; got != tc.want {
+				t.Errorf("MergePR at the default intent with %s sent merge_method %v, want %s", tc.name, got, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, record, rules, names string }{
+		{name: "several_allowed", record: several, rules: `[` + pullRequestRule("rebase", "merge") + `]`, names: "merge, rebase"},
+		{name: "none_of_the_records_allowed", record: noRebase, rules: `[` + pullRequestRule("rebase") + `]`, names: "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{repoRouteBase: tc.record, pullsRoute: autoMergePull("clean"), rulesRoute: tc.rules})
+			_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeStrategyRequired || fe.Kind != forgeapi.KindNotMergeable {
+				t.Fatalf("MergePR at the default intent with %s = %v, want %q / %v", tc.name, err, forgeapi.CodeStrategyRequired, forgeapi.KindNotMergeable)
+			}
+			if !strings.Contains(fe.Message, tc.names) {
+				t.Errorf("MergePR at the default intent with %s = message %q, want it naming the branch's allowed %q", tc.name, fe.Message, tc.names)
+			}
+			if strings.Contains(fe.Message, "no one merge method") {
+				t.Errorf("MergePR at the default intent with %s = message %q, want no claim the rules name no method: they allow some", tc.name, fe.Message)
+			}
+			if arrived, want := h.instance.arrived(), []string{repoRouteBase, pullsRoute, rulesRoute}; !slices.Equal(arrived, want) {
+				t.Errorf("MergePR at the default intent with %s sent %v, want the reads alone, %v", tc.name, arrived, want)
+			}
+		})
+	}
+}
+
 // TestAMergeNotAskedToWaitSendsTheMergeAlone holds the price of the default: without
 // AutoMerge nothing is read first, so a merge stays one request.
 func TestAMergeNotAskedToWaitSendsTheMergeAlone(t *testing.T) {

@@ -1755,7 +1755,7 @@ var Table = []Entry{
 	{
 		Method:    "Merges.MergePR",
 		Product:   GitHub,
-		Exercises: "PUT /repos/{owner}/{repo}/pulls/{number}/merge-async, this product's asynchronous merge, whose accept carries a handle and whose outcome Merges.MergeStatus reads from the pull request, then one read against the id-addressed location to resolve the successor where it answered from another address; a merge at the default intent naming no strategy first reads GET /repos/{owner}/{repo} for the merge methods the repository allows and, where it allows other than one, GET /repos/{owner}/{repo}/pulls/{number} for the base branch and GET /repos/{owner}/{repo}/rules/branches/{branch} for its merge queue's method, a merge asked to wait reads that pull-request record where no earlier read did, and a pull request that cannot merge now is armed by the EnableAutoMerge document in place of the merge",
+		Exercises: "PUT /repos/{owner}/{repo}/pulls/{number}/merge-async, this product's asynchronous merge, whose accept carries a handle and whose outcome Merges.MergeStatus reads from the pull request, then one read against the id-addressed location to resolve the successor where it answered from another address; a merge at the default intent naming no strategy first reads GET /repos/{owner}/{repo} for the merge methods the repository allows and, where it allows other than one, GET /repos/{owner}/{repo}/pulls/{number} for the base branch and GET /repos/{owner}/{repo}/rules/branches/{branch} for its merge queue's method and the merge methods its pull_request rules allow, a merge asked to wait reads that pull-request record where no earlier read did, and a pull request that cannot merge now is armed by the EnableAutoMerge document in place of the merge",
 		Requests:  Requests{Min: 1, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
@@ -1771,7 +1771,7 @@ var Table = []Entry{
 				Where: InBody,
 				Holds: HoldsLiteral,
 				Value: "\"merge\"",
-				Says:  "the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault, since this product configures no repository-wide default method and its route defaults to merge, the one method the repository record allows, else the merge_method of the base branch's merge_queue rule, which the queue merges by whatever is sent; a repository naming neither, rules naming disagreeing or unmapped methods, and a queue set by classic branch protection, which the rules route does not answer, refused with strategy_required before any write",
+				Says:  "the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault, since this product configures no repository-wide default method and its route defaults to merge, the one method the repository record allows, else the merge_method of the base branch's merge_queue rule, which the queue merges by whatever is sent, else the one method of those the record allows (every method where it names none) that every pull_request rule's allowed_merge_methods on the branch also allows; a repository and branch leaving no one method, queues naming disagreeing or unmapped methods, and a queue or allowed set by classic branch protection, which the rules route does not answer, refused with strategy_required before any write",
 			},
 			{
 				Field: "sha",

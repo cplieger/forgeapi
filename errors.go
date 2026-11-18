@@ -93,7 +93,7 @@ const (
 	// CodeStrategyRequired is a merge at [IntentDefault] naming no strategy on a
 	// repository naming no one configured merge: on GitHub, a repository allowing
 	// several methods, or a record carrying no flags, whose base branch's rules
-	// name no one merge method; on Gitea and Forgejo, a record carrying no
+	// leave no one merge method; on Gitea and Forgejo, a record carrying no
 	// default style. It rides [KindNotMergeable] and is refused after the reads,
 	// before any write; the message names what the record allows, and the remedy
 	// is a [MergeRequest.Strategy] from [RepoAffordances.MergeStrategies].
