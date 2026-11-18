@@ -116,6 +116,9 @@ func TestACommitStatusAtAnythingButAFullCommitIDFoldsTheCommitItResolvesTo(t *te
 			if got := h.instance.arrived(); !slices.Equal(got, want) {
 				t.Errorf("CommitStatus(%s) sent %v, want %v", ref, got, want)
 			}
+			if got := h.instance.query(commitsRoute+escaped, "stats"); got != "false" {
+				t.Errorf("CommitStatus(%s) sent the commit read with stats=%q, want false: the route computes diff stats by default and only the id is read", ref, got)
+			}
 		})
 	}
 }

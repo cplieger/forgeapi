@@ -1210,7 +1210,8 @@ func (c *Client) commitOf(ctx context.Context, op string, repo forgeapi.RepoRef,
 		return ref, nil
 	}
 	var commit restCommitID
-	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/repository/commits/"+url.PathEscape(ref)), nil, &commit)
+	// The route computes diff statistics unless stats is false (lib/api/commits.rb); only the id is read.
+	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/repository/commits/"+url.PathEscape(ref)), url.Values{"stats": {"false"}}, &commit)
 	if err != nil {
 		return "", err
 	}
