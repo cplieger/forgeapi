@@ -119,15 +119,15 @@ func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 	}
 }
 
-// A repository naming no one configured merge is refused before any write, naming what
-// it allows, because a merge sent with a guessed strategy lands
-// history the repository's owner did not choose.
 // noStyleAllowed is a Gitea-family record naming no default style and allowing none.
 var noStyleAllowed = map[string]any{
 	"default_merge_style": nil, "allow_merge_commits": false, "allow_squash_merge": false,
 	"allow_rebase": false, "allow_rebase_explicit": false, "allow_fast_forward_only_merge": false,
 }
 
+// A repository naming no one configured merge is refused before any write, naming what
+// it allows, because a merge sent with a guessed strategy lands history the repository's
+// owner did not choose.
 func TestTheDefaultIntentIsRefusedWhereTheRepositoryNamesNoOneMerge(t *testing.T) {
 	for _, tc := range []struct {
 		set     map[string]any
