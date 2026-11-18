@@ -57,6 +57,8 @@ Every operation reports these answers as `KindRateLimited`, with `RetryAfter` se
 | GitHub | 200, a document's errors and no data | `Retry-After`, any value | a document's secondary limit, whatever X-RateLimit-Remaining reads |
 | GitHub | 200, a document's errors and no data | none: a message carrying "secondary rate limit" | a document's secondary limit, whatever X-RateLimit-Remaining reads |
 | GitHub | 403, a document's errors and no data | none: a message carrying "secondary rate limit" | a document's secondary limit, its message in the envelope's errors |
+| GitHub | 403, a document's errors and no data | `X-RateLimit-Remaining: 0` and a message carrying "secondary rate limit" | a document's secondary limit with no budget left in the window, its message in the envelope's errors |
+| GitHub | 429, a document's errors and no data | `X-RateLimit-Remaining: 0` and a message carrying "secondary rate limit" | a document's secondary limit with no budget left in the window, its message in the envelope's errors |
 | GitLab | 429 | none: the status alone | a rate limit |
 | Gitea | 403 | `RateLimit: r=0` | a rate limit with no budget left in the window, the structured header's r parameter at 0 |
 | Gitea | 429 | none: the status alone | a rate limit |
@@ -72,7 +74,7 @@ A failed answer's `Error` carries the figures its answer states: `Pool`, `Remain
 | GitHub | `Pool` | `X-RateLimit-Resource` | the pool the answer drew on, `core` for REST, `graphql` for documents and `search` for searches, named on a secondary limit too, which holds every pool ([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit)) |
 | GitHub | `Remaining` | `X-RateLimit-Remaining` | the units left in that pool's window: requests on REST, points on documents |
 | GitHub | `Reset` | `X-RateLimit-Reset` | the instant that window renews, in epoch seconds |
-| GitHub | `Secondary` | `Retry-After`, or a message carrying "secondary rate limit" | a secondary limit, set on a 403 or 429 carrying either signal whatever X-RateLimit-Remaining reads ([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits)) |
+| GitHub | `Secondary` | `Retry-After`, or a message carrying "secondary rate limit" | a secondary limit, set on a 403 or 429 carrying either signal whatever X-RateLimit-Remaining reads, and on a document's errors-only answer at 200 carrying either, its message in the envelope's errors ([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits)) |
 | GitLab | `Pool` | `RateLimit-Name` | the throttle the request counted against, the most restrictive one: on gitlab.com `throttle_authenticated_api` for most routes ([response headers](https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/#response-headers)) |
 | GitLab | `Remaining` | `RateLimit-Remaining` | the requests left in that throttle's window |
 | GitLab | `Reset` | `RateLimit-Reset` | the instant that window renews, in epoch seconds |

@@ -541,6 +541,7 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	decodeErr := transport.Decode(body, &env)
 	decoded := decodeErr == nil
 	if err != nil && (!decoded || len(env.Errors) == 0 || transport.IsThrottled(err)) {
+		markSecondary(err, decoded, env.Errors)
 		c.degradeOn(err)
 		return docResult{}, err
 	}
@@ -605,8 +606,7 @@ func (c *Client) refuseDocument(ctx context.Context, op string, doc document, re
 // as [githublimit.DocumentLimited] reads it with any envelope error's message, nil
 // where it is none. It degrades nothing, since a throttle is not the document's.
 func (c *Client) documentLimit(ctx context.Context, op string, doc document, resp *transport.Response, errs []docError) *forgeapi.Error {
-	said := slices.ContainsFunc(errs, func(e docError) bool { return githublimit.SecondaryMessage(e.Message) })
-	limited, secondary := githublimit.DocumentLimited(resp.Status, resp.Header, said)
+	limited, secondary := githublimit.DocumentLimited(resp.Status, resp.Header, saidSecondary(errs))
 	if !limited {
 		return nil
 	}
@@ -618,6 +618,23 @@ func (c *Client) documentLimit(ctx context.Context, op string, doc document, res
 		resp.Quote("the "+doc.name+" document was rate-limited: "+errs[0].Message))
 	fe.Secondary, fe.RetryAfter = secondary, transport.RetryAfter(resp.Header)
 	return fe
+}
+
+// markSecondary sets Secondary on a throttle whose decoded envelope errors carry
+// the secondary-limit message, which rides them rather than the member the
+// transport's reading takes. Only a throttle fails with envelope errors before
+// they are read.
+func markSecondary(err error, decoded bool, errs []docError) {
+	var fe *forgeapi.Error
+	if decoded && saidSecondary(errs) && asForgeError(err, &fe) {
+		fe.Secondary = true
+	}
+}
+
+// saidSecondary reports whether an envelope error carries the secondary-limit
+// message ([githublimit.SecondaryMessage]).
+func saidSecondary(errs []docError) bool {
+	return slices.ContainsFunc(errs, func(e docError) bool { return githublimit.SecondaryMessage(e.Message) })
 }
 
 // countEnvelope records one document's envelope errors by the discriminator this

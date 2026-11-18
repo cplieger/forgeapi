@@ -500,6 +500,8 @@ func renderThrottles(out *strings.Builder) {
 			}
 			header := "none: the status alone"
 			switch {
+			case th.Message != "" && th.Header != "":
+				header = "`" + th.Header + ": " + th.Value + "` and a message carrying \"" + th.Message + "\""
 			case th.Message != "":
 				header = "none: a message carrying \"" + th.Message + "\""
 			case th.Header != "" && th.Value != "":

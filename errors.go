@@ -410,9 +410,9 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	Reset time.Time
 	// Secondary reports a GitHub secondary rate limit: a 403 or 429 carrying
 	// Retry-After or GitHub's secondary-limit message, whatever its remaining
-	// figure reads
+	// figure reads, and a document's errors-only answer at 200 carrying either
 	// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits).
-	// Only the GitHub family sets it.
+	// Only the GitHub family sets it, so a GitHub limit can arrive at Status 200.
 	Secondary bool
 	// DiagID is a per-failure random identifier, [DiagIDLength] characters,
 	// carried in the user-visible error and in every log line for that

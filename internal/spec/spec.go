@@ -3191,7 +3191,8 @@ var Table = []Entry{
 // Header is the response header that makes the status a throttle, empty where
 // the status alone does, and Value the value it carries, empty where any does.
 // Message is the phrase the refusal's message member carries that makes the
-// status a throttle, matched in any case, empty where no message does.
+// status a throttle, or beside a Header a secondary one, matched in any case,
+// empty where no message does.
 type Throttle struct {
 	Product Product
 	Header  string
@@ -3236,6 +3237,14 @@ var Throttles = []Throttle{
 	{
 		Product: GitHub, Status: 403, Document: true, Message: "secondary rate limit",
 		Says: "a document's secondary limit, its message in the envelope's errors",
+	},
+	{
+		Product: GitHub, Status: 403, Document: true, Header: "X-RateLimit-Remaining", Value: "0", Message: "secondary rate limit",
+		Says: "a document's secondary limit with no budget left in the window, its message in the envelope's errors",
+	},
+	{
+		Product: GitHub, Status: 429, Document: true, Header: "X-RateLimit-Remaining", Value: "0", Message: "secondary rate limit",
+		Says: "a document's secondary limit with no budget left in the window, its message in the envelope's errors",
 	},
 	{Product: GitLab, Status: 429, Says: "a rate limit"},
 	{
@@ -3289,7 +3298,7 @@ var Figures = []Figure{
 	{Product: GitHub, Field: "Reset", Header: "X-RateLimit-Reset", Value: "4102444800", Says: "the instant that window renews, in epoch seconds"},
 	{
 		Product: GitHub, Field: "Secondary", Header: "Retry-After", Value: "60", Message: "secondary rate limit",
-		Says: "a secondary limit, set on a 403 or 429 carrying either signal whatever X-RateLimit-Remaining reads " +
+		Says: "a secondary limit, set on a 403 or 429 carrying either signal whatever X-RateLimit-Remaining reads, and on a document's errors-only answer at 200 carrying either, its message in the envelope's errors " +
 			"([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits))",
 	},
 	{
