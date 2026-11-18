@@ -82,8 +82,9 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 	// version pin, which is a fact the connection learns and not one the mapping
 	// can read off a response.
 	client := &Client{}
-	core, err := transport.Open(conn, &settings, transport.Options{
+	core, err := transport.Open(conn, &settings, &transport.Options{
 		Mapper:        client.mapper,
+		Limit:         limit,
 		Signal:        githublimit.Signal,
 		Pool:          githublimit.Pool,
 		DeriveAPIBase: githubroot.API,

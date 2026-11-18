@@ -82,7 +82,7 @@ func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error) {
 // reaches this through New, on the real clock.
 func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Option) (*Client, error) {
 	settings := forgeapi.Resolve(opts...)
-	core, err := transport.Open(conn, &settings, transport.Options{
+	core, err := transport.Open(conn, &settings, &transport.Options{
 		Mapper:        mapper,
 		Signal:        signal,
 		Pool:          pool,

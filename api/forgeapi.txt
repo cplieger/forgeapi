@@ -878,6 +878,35 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
+type RateLimit struct {
+	Reset time.Time
+	Pool string
+	RetryAfter time.Duration
+	Remaining int
+	Limit int
+	Limited bool
+	Secondary bool
+}
+func ReadLimit(status int, h http.Header, body []byte) RateLimit
+
+## package githubtest (./github/githubtest)
+
+type Hold struct {
+	Reset time.Time
+	Pool string
+	RetryAfter time.Duration
+	Limited bool
+}
+type LimitCase struct {
+	Header http.Header
+	Body []byte
+	Name string
+	Hold Hold
+	Read github.RateLimit
+	Status int
+	Kind forgeapi.ErrorKind
+}
+func LimitCases(now time.Time) []LimitCase
 
 ## package gitlab (./gitlab)
 

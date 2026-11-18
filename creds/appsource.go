@@ -368,7 +368,7 @@ func (s *AppSource) forget() {
 // open builds one request core for the source's connection, GitHub's by
 // construction.
 func (s *AppSource) open() (*transport.Conn, error) {
-	return transport.Open(&s.conn, &s.set, transport.Options{
+	return transport.Open(&s.conn, &s.set, &transport.Options{
 		Mapper: appMapper, DeriveAPIBase: githubroot.API, Family: forgeapi.FamilyGitHub,
 	})
 }

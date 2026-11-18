@@ -37,7 +37,7 @@ func OpenEndpoint(conn *forgeapi.Connection, set *forgeapi.Settings, family forg
 	s := *set
 	s.Credential = endpointCredential{}
 	s.ReadCacheBytes = 0
-	return Open(&c, &s, Options{Family: family})
+	return Open(&c, &s, &Options{Family: family})
 }
 
 // PostForm sends one form-encoded POST to path under the web base and answers the

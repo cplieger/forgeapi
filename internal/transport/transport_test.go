@@ -88,8 +88,8 @@ func testSignal(header http.Header) (int, time.Time, bool) {
 	return remaining, time.Now().Add(time.Minute), true
 }
 
-func testOptions() Options {
-	return Options{
+func testOptions() *Options {
+	return &Options{
 		Mapper:        testMapper,
 		Signal:        testSignal,
 		DeriveAPIBase: func(web *url.URL) string { return web.String() + "/api/v1" },
@@ -109,7 +109,7 @@ func openTestConn(t *testing.T, conn forgeapi.Connection, extra ...forgeapi.Opti
 	return openConnWith(t, conn, testOptions(), extra...)
 }
 
-func openConnWith(t *testing.T, conn forgeapi.Connection, family Options, extra ...forgeapi.Option) *Conn {
+func openConnWith(t *testing.T, conn forgeapi.Connection, family *Options, extra ...forgeapi.Option) *Conn {
 	t.Helper()
 	opts := append([]forgeapi.Option{
 		forgeapi.WithWireTransport(&http.Transport{}),

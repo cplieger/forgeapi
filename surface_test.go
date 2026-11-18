@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -119,15 +120,16 @@ func TestSurfaceIsNotVacuous(t *testing.T) {
 	}
 }
 
-// TestFamilyPackagesExportNoTypeButTheClient is the mechanical form of the rule
-// that a family's own types stay inside it: the normalizers, the wire shapes and
-// the family's own vocabulary are facts about one upstream API, and the day one of
-// them is exported it becomes something a consumer can name and this library has
-// to keep.
+// TestFamilyPackagesExportOnlyWhatTheirFunctionsAnswer is the mechanical form of
+// the rule that a family's own types stay inside it: the normalizers, the wire
+// shapes and the family's own vocabulary are facts about one upstream API, and the
+// day one of them is exported it becomes something a consumer can name and this
+// library has to keep. A family exports a type only as the answer of one of its
+// package-level functions: the client New builds, and GitHub's ReadLimit reading.
 //
 // The complementary half needs no test: the root package cannot import a family
 // package without a cycle, so no family type can reach the root's surface at all.
-func TestFamilyPackagesExportNoTypeButTheClient(t *testing.T) {
+func TestFamilyPackagesExportOnlyWhatTheirFunctionsAnswer(t *testing.T) {
 	got, err := surface.Generate(".")
 	if err != nil {
 		t.Fatalf("Setup: surface.Generate(%q): %v", ".", err)
@@ -143,8 +145,9 @@ func TestFamilyPackagesExportNoTypeButTheClient(t *testing.T) {
 			if !ok {
 				continue
 			}
-			if name != "Client" {
-				t.Errorf("package %s declares exported type %q, want no exported type but Client: a family's own types stay inside the family package", pkg, name)
+			answered := regexp.MustCompile(`(?m)^func [A-Z]\w*\(.*\) \(?\*?` + regexp.QuoteMeta(name) + `\b`)
+			if !answered.MatchString(section) {
+				t.Errorf("package %s declares exported type %q that none of its functions answers, want only a function's answer exported: a family's own types stay inside the family package", pkg, name)
 			}
 		}
 	}

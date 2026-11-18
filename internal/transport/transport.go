@@ -104,6 +104,11 @@ type Verdict struct {
 	Secondary bool
 }
 
+// limitReader is how a family reads whether a refusal is its product's rate
+// limit, and a secondary one, from the whole answer, where its body decides
+// that.
+type limitReader func(status int, header http.Header, body []byte) (limited, secondary bool)
+
 // budgetSignal is how a family reads its product's budget signal off a response. It
 // returns the remaining units, the reset instant and whether the response carried
 // a signal at all; a family whose product sends none returns false and the
@@ -133,6 +138,7 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	logger     *slog.Logger
 	credential forgeapi.CredentialSource
 	mapper     errorMapper
+	limit      limitReader
 	class      func(message string) string
 	signal     budgetSignal
 	pool       budgetPool
@@ -163,7 +169,10 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 // caller can advance; no exported surface carries it, so a consumer cannot replace
 // the pacing this governor exists to do.
 type Options struct {
-	Mapper        errorMapper
+	Mapper errorMapper
+	// Limit is asked before Mapper, which never sees a limit it reads; nil
+	// leaves every limit to Mapper.
+	Limit         limitReader
 	Signal        budgetSignal
 	Pool          budgetPool
 	PoolParent    budgetParent
@@ -182,7 +191,7 @@ type Options struct {
 // Open validates one connection and builds its request core. It performs no I/O:
 // what it refuses is a client it could not run honestly, and each refusal carries
 // its own code so a consumer names the remedy rather than showing a warning.
-func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Conn, error) {
+func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts *Options) (*Conn, error) {
 	if set.Credential == nil {
 		return nil, local(forgeapi.CodeAnonymousRefused, "no credential source: this client would send anonymous requests")
 	}
@@ -247,6 +256,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 		logger:     loggerOf(set),
 		credential: set.Credential,
 		mapper:     opts.Mapper,
+		limit:      opts.Limit,
 		class:      opts.MessageClass,
 		signal:     opts.Signal,
 		pool:       opts.Pool,
@@ -664,7 +674,7 @@ func publicHost(host string) bool {
 
 // resolveAPIBase takes the connection's API base where it names one and derives
 // the family's own root where it does not.
-func resolveAPIBase(conn *forgeapi.Connection, web *url.URL, set *forgeapi.Settings, opts Options) (*url.URL, error) {
+func resolveAPIBase(conn *forgeapi.Connection, web *url.URL, set *forgeapi.Settings, opts *Options) (*url.URL, error) {
 	raw := conn.APIBaseURL
 	if raw == "" && opts.DeriveAPIBase != nil {
 		raw = opts.DeriveAPIBase(web)
@@ -1774,21 +1784,32 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 	answer := readRefusal(resp.Body)
 	verdict := Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeOwnerUnresolved}
 	if req.OwnerStatus == 0 || resp.Status != req.OwnerStatus {
-		member := Member{Error: answer.Error, Scope: answer.Scope, Class: c.classOf(answer.instanceText())}
-		verdict = c.mapper(req.Op, resp.Status, resp.Header, member)
+		verdict = c.verdict(req.Op, resp, &answer)
 	}
 	kind, code := verdict.Kind, verdict.Code
 	fe := c.answered(req.Op, code, kind, resp, resp.Quote(answer.text(code)))
 	fe.Needs = resp.Quote(verdict.Needs) // upstream text, made safe as the message is
 	fe.Secondary = kind == forgeapi.KindRateLimited && verdict.Secondary
 	if kind == forgeapi.KindRateLimited {
-		fe.RetryAfter = httpclient.ParseRetryAfter(resp.Header.Get("Retry-After"))
+		fe.RetryAfter = RetryAfter(resp.Header)
 		if c.counters.RateLimited != nil {
 			c.counters.RateLimited(c.family)
 		}
 	}
 	c.log(ctx, req, exchange(req), resp.Status, code, fe.DiagID, kind, resp.Header, started, fe.Message, false)
 	return fe
+}
+
+// verdict is the family's reading of a refusal: its limit reader's, else its
+// mapper's.
+func (c *Conn) verdict(op string, resp *Response, answer *refusal) Verdict {
+	if c.limit != nil {
+		if limited, secondary := c.limit(resp.Status, resp.Header, resp.Body); limited {
+			return Verdict{Kind: forgeapi.KindRateLimited, Secondary: secondary}
+		}
+	}
+	member := Member{Error: answer.Error, Scope: answer.Scope, Class: c.classOf(answer.instanceText())}
+	return c.mapper(op, resp.Status, resp.Header, member)
 }
 
 // AnswerFigures sets fe's Remaining, Reset and Pool from the failing answer's

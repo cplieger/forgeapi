@@ -456,13 +456,11 @@ func TestTheFoldsWorstStateWins(t *testing.T) {
 	}
 }
 
-// TestTheErrorMappingReadsTheHeadersAndTheOperation holds the three cells of this
-// family's mapping that turn on something other than the status. A mapper that read the
-// status alone would pass every other row of this table, which is why these three are
-// named individually.
+// TestTheErrorMappingReadsTheHeadersAndTheOperation holds the cells of this family's
+// mapping that turn on something other than the status. A mapper that read the status
+// alone would pass every other row of this table, which is why these are named
+// individually. A rate limit never reaches the mapping: [limit] reads it first.
 func TestTheErrorMappingReadsTheHeadersAndTheOperation(t *testing.T) {
-	throttle := http.Header{}
-	throttle.Set("X-RateLimit-Remaining", "0")
 	permission := http.Header{}
 	permission.Set("X-RateLimit-Remaining", "4321")
 	// downgraded is an instance that answered under the OTHER version it serves
@@ -487,11 +485,6 @@ func TestTheErrorMappingReadsTheHeadersAndTheOperation(t *testing.T) {
 		wantKind forgeapi.ErrorKind
 		pinned   bool
 	}{
-		{
-			name: "a_forbidden_with_no_budget_left_is_a_throttle", op: "ListPRs",
-			status: http.StatusForbidden, header: throttle,
-			wantKind: forgeapi.KindRateLimited, wantCode: "",
-		},
 		{
 			name: "a_forbidden_with_budget_left_is_a_permission", op: "ListPRs",
 			status: http.StatusForbidden, header: permission,
@@ -575,11 +568,6 @@ func TestTheErrorMappingReadsTheHeadersAndTheOperation(t *testing.T) {
 			name: "a_gone_elsewhere_names_no_cause", op: "ReadPR",
 			status: http.StatusGone, header: nil,
 			wantKind: forgeapi.KindNotFound, wantCode: "",
-		},
-		{
-			name: "too_many_requests_is_the_throttle_it_says_it_is", op: "ListPRs",
-			status: http.StatusTooManyRequests, header: nil,
-			wantKind: forgeapi.KindRateLimited, wantCode: "",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -672,11 +660,6 @@ func TestA403NamingWhatTheCredentialLacksIsTheScopeRefusal(t *testing.T) {
 			want:   plain,
 		},
 		{
-			name: "a_throttle_naming_a_permission_stays_a_throttle", op: "CreatePR", status: http.StatusForbidden,
-			header: headers("X-Accepted-GitHub-Permissions", "pull_requests=write", "X-RateLimit-Remaining", "0"), class: classResourceRefused,
-			want: transport.Verdict{Kind: forgeapi.KindRateLimited},
-		},
-		{
 			name: "the_merge_naming_a_permission_keeps_the_merge_permission", op: opMergePR, status: http.StatusForbidden,
 			header: headers("X-Accepted-GitHub-Permissions", "contents=write"), class: classResourceRefused,
 			want: transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeNoMergePermission},
@@ -695,23 +678,38 @@ func TestA403NamingWhatTheCredentialLacksIsTheScopeRefusal(t *testing.T) {
 	}
 }
 
-// TestEveryThrottleTheSpecNamesIsARateLimit holds this family's mapping to the
-// expectation table's rate-limit answers for this product, on a read and on the
-// merge, whose own 403 cell would otherwise read a throttle as a permission.
+// TestEveryThrottleTheSpecNamesIsARateLimit holds this family to the expectation
+// table's rate-limit answers for this product, on a read and on the merge, whose own
+// 403 cell would otherwise read a throttle as a permission, and to a throttle whose
+// refusal also names a permission, which stays a throttle.
 func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 	for _, th := range spec.Throttles {
 		if th.Product != spec.GitHub || th.Document {
 			continue
 		}
+		header := http.Header{}
+		if th.Header != "" {
+			header.Set(th.Header, cmp.Or(th.Value, "60"))
+		}
+		body := `{"message":"Resource not accessible by integration"}`
+		if th.Message != "" {
+			body = `{"message":"You have exceeded a ` + th.Message + `."}`
+		}
+		if th.Status == http.StatusForbidden {
+			header.Set("X-Accepted-GitHub-Permissions", "pull_requests=write")
+		}
 		for _, op := range []string{"ListRuns", opMergePR} {
 			t.Run(strconv.Itoa(th.Status)+"_"+th.Header+"_"+strings.ReplaceAll(th.Message, " ", "_")+"_"+op, func(t *testing.T) {
-				header := http.Header{}
-				if th.Header != "" {
-					header.Set(th.Header, cmp.Or(th.Value, "60"))
+				h := newAnsweringHarness(t, th.Status, header, body)
+				var err error
+				if op == opMergePR {
+					_, err = h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+				} else {
+					_, err = h.client.ListRuns(t.Context(), testRef())
 				}
-				class := messageClass("You have exceeded a " + th.Message + ".")
-				if got := mapping(op, th.Status, header, class, false); got.Kind != forgeapi.KindRateLimited || got.Code != "" || got.Needs != "" {
-					t.Errorf("mapping(%q, %d, %v) = %+v, want %v: %s", op, th.Status, header, got, forgeapi.KindRateLimited, th.Says)
+				var fe *forgeapi.Error
+				if !asForgeError(err, &fe) || fe.Kind != forgeapi.KindRateLimited || fe.Code != "" || fe.Needs != "" {
+					t.Errorf("%s against %d %v = %v, want %v: %s", op, th.Status, header, err, forgeapi.KindRateLimited, th.Says)
 				}
 			})
 		}

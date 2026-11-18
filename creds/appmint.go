@@ -227,14 +227,14 @@ func (s *AppSource) ask(ctx context.Context, ep *transport.Conn, req *transport.
 // endpoint has been spammed", so no message text is matched there:
 // https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app
 func (s *AppSource) refused(ctx context.Context, ep *transport.Conn, req *transport.Request, resp *transport.Response) *failure {
-	said := githubMessage(resp.Body)
-	if secondary := githublimit.SecondaryMessage(said); githublimit.Limited(resp.Status, resp.Header, secondary) {
+	said := githublimit.Message(resp.Body)
+	if limit := githublimit.Read(resp.Status, resp.Header, resp.Body); limit.Limited {
 		if s.set.Counters.RateLimited != nil {
 			s.set.Counters.RateLimited(forgeapi.FamilyGitHub)
 		}
 		fe := answered(ctx, ep, req, resp, "", forgeapi.KindRateLimited, resp.Quote(joined("GitHub rate-limited the App's request", said)))
-		fe.Secondary = githublimit.Secondary(resp.Status, resp.Header, secondary)
-		return &failure{err: fe, wait: limitWait(resp.Header, time.Now()), status: resp.Status, class: failLimited}
+		fe.Secondary = limit.Secondary
+		return &failure{err: fe, wait: limitWait(&limit, time.Now()), status: resp.Status, class: failLimited}
 	}
 	kind, why := forgeapi.KindUpstream, "GitHub refused the request as invalid: the grant's repositories or permissions are the likely cause"
 	switch resp.Status {
@@ -341,33 +341,19 @@ func outcomeText(class failClass) string {
 	return "the mint failed"
 }
 
-// limitWait is the wait a rate limit states: Retry-After, else the primary
-// window's reset where the remaining budget is zero, capped at an hour; zero
-// where it states neither. A reset already passed, or a Retry-After of 0, also
-// answers zero: only host clock skew or the window's last second produces one,
-// and the header-less schedule keeps a skewed host from resending into the limit.
-func limitWait(header http.Header, now time.Time) time.Duration {
-	if wait := transport.RetryAfter(header); wait > 0 {
-		return min(wait, statedCeiling)
+// limitWait is the wait a rate limit states: Retry-After, else the window's
+// reset where the remaining budget is zero, capped at an hour; zero where it
+// states neither. A reset already passed, or a Retry-After of 0, also answers
+// zero: only host clock skew or the window's last second produces one, and the
+// header-less schedule keeps a skewed host from resending into the limit.
+func limitWait(limit *githublimit.Limit, now time.Time) time.Duration {
+	if limit.RetryAfter > 0 {
+		return min(limit.RetryAfter, statedCeiling)
 	}
-	remaining, reset, ok := githublimit.Signal(header)
-	if !ok || remaining > 0 || reset.IsZero() {
+	if limit.Remaining != 0 || limit.Reset.IsZero() {
 		return 0
 	}
-	return min(max(reset.Sub(now), 0), statedCeiling)
-}
-
-// githubMessage is the message member of a GitHub refusal, empty where the
-// body carries none. It is GitHub's text, so a caller quotes it through the
-// exchange's [transport.Response.Quote].
-func githubMessage(body []byte) string {
-	var refusal struct {
-		Message string `json:"message"`
-	}
-	if transport.Decode(body, &refusal) != nil {
-		return ""
-	}
-	return refusal.Message
+	return min(max(limit.Reset.Sub(now), 0), statedCeiling)
 }
 
 // joined is the package's own reason followed by GitHub's.

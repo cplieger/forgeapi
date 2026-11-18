@@ -9,7 +9,58 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
+
+// secondaryTerm is the phrase GitHub's secondary-limit message carries, whose
+// wording past it varies
+// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit).
+const secondaryTerm = "secondary rate limit"
+
+// Limit is one answer's rate-limit facts, as github.RateLimit documents them:
+// github.ReadLimit converts one into the other, so their fields stay alike.
+type Limit struct {
+	Reset      time.Time
+	Pool       string
+	RetryAfter time.Duration
+	Remaining  int
+	Limit      int
+	Limited    bool
+	Secondary  bool
+}
+
+// Read reads one answer's rate-limit facts from its status, header and body,
+// the body's JSON message member being the one place the secondary-limit
+// message is read.
+func Read(status int, header http.Header, body []byte) Limit {
+	said := SecondaryMessage(Message(body))
+	l := Limit{
+		Remaining:  forgeapi.BudgetRemainingUnknown,
+		RetryAfter: transport.RetryAfter(header),
+		Limited:    isLimited(status, header, said),
+		Secondary:  isSecondary(status, header, said),
+	}
+	if remaining, reset, ok := Signal(header); ok {
+		l.Remaining, l.Reset = remaining, reset
+	}
+	l.Pool, l.Limit = Pool(header)
+	return l
+}
+
+// Message is the message member of a GitHub refusal's JSON body, empty where
+// the body carries none or is not JSON. It is GitHub's text, so a caller
+// quotes it before showing it.
+func Message(body []byte) string {
+	var refusal struct {
+		Message string `json:"message"`
+	}
+	if transport.Decode(body, &refusal) != nil {
+		return ""
+	}
+	return refusal.Message
+}
 
 // Signal reads the budget signal riding every answer on both of GitHub's
 // surfaces: the remaining units of the pool the answer drew on and the instant
@@ -47,16 +98,16 @@ func Pool(header http.Header) (name string, limit int) {
 	return strings.TrimSpace(header.Get("X-RateLimit-Resource")), limit
 }
 
-// SecondaryMessage reports whether a refusal's message member is the one
-// GitHub answers a secondary limit with, whose wording past that phrase varies.
+// SecondaryMessage reports whether a message is the one GitHub answers a
+// secondary limit with: it carries [secondaryTerm] in any case.
 func SecondaryMessage(message string) bool {
-	return strings.Contains(strings.ToLower(message), "secondary rate limit")
+	return strings.Contains(strings.ToLower(message), secondaryTerm)
 }
 
-// Limited reports whether a refusal is GitHub's quota rather than a
-// permission: a 429, or a 403 that is [Secondary] or whose remaining figure is
+// isLimited reports whether a refusal is GitHub's quota rather than a
+// permission: a 429, or a 403 that is secondary or whose remaining figure is
 // at zero. said reports that the refusal's message is [SecondaryMessage]'s.
-func Limited(status int, header http.Header, said bool) bool {
+func isLimited(status int, header http.Header, said bool) bool {
 	switch status {
 	case http.StatusTooManyRequests:
 		return true
@@ -66,23 +117,23 @@ func Limited(status int, header http.Header, said bool) bool {
 	return false
 }
 
-// Secondary reports whether a 403 or 429 is a secondary limit: it carries
+// isSecondary reports whether a 403 or 429 is a secondary limit: it carries
 // Retry-After, or its message is the secondary limit's (said), whatever its
 // remaining figure reads.
-func Secondary(status int, header http.Header, said bool) bool {
+func isSecondary(status int, header http.Header, said bool) bool {
 	if status != http.StatusForbidden && status != http.StatusTooManyRequests {
 		return false
 	}
 	return secondary(header, said)
 }
 
-// DocumentLimited is [Limited] and [Secondary] for a document answer carrying
-// errors and no data, which GitHub answers a limit with at 200 too: a primary
+// DocumentLimited is [Read]'s Limited and Secondary for a document answer
+// carrying errors and no data, which GitHub answers a limit with at 200 too: a primary
 // limit with the remaining figure at zero, a secondary limit with its message
 // (https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#exceeding-the-rate-limit).
-func DocumentLimited(status int, header http.Header, said bool) (limited, isSecondary bool) {
+func DocumentLimited(status int, header http.Header, said bool) (limited, secondaryLimit bool) {
 	if status != http.StatusOK {
-		return Limited(status, header, said), Secondary(status, header, said)
+		return isLimited(status, header, said), isSecondary(status, header, said)
 	}
 	return quota(header, said), secondary(header, said)
 }

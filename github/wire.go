@@ -1518,10 +1518,6 @@ func (c *Client) mapper(op string, status int, header http.Header, member transp
 // "Resource not accessible").
 const classResourceRefused = "resource_refused"
 
-// classSecondaryLimit is the class of the message GitHub answers a secondary
-// rate limit with ([githublimit.SecondaryMessage]).
-const classSecondaryLimit = "secondary_limit"
-
 // messageClasses is the refusal messages this family's mapping reads whole, by
 // class.
 var messageClasses = map[string]string{
@@ -1529,27 +1525,23 @@ var messageClasses = map[string]string{
 	"Resource not accessible by personal access token": classResourceRefused,
 }
 
-// messageClass is the class of a refusal's message member: [messageClasses]'s,
-// else [classSecondaryLimit] for the secondary limit's message.
-func messageClass(message string) string {
-	if class, ok := messageClasses[message]; ok {
-		return class
-	}
-	if githublimit.SecondaryMessage(message) {
-		return classSecondaryLimit
-	}
-	return ""
+// messageClass is the class of a refusal's message member, [messageClasses]'s.
+func messageClass(message string) string { return messageClasses[message] }
+
+// limit is this family's rate-limit reading of a refusal, [githublimit.Read]'s,
+// which the transport takes before the mapping so nobody is told to fix a token
+// while the quota refills.
+func limit(status int, header http.Header, body []byte) (limited, secondary bool) {
+	l := githublimit.Read(status, header, body)
+	return l.Limited, l.Secondary
 }
 
-// mapping is this family's error mapping: a rate limit first, so nobody is told to
-// fix a token while the quota refills, then the cells a header decides
-// ([headerMapped]), then [statusMapped]'s. class is the refusal message's class from
-// [messageClass]; pinned says the refused request carried the version pin, the only
-// state in which a 400 can be that version's fault.
+// mapping is this family's error mapping of a refusal that is no rate limit
+// ([limit]): the cells a header decides ([headerMapped]), then [statusMapped]'s.
+// class is the refusal message's class from [messageClass]; pinned says the
+// refused request carried the version pin, the only state in which a 400 can be
+// that version's fault.
 func mapping(op string, status int, header http.Header, class string, pinned bool) transport.Verdict {
-	if said := class == classSecondaryLimit; githublimit.Limited(status, header, said) {
-		return transport.Verdict{Kind: forgeapi.KindRateLimited, Secondary: githublimit.Secondary(status, header, said)}
-	}
 	if mapped, ok := headerMapped(op, status, header, class, pinned); ok {
 		return mapped
 	}
