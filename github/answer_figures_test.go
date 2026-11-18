@@ -24,7 +24,7 @@ func TestEveryFailureReachedOnAnAnswerCarriesItsFigures(t *testing.T) {
 			routes: map[string]string{mergeRoute: `{"message":"Conflict"}`},
 			status: map[string]int{mergeRoute: http.StatusConflict},
 			call: func(h *harness) error {
-				_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+				_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 				return err
 			},
 		},
@@ -33,7 +33,7 @@ func TestEveryFailureReachedOnAnAnswerCarriesItsFigures(t *testing.T) {
 			routes: map[string]string{mergeRoute: `{`},
 			status: map[string]int{mergeRoute: http.StatusConflict},
 			call: func(h *harness) error {
-				_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+				_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 				return err
 			},
 		},

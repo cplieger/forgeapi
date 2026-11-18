@@ -898,7 +898,7 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if err != nil {
 		return err
 	}
-	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
+	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/"+rerunFailedJobs)
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
@@ -973,7 +973,7 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 	if run.ID <= 0 {
 		return errorf(forgeapi.CodeRepoRefInvalid, "run id is not positive")
 	}
-	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
+	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/"+rerunFailedJobs)
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
@@ -1097,7 +1097,7 @@ func (c *Client) refuseRun(ctx context.Context, op string, answer *transport.Res
 // completes in the background on its own, so a deferral nobody asked for would answer
 // a merge nobody asked to wait for, which is the defect that started this library.
 //
-// A merge asked to wait reads the pull request's REST record first, because this
+// A merge asked to wait reads the pull request's REST record before the merge, because this
 // product arms an auto-merge only on a pull request that cannot merge now and refuses
 // to arm one that can: a state that is mergeable now merges as above, and any other is
 // armed through the enableAutoMerge document with the pin as its expected head, which
@@ -1125,7 +1125,7 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 	if err := forgeapi.ValidateRef(req.HeadSHA); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
-	method, err := mergeMethod(req)
+	method, err := c.mergeMethod(ctx, repo, req)
 	if err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
@@ -1227,22 +1227,49 @@ func (c *Client) inFlight(ctx context.Context, resp *transport.Response, answer 
 	}, nil
 }
 
-// mergeMethod is the merge strategy this product's route takes, refused LOCALLY
-// against this family's closed set before any request. A strategy the REPOSITORY has
-// disabled leaves the process and comes back as the forge's own refusal mapped to the
-// same code, because it is one cause a consumer branches on once.
-func mergeMethod(req forgeapi.MergeRequest) (string, error) {
-	if req.Strategy != "" {
+// mergeMethod is the merge strategy this product's route takes. A named strategy is
+// refused LOCALLY against this family's closed set before any request; one the
+// REPOSITORY has disabled leaves the process and comes back as the forge's own refusal
+// mapped to the same code, because it is one cause a consumer branches on once. The
+// default intent is [Client.allowedMethod]'s.
+func (c *Client) mergeMethod(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.MergeRequest) (string, error) {
+	switch {
+	case req.Strategy != "":
 		if !slices.Contains(mergeMethods, req.Strategy) {
 			return "", errorf(forgeapi.CodeStrategyNotAllowed,
 				"strategy %q is outside this family's own set", req.Strategy)
 		}
 		return req.Strategy, nil
-	}
-	if req.Intent == forgeapi.IntentSquash {
+	case req.Intent == forgeapi.IntentSquash:
 		return memberSquash, nil
+	case req.Intent == forgeapi.IntentNoSquash:
+		return memberMerge, nil
 	}
-	return memberMerge, nil
+	return c.allowedMethod(ctx, repo)
+}
+
+// allowedMethod is [forgeapi.IntentDefault] here. This product configures no
+// repository-wide default method, only allowed ones, and its merge route and arm
+// default an omitted method to MERGE, whatever the repository allows
+// (https://docs.github.com/en/graphql/reference/input-objects#mergepullrequestinput).
+// So the method sent is the one the repository's record allows, and a record allowing
+// several or naming none is refused before any write.
+func (c *Client) allowedMethod(ctx context.Context, repo forgeapi.RepoRef) (string, error) {
+	var record restRepo
+	resp, err := c.readRepoJSON(ctx, opMergePR, repoRoute(repo, ""), nil, &record)
+	if err != nil {
+		return "", err
+	}
+	allowed := exposedStrategies(&record)
+	if len(allowed) == 1 {
+		return allowed[0], nil
+	}
+	message := "the repository record names no allowed merge method"
+	if len(allowed) > 0 {
+		message = "the repository allows the merge methods " + strings.Join(allowed, ", ") + " and configures no default among them"
+	}
+	return "", c.core.Fail(ctx, opMergePR, transport.REST(http.MethodGet), resp, forgeapi.CodeStrategyRequired,
+		forgeapi.KindNotMergeable, message+", so a merge at the default intent names its strategy")
 }
 
 // handleOf is the handle this product minted for a pending merge, empty where the
@@ -1421,6 +1448,12 @@ func (c *Client) documentStatus(ctx context.Context, op string, repo forgeapi.Re
 		return forgeapi.CommitChecks{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
 			forgeapi.CodeRefInvalid, forgeapi.KindNotFound,
 			"the document resolved the repository and no commit at that reference")
+	}
+	if commit.OID == "" {
+		// A Commit always carries its oid, so an object without one is one the ... on Commit selection did not match (a tree, a blob or a tag object).
+		return forgeapi.CommitChecks{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeRefInvalid, forgeapi.KindNotFound,
+			"the document resolved the repository and an object at that reference that is not a commit")
 	}
 	folded := c.foldRollup(commit.StatusCheckRollup)
 	at := result.placed(commitPath, false, nil)

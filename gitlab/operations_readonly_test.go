@@ -77,3 +77,18 @@ func TestARerunOnAReadOnlyClientSendsNothing(t *testing.T) {
 		t.Errorf("RerunFailedChecks on a read-only client sent %d requests, want none", sent)
 	}
 }
+
+// A merge keeping the branch's commits reads the project and the merge request inside
+// its write, so a read-only client refuses it before either read is sent.
+func TestANoSquashMergeOnAReadOnlyClientSendsNothing(t *testing.T) {
+	h := newHarness(t, map[string]string{projectRouteKey: projectBody, readRoute: restMergeRequestBody}, forgeapi.WithMutations(false))
+	before := h.instance.count()
+	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, Intent: forgeapi.IntentNoSquash})
+	var fe *forgeapi.Error
+	if !errors.As(err, &fe) || fe.Code != forgeapi.CodeMutationsDisabled {
+		t.Errorf("MergePR at IntentNoSquash on a read-only client = %v, want code %q", err, forgeapi.CodeMutationsDisabled)
+	}
+	if sent := h.instance.count() - before; sent != 0 {
+		t.Errorf("MergePR at IntentNoSquash on a read-only client sent %d requests, want none", sent)
+	}
+}

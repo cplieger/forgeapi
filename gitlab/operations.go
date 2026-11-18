@@ -580,8 +580,12 @@ func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.
 			forgeapi.CodePRNotFound, forgeapi.KindNotFound,
 			"the document resolved the project and no merge request with that number")
 	}
+	item := c.normalizeDocPull(node, documentRepo(payload.Project, repo))
+	if result.Partial {
+		item.Partial = c.partial(forgeapi.PartialGraphQLPartial, 0)
+	}
 	return mergeRequestRead{
-		item:   c.normalizeDocPull(node, documentRepo(payload.Project, repo)),
+		item:   item,
 		merged: c.mergedSupport("merge request state (document)", node.State, node.MergedAt),
 	}, nil
 }
@@ -945,7 +949,7 @@ func (c *Client) refusePipeline(ctx context.Context, op string, answer *transpor
 // family cannot read is reported as an unknown outcome rather than as a merge.
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error) {
 	const op = opMergePR
-	ctx = transport.Call(ctx, op)
+	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
@@ -965,6 +969,11 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 		return forgeapi.MergeOutcome{}, errorf(forgeapi.CodeStrategyNotAllowed,
 			"this product's merge takes a squash flag and an auto-merge flag and no strategy, so %q cannot be sent", req.Strategy)
 	}
+	if req.Intent == forgeapi.IntentNoSquash {
+		if err := c.keepCommits(ctx, op, repo, pr); err != nil {
+			return forgeapi.MergeOutcome{}, err
+		}
+	}
 	body := map[string]any{
 		"sha":                         req.HeadSHA,
 		"squash":                      req.Intent == forgeapi.IntentSquash,
@@ -983,6 +992,38 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 		QueueState:    forgeapi.QueueNone,
 		QueuePosition: forgeapi.QueuePositionUnknown,
 	}, nil
+}
+
+// keepCommits makes a merge at [forgeapi.IntentNoSquash] keep the branch's commits,
+// or refuses it before any write. The merge route applies its squash flag only when
+// true, so the merge request's own flag still squashes, and a project whose
+// squash_option is always squashes whatever is sent (lib/api/merge_requests.rb
+// build_merge_params; app/models/merge_request.rb squash_on_merge?).
+func (c *Client) keepCommits(ctx context.Context, op string, repo forgeapi.RepoRef, pr forgeapi.PRRef) error {
+	var project restProject
+	answer, err := c.readJSON(ctx, op, projectRoute(repo, ""), nil, &project)
+	if err != nil {
+		return err
+	}
+	switch option := strings.ToLower(project.SquashOption); option {
+	case "never":
+		return nil
+	case "always":
+		return c.core.Fail(ctx, op, transport.REST(http.MethodGet), answer, forgeapi.CodeStrategyNotAllowed, forgeapi.KindNotMergeable,
+			"this project always squashes, so a merge keeping the branch's commits cannot be sent")
+	case "", "default_on", "default_off":
+	default:
+		c.unmapped("squash option", project.SquashOption)
+	}
+	route := projectRoute(repo, "/merge_requests/"+strconv.Itoa(pr.Number))
+	var record restMergeRequest
+	if _, err := c.readJSON(ctx, op, route, nil, &record); err != nil {
+		return err
+	}
+	if record.Squash != nil && !*record.Squash {
+		return nil
+	}
+	return c.sendJSON(ctx, op, http.MethodPut, route, map[string]any{"squash": false}, nil)
 }
 
 // mergeOutcome reads what happened out of the answer this product gives, which is the
@@ -1120,7 +1161,12 @@ func (c *Client) foldStatus(ctx context.Context, op string, repo forgeapi.RepoRe
 		out.Partial = c.partial(forgeapi.PartialPaginationCap, 0)
 		return out, nil
 	}
-	path := projectRoute(repo, "/repository/commits/"+url.PathEscape(ref)+"/statuses")
+	sha, err := c.commitOf(ctx, op, repo, ref)
+	if err != nil {
+		return forgeapi.CommitChecks{}, err
+	}
+	out.Ref = sha
+	path := projectRoute(repo, "/repository/commits/"+sha+"/statuses")
 	var rows []restStatus
 	truncated := false
 	for page := 1; page <= maxPages; page++ {
@@ -1146,13 +1192,6 @@ func (c *Client) foldStatus(ctx context.Context, op string, repo forgeapi.RepoRe
 			TargetURL:   row.TargetURL,
 			State:       c.checkState("commit status state (rest)", row.Status),
 		})
-		// The commit a fold read is the one the rows name, which resolves a branch
-		// the caller asked for onto its head. The FIRST row settles it, because a
-		// later one carrying a different commit would be a row for another commit
-		// entirely and overwriting from it would rename this answer.
-		if out.Ref == ref && row.SHA != "" {
-			out.Ref = row.SHA
-		}
 	}
 	count(&out)
 	if truncated {
@@ -1160,6 +1199,41 @@ func (c *Client) foldStatus(ctx context.Context, op string, repo forgeapi.RepoRe
 		out.Partial = c.partial(forgeapi.PartialPaginationCap, len(out.Contexts))
 	}
 	return out, nil
+}
+
+// commitOf is the full commit id ref names. The statuses route matches pipelines on
+// their sha column, so any other spelling of a commit (a branch, a tag, a short or
+// upper-case sha) answers no row there whatever ran on it
+// (https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/api/commit_statuses.rb).
+func (c *Client) commitOf(ctx context.Context, op string, repo forgeapi.RepoRef, ref string) (string, error) {
+	if commitID(ref) {
+		return ref, nil
+	}
+	var commit restCommitID
+	// The route computes diff statistics unless stats is false (lib/api/commits.rb); only the id is read.
+	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/repository/commits/"+url.PathEscape(ref)), url.Values{"stats": {"false"}}, &commit)
+	if err != nil {
+		return "", err
+	}
+	if !commitID(commit.ID) {
+		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, "", forgeapi.KindUpstream,
+			"the commit read for "+strconv.Quote(ref)+" answered id "+strconv.Quote(resp.Quote(commit.ID))+", which is no full commit id")
+	}
+	return commit.ID, nil
+}
+
+// commitID reports whether ref is a full commit id as the pipelines record it: lower
+// hex, 40 digits under SHA-1 and 64 under SHA-256.
+func commitID(ref string) bool {
+	if len(ref) != 40 && len(ref) != 64 {
+		return false
+	}
+	for _, r := range ref {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // latestPerContext keeps one row per context, the one with the greatest identifier,

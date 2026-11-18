@@ -12,11 +12,11 @@ import (
 )
 
 // Open asks GitLab's connection read, then GitHub's, then the Gitea family's, and answers the
-// first family it establishes with that family's client, capabilities held, at that read plus
-// one request per family asked first (at most 2, 3 and 5), on no budget the caller holds. No
-// family established is [forgeapi.CodeFamilyUndetected] with [forgeapi.FamilyUnknown] and the
-// last read's status and figures; a context ending, a constructor's refusal and an attempt the
-// [forgeapi.WithAttemptObserver] hook refused return unchanged; Open closes all but its answer.
+// first family it establishes with its client, capabilities held, at that read plus one request
+// per family asked first (at most 2, 3 and 5), on no budget the caller holds. Every failure
+// answers [forgeapi.FamilyUnknown]: no family established is [forgeapi.CodeFamilyUndetected] with
+// the last read's status and figures; a context ending, a constructor's refusal, a refused attempt
+// and a governor deferral return unchanged and ask no later family. Open closes all but its answer.
 //
 //nolint:gocritic // hugeParam: the connection record is the published signature's own parameter
 func Open(ctx context.Context, conn forgeapi.Connection, opts ...forgeapi.Option) (forgeapi.Core, forgeapi.Family, error) {
@@ -37,7 +37,7 @@ func Open(ctx context.Context, conn forgeapi.Connection, opts ...forgeapi.Option
 			return client, candidate.family, nil
 		}
 		client.Close()
-		if transport.IsRefused(err) {
+		if transport.IsRefused(err) || transport.IsDeferred(err) {
 			return nil, forgeapi.FamilyUnknown, err
 		}
 		refused = err

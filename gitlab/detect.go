@@ -62,14 +62,23 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 		return forgeapi.ConnectionCaps{}, c.undetected(ctx, op, resp, err)
 	}
 	rerun, ev := rerunCapability(&meta, err)
+	scope, scopeEv := forgeapi.RerunScopeUnknown, ev
+	if rerun == forgeapi.SupportYes {
+		scope, scopeEv = forgeapi.RerunScopeFailedJobs, forgeapi.Evidence{
+			Source: ev.Source,
+			Detail: "gitlab " + meta.Version + ", whose pipeline retry re-runs a pipeline's failed and canceled jobs",
+		}
+	}
 	var version string
 	if err == nil {
 		version = meta.Version
 	}
 	caps := forgeapi.ConnectionCaps{
-		Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
-		Ev:      map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
-		Product: forgeapi.ProductGitLab,
+		Caps:         map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
+		Ev:           map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
+		Product:      forgeapi.ProductGitLab,
+		RerunScope:   scope,
+		RerunScopeEv: scopeEv,
 	}
 	// The schema question sits above the cache write: asked once on the connection
 	// whose family this read established, again where the caller's context ended

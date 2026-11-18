@@ -30,7 +30,7 @@ func TestANumberBelowOneIsRefusedBeforeAnyRequest(t *testing.T) {
 		{name: "ClosePR", call: func(h *harness) error { _, err := h.client.ClosePR(t.Context(), testRef(), zero); return err }},
 		{name: "ReopenPR", call: func(h *harness) error { _, err := h.client.ReopenPR(t.Context(), testRef(), zero); return err }},
 		{name: "MergePR", call: func(h *harness) error {
-			_, err := h.client.MergePR(t.Context(), testRef(), zero, forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+			_, err := h.client.MergePR(t.Context(), testRef(), zero, forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 			return err
 		}},
 		{name: "CloseIssue", call: func(h *harness) error {

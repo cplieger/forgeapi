@@ -24,7 +24,7 @@ func TestAMergeAlreadyInFlightIsTheInFlightOutcome(t *testing.T) {
 			`"expected_head_sha":"` + testHeadSHA + `","bypass_rules":false}}`,
 	})
 	h.instance.status(mergeRoute, http.StatusConflict)
-	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 	if err != nil {
 		t.Fatalf("MergePR against a merge already in flight = %v, want the in-flight outcome and no error", err)
 	}
@@ -47,7 +47,7 @@ func TestAMergeAlreadyInFlightIsTheInFlightOutcome(t *testing.T) {
 func TestAnUndecodableInFlightAnswerIsABodyTheLibraryCannotRead(t *testing.T) {
 	h := newHarness(t, map[string]string{mergeRoute: `{`})
 	h.instance.status(mergeRoute, http.StatusConflict)
-	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 	var fe *forgeapi.Error
 	if !errors.As(err, &fe) {
 		t.Fatalf("MergePR against a 409 whose body does not decode = %v, want a *forgeapi.Error", err)
@@ -65,7 +65,7 @@ func TestAnUndecodableInFlightAnswerIsABodyTheLibraryCannotRead(t *testing.T) {
 func TestAMergeConflictNamingNoMergeIsAConflictWithNoCause(t *testing.T) {
 	h := newHarness(t, map[string]string{mergeRoute: `{"message":"Conflict"}`})
 	h.instance.status(mergeRoute, http.StatusConflict)
-	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 	var fe *forgeapi.Error
 	if !errors.As(err, &fe) {
 		t.Fatalf("MergePR against a 409 naming no merge = %v, want a *forgeapi.Error", err)
@@ -92,7 +92,7 @@ func TestEveryMergeAsyncBadRequestNamesNoCause(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, map[string]string{mergeRoute: `{"status":"failed","details":{"message":"` + message + `"}}`})
 			h.instance.status(mergeRoute, http.StatusBadRequest)
-			_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+			_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 			var fe *forgeapi.Error
 			if !errors.As(err, &fe) {
 				t.Fatalf("MergePR against the %s 400 = %v, want a *forgeapi.Error", name, err)

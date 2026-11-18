@@ -703,7 +703,7 @@ func TestEveryThrottleTheSpecNamesIsARateLimit(t *testing.T) {
 				h := newAnsweringHarness(t, th.Status, header, body)
 				var err error
 				if op == opMergePR {
-					_, err = h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+					_, err = h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 				} else {
 					_, err = h.client.ListRuns(t.Context(), testRef())
 				}

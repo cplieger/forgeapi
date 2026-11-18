@@ -217,7 +217,7 @@ func TestLiveAGitHubMergePinnedToAnotherCommitLeavesThePullRequestOpen(t *testin
 		t.Fatalf("Setup: GitHub client for %s: %v", base, err)
 	}
 	merges, _ := client.(forgeapi.Merges)
-	got, mergeErr := merges.MergePR(t.Context(), s.repo, s.pr, forgeapi.MergeRequest{HeadSHA: other})
+	got, mergeErr := merges.MergePR(t.Context(), s.repo, s.pr, forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: other})
 	if mergeErr == nil {
 		t.Errorf("MergePR of #%d pinned to %s, not its head %s = %+v, want a refusal", s.pr.Number, other, s.ref, got)
 		l.later(t, "letting the merge the product accepted land", func(ctx context.Context) error { return l.awaitMerged(ctx, s.pr.Number) })

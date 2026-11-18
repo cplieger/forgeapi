@@ -138,7 +138,7 @@ func TestAMergeSendsTheSquashFlagItsIntentNames(t *testing.T) {
 		{name: "the_repository_default", intent: forgeapi.IntentDefault},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			h := newHarness(t, map[string]string{mergeRoute: mergedBody})
+			h := newHarness(t, map[string]string{mergeRoute: mergedBody, projectRouteKey: projectBody, readRoute: restMergeRequestBody, pullStateRoute: restMergeRequestBody})
 			if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{
 				HeadSHA: testHeadSHA, Intent: test.intent,
 			}); err != nil {
@@ -148,6 +148,76 @@ func TestAMergeSendsTheSquashFlagItsIntentNames(t *testing.T) {
 				t.Errorf("MergePR with intent %v sent squash %v, want %v", test.intent, got, test.squash)
 			}
 		})
+	}
+}
+
+// A merge asking for the branch's commits to survive keeps them or refuses before
+// any write: the merge route applies squash only on true, so a merge request whose
+// own squash flag is set still squashes, and squash_option always squashes whatever
+// is sent (lib/api/merge_requests.rb build_merge_params; app/models/merge_request.rb
+// squash_on_merge?).
+func TestANoSquashMergeKeepsTheCommitsOrRefusesBeforeAnyWrite(t *testing.T) {
+	project := func(option string) string {
+		return strings.Replace(projectBody, `"squash_option": "default_off"`, `"squash_option": "`+option+`"`, 1)
+	}
+	request := func(squash bool) string {
+		return strings.Replace(restMergeRequestBody, `"iid": 1,`, `"iid": 1, "squash": `+strconv.FormatBool(squash)+`,`, 1)
+	}
+	for _, test := range []struct {
+		name    string
+		project string
+		request string
+		want    []string
+		code    string
+	}{
+		{name: "always_squashing_project", project: project("always"), want: []string{projectRouteKey}, code: forgeapi.CodeStrategyNotAllowed},
+		{name: "unread_squash_option", project: project("sometimes"), request: request(false), want: []string{projectRouteKey, readRoute, mergeRoute}},
+		{name: "never_squashing_project", project: project("never"), want: []string{projectRouteKey, mergeRoute}},
+		{name: "merge_request_flagged_to_squash", project: project("default_on"), request: request(true), want: []string{projectRouteKey, readRoute, pullStateRoute, mergeRoute}},
+		{name: "merge_request_not_flagged", project: project("default_off"), request: request(false), want: []string{projectRouteKey, readRoute, mergeRoute}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			routes := map[string]string{projectRouteKey: test.project, mergeRoute: mergedBody, pullStateRoute: request(false)}
+			if test.request != "" {
+				routes[readRoute] = test.request
+			}
+			h := newHarness(t, routes)
+			_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, Intent: forgeapi.IntentNoSquash})
+			if got := h.instance.arrived(); !slices.Equal(got, test.want) {
+				t.Errorf("MergePR at IntentNoSquash sent %v, want %v", got, test.want)
+			}
+			if test.code != "" {
+				var fe *forgeapi.Error
+				if !asForgeError(err, &fe) || fe.Code != test.code || fe.Kind != forgeapi.KindNotMergeable {
+					t.Fatalf("MergePR at IntentNoSquash = %v, want code %q of kind %v", err, test.code, forgeapi.KindNotMergeable)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("MergePR at IntentNoSquash = %v, want the merge", err)
+			}
+			if got := sentBody(t, h, mergeRoute)["squash"]; got != false {
+				t.Errorf("MergePR at IntentNoSquash sent squash %v to the merge, want false", got)
+			}
+			if slices.Contains(test.want, pullStateRoute) {
+				if got := sentBody(t, h, pullStateRoute); len(got) != 1 || got["squash"] != false {
+					t.Errorf("MergePR at IntentNoSquash updated the merge request with %v, want squash false alone", got)
+				}
+			}
+		})
+	}
+}
+
+// A failed squash-flag update sends no merge, since the merge would squash.
+func TestANoSquashMergeWhoseFlagUpdateFailsSendsNoMerge(t *testing.T) {
+	request := strings.Replace(restMergeRequestBody, `"iid": 1,`, `"iid": 1, "squash": true,`, 1)
+	h := newHarness(t, map[string]string{projectRouteKey: projectBody, readRoute: request, pullStateRoute: `{"message":"refused"}`, mergeRoute: mergedBody})
+	h.instance.status(pullStateRoute, 403)
+	if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, Intent: forgeapi.IntentNoSquash}); err == nil {
+		t.Fatal("MergePR at IntentNoSquash whose squash-flag update was refused = nil, want the refusal")
+	}
+	if slices.Contains(h.instance.arrived(), mergeRoute) {
+		t.Errorf("MergePR at IntentNoSquash sent %v, want no merge after the refused update", h.instance.arrived())
 	}
 }
 

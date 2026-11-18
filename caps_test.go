@@ -38,6 +38,19 @@ func TestProduct_String_renders_each_product(t *testing.T) {
 	}
 }
 
+func TestRerunScope_String_renders_each_member(t *testing.T) {
+	for scope, want := range map[forgeapi.RerunScope]string{
+		forgeapi.RerunScopeUnknown:    "unknown",
+		forgeapi.RerunScopeFailedJobs: "failed_jobs",
+		forgeapi.RerunScopeWholeRun:   "whole_run",
+		forgeapi.RerunScope(9):        "unknown",
+	} {
+		if got := scope.String(); got != want {
+			t.Errorf("RerunScope(%d).String() = %q, want %q", int(scope), got, want)
+		}
+	}
+}
+
 func TestRunTrigger_String_renders_each_trigger(t *testing.T) {
 	for trigger, want := range map[forgeapi.RunTrigger]string{
 		forgeapi.TriggerUnknown:     "unknown",

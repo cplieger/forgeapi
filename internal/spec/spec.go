@@ -1755,8 +1755,8 @@ var Table = []Entry{
 	{
 		Method:    "Merges.MergePR",
 		Product:   GitHub,
-		Exercises: "PUT /repos/{owner}/{repo}/pulls/{number}/merge-async, this product's asynchronous merge, whose accept carries a handle and whose outcome Merges.MergeStatus reads from the pull request, then one read against the id-addressed location to resolve the successor where it answered from another address; a merge asked to wait first reads GET /repos/{owner}/{repo}/pulls/{number}, and a pull request that cannot merge now is armed by the EnableAutoMerge document in place of the merge",
-		Requests:  Requests{Min: 1, Max: 3},
+		Exercises: "PUT /repos/{owner}/{repo}/pulls/{number}/merge-async, this product's asynchronous merge, whose accept carries a handle and whose outcome Merges.MergeStatus reads from the pull request, then one read against the id-addressed location to resolve the successor where it answered from another address; a merge at the default intent naming no strategy first reads GET /repos/{owner}/{repo} for the merge methods the repository allows, a merge asked to wait then reads GET /repos/{owner}/{repo}/pulls/{number}, and a pull request that cannot merge now is armed by the EnableAutoMerge document in place of the merge",
+		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1771,7 +1771,7 @@ var Table = []Entry{
 				Where: InBody,
 				Holds: HoldsLiteral,
 				Value: "\"merge\"",
-				Says:  "the strategy this product's own route takes, in its own spelling, and merge where the caller named none",
+				Says:  "the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault, since this product configures no repository-wide default method and its route defaults to merge, the one method the repository record allows, and a record allowing several or naming none refused with strategy_required before any write; what a branch rule or merge queue then does with that method is the forge's own answer to the merge",
 			},
 			{
 				Field: "sha",
@@ -1796,8 +1796,8 @@ var Table = []Entry{
 	{
 		Method:    "Merges.MergePR",
 		Product:   GitLab,
-		Exercises: "PUT /api/v4/projects/{id}/merge_requests/{iid}/merge, with the head commit required",
-		Requests:  Requests{Min: 1, Max: 1},
+		Exercises: "PUT /api/v4/projects/{id}/merge_requests/{iid}/merge, with the head commit required; a merge at IntentNoSquash first reads GET /api/v4/projects/{id} for the project's squash option, refused with strategy_not_allowed before any write where it is always, and unless it is never reads GET /api/v4/projects/{id}/merge_requests/{iid} for the merge request's squash flag, a flag set to squash cleared with PUT /api/v4/projects/{id}/merge_requests/{iid} before the merge, whose failure sends no merge",
+		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1823,7 +1823,7 @@ var Table = []Entry{
 				Where: InBody,
 				Holds: HoldsLiteral,
 				Value: "false",
-				Says:  "false unless the caller asked to squash: this product exposes no strategy selector, so a squash flag is what a merge intent reaches here",
+				Says:  "false unless the caller asked to squash: this product exposes no strategy selector, so a squash flag is what a merge intent reaches here, and the route applies the project's own merge method and updates the merge request's squash flag only on true (lib/api/merge_requests.rb, build_merge_params), so IntentDefault merges as the project and the merge request are configured, and IntentNoSquash clears a merge request's own squash flag first, since a false here leaves it set",
 			},
 			{
 				Field: "auto_merge",
@@ -1836,8 +1836,8 @@ var Table = []Entry{
 	{
 		Method:    "Merges.MergePR",
 		Product:   Gitea,
-		Exercises: "POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed",
-		Requests:  Requests{Min: 1, Max: 2},
+		Exercises: "POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed; a merge at the default intent naming no strategy first reads GET /api/v1/repos/{owner}/{repo} for the repository's default merge style",
+		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1862,7 +1862,7 @@ var Table = []Entry{
 				Where: InBody,
 				Holds: HoldsLiteral,
 				Value: "\"merge\"",
-				Says:  "the strategy this product takes, in its own spelling, and merge where the caller named none",
+				Says:  "the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes, or a default it does not allow, refused with strategy_required before any write",
 			},
 			{
 				Field: "head_commit_id",
@@ -1881,8 +1881,8 @@ var Table = []Entry{
 	{
 		Method:    "Merges.MergePR",
 		Product:   Forgejo,
-		Exercises: "POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed",
-		Requests:  Requests{Min: 1, Max: 2},
+		Exercises: "POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed; a merge at the default intent naming no strategy first reads GET /api/v1/repos/{owner}/{repo} for the repository's default merge style",
+		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1907,7 +1907,7 @@ var Table = []Entry{
 				Where: InBody,
 				Holds: HoldsLiteral,
 				Value: "\"merge\"",
-				Says:  "the strategy this product takes, in its own spelling, and merge where the caller named none",
+				Says:  "the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes, or a default it does not allow, refused with strategy_required before any write",
 			},
 			{
 				Field: "head_commit_id",
@@ -2041,8 +2041,8 @@ var Table = []Entry{
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects/{id}/repository/commits/{sha}/statuses",
-		Requests:  Requests{Min: 1, Max: 3},
+		Exercises: "GET /api/v4/projects/{id}/repository/commits/{ref} with stats=false, since the route computes diff statistics by default (lib/api/commits.rb), sent only where the ref is not a full commit id, whose id addresses GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, because that route matches pipelines on their sha and answers a branch, a tag or a short sha no row",
+		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -2751,7 +2751,12 @@ var Table = []Entry{
 			{
 				Field: "Caps[rerun_checks], before 17",
 				Kind:  CannotSupply,
-				Says:  "no: the swagger document declares no re-run verb before Forgejo 17",
+				Says:  "no: the swagger document declares no re-run verb before Forgejo 17, so RerunScope is unknown",
+			},
+			{
+				Field: "RerunScope",
+				Kind:  CannotSupply,
+				Says:  "RerunScopeWholeRun: the swagger document declares the whole-run re-run and no failed-jobs route",
 			},
 		},
 	},

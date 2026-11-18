@@ -127,6 +127,7 @@ const CodeRunUndated = "run_undated"
 const CodeScopeInsufficient = "scope_insufficient"
 const CodeStaleHead = "stale_head"
 const CodeStrategyNotAllowed = "strategy_not_allowed"
+const CodeStrategyRequired = "strategy_required"
 const CodeTLSRefused = "tls_refused"
 const CodeUnreachable = "instance_unreachable"
 const CodeValidation = "validation"
@@ -156,7 +157,9 @@ type Connection struct {
 type ConnectionCaps struct {
 	Caps map[Capability]Support
 	Ev map[Capability]Evidence
+	RerunScopeEv Evidence
 	Product Product
+	RerunScope RerunScope
 }
 type Core interface {
 	Identity
@@ -581,6 +584,11 @@ type Repository struct {
 	Archived bool
 	Fork bool
 }
+type RerunScope int
+func (r RerunScope) String() string
+const RerunScopeFailedJobs RerunScope = iota + 1
+const RerunScopeUnknown RerunScope = iota
+const RerunScopeWholeRun RerunScope = iota + 2
 func ReservedHeaders() []string
 func Resolve(opts ...Option) Settings
 func ResolveList(opts ...ListOption) (ListSettings, error)

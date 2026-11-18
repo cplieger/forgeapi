@@ -176,11 +176,45 @@ type ConnectionCaps struct {
 	Caps map[Capability]Support
 	// Ev is the evidence behind each verdict, keyed the same way.
 	Ev map[Capability]Evidence
+	// RerunScopeEv is the evidence behind RerunScope.
+	RerunScopeEv Evidence
 	// Product is the product this instance runs, as the detection that
 	// established the family read it, never inferred. It is [ProductUnknown]
 	// only on a zero value.
 	Product Product
+	// RerunScope is what [PullRequests.RerunFailedChecks] and
+	// [Checks.RerunFailedRun] start again on this connection, read from the
+	// route the connection re-runs through rather than from Product, so a
+	// release adding a route changes it. It is [RerunScopeUnknown] wherever
+	// the connection sends no re-run.
+	RerunScope RerunScope
 }
+
+// RerunScope is what a re-run starts again, which is what a consumer words its
+// re-run control from.
+type RerunScope int
+
+// The RerunScope members.
+const (
+	// RerunScopeUnknown is the zero value: the connection holds no re-run
+	// route, or refuses its re-run before any request.
+	RerunScopeUnknown RerunScope = iota
+	// RerunScopeFailedJobs means a re-run starts the run's failed jobs again
+	// and leaves its passed jobs alone; the jobs a product adds to them are
+	// stated on the re-run operations.
+	RerunScopeFailedJobs
+	// RerunScopeWholeRun means a re-run starts the whole finished run again,
+	// its passed jobs included.
+	RerunScopeWholeRun
+)
+
+// String returns the member's wire spelling: "unknown", "failed_jobs" or
+// "whole_run".
+func (r RerunScope) String() string {
+	return nameOf([]string{nameUnknown, "failed_jobs", "whole_run"}, r)
+}
+
+var _ fmt.Stringer = RerunScope(0)
 
 // GrantCaps is what this credential can do on this instance. A capability the
 // token cannot see is a grant fact, not a software fact.

@@ -278,6 +278,7 @@ type (
 		UserNotesCount      *int            `json:"user_notes_count"`
 		References          *restReferences `json:"references"`
 		HeadPipeline        *restPipeline   `json:"head_pipeline"`
+		Squash              *bool           `json:"squash"`
 		// MergeWhenPipelineSucceeds is this product's REST answer for an armed
 		// auto-merge, on a list row, a mutation's answer and the merge's answer
 		// alike. The ANSWER keeps the name the merge's request parameter
@@ -317,12 +318,15 @@ type (
 		Description string `json:"description"`
 		TargetURL   string `json:"target_url"`
 		Status      string `json:"status"`
-		SHA         string `json:"sha"`
 		// ID is the discriminator the de-duplication keeps the latest row by. This
 		// route answers the HISTORY of a context rather than its current state, and
 		// this identifier is monotonic per instance and present on every row, where
 		// the finish time is null on a row that is still running.
 		ID int64 `json:"id"`
+	}
+
+	restCommitID struct {
+		ID string `json:"id"`
 	}
 
 	restMetadata struct {

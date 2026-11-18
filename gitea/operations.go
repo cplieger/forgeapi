@@ -800,9 +800,9 @@ func (c *Client) readRunPage(ctx context.Context, op string, addr *address, walk
 // [forgeapi.MergeOutcomeEnqueued]: measured, every product of the family schedules a
 // flagged merge whatever the checks, and Forgejo then waits for the next commit status
 // on its head, so the flag goes only where the merge cannot complete now. Such a merge
-// costs one or two requests. Two of its refusals are this
-// family's own: a conflict is [forgeapi.CodeNotMergeable], because the route
-// answers it for a head that moved, for a merge that conflicts and for a merge
+// costs one or two requests, plus the record read at the default intent. Two of its
+// refusals are this family's own: a conflict is [forgeapi.CodeNotMergeable], because
+// the route answers it for a head that moved, for a merge that conflicts and for a merge
 // asked to wait while one is already scheduled, which stands, and names the
 // cause in human text alone, and an archived repository is
 // [forgeapi.CodeRepoArchived]. That is a permanent refusal whose remedy is an
@@ -814,7 +814,7 @@ func (c *Client) readRunPage(ctx context.Context, op string, addr *address, walk
 // merge style and for a pull request not yet mergeable alike.
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error) {
 	const op = "MergePR"
-	ctx = transport.Call(ctx, op)
+	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
@@ -830,7 +830,7 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 	if err := forgeapi.ValidateRef(req.HeadSHA); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
-	style, err := mergeStyle(req)
+	style, err := c.mergeStyle(ctx, op, repo, req)
 	if err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
@@ -859,22 +859,60 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 	}, nil
 }
 
-// mergeStyle is the merge option this product takes, refused LOCALLY against this
-// family's closed set before any request. A strategy the REPOSITORY has disabled
-// leaves the process and comes back as the forge's own 405, which this product
-// answers for every refusal of its merge route and so names no cause.
-func mergeStyle(req forgeapi.MergeRequest) (string, error) {
-	if req.Strategy != "" {
+// mergeStyle is the merge option this product takes. A named strategy is refused
+// LOCALLY against this family's closed set before any request; one the REPOSITORY has
+// disabled leaves the process and comes back as the forge's own 405, which this
+// product answers for every refusal of its merge route and so names no cause. The
+// default intent is [Client.defaultStyle]'s.
+func (c *Client) mergeStyle(ctx context.Context, op string, repo forgeapi.RepoRef, req forgeapi.MergeRequest) (string, error) {
+	switch {
+	case req.Strategy != "":
 		if !slices.Contains(mergeStrategies, req.Strategy) {
 			return "", errorf(forgeapi.CodeStrategyNotAllowed,
 				"strategy %q is outside this family's own set", req.Strategy)
 		}
 		return req.Strategy, nil
-	}
-	if req.Intent == forgeapi.IntentSquash {
+	case req.Intent == forgeapi.IntentSquash:
 		return styleSquash, nil
+	case req.Intent == forgeapi.IntentNoSquash:
+		return styleMerge, nil
 	}
-	return styleMerge, nil
+	return c.defaultStyle(ctx, op, repo)
+}
+
+// defaultStyle is [forgeapi.IntentDefault] here: the merge route requires a style
+// (MergePullRequestOption's Do), so the one sent is the repository record's
+// default_merge_style where the record allows it. A record naming none this family
+// takes, or a default it has switched off (the repository edit accepts one unchecked,
+// and the merge route answers it with a causeless 405), is refused before any write.
+func (c *Client) defaultStyle(ctx context.Context, op string, repo forgeapi.RepoRef) (string, error) {
+	addr := &address{named: repo}
+	var record wireRepo
+	if err := c.readAt(ctx, op, addr, "", nil, &record); err != nil {
+		return "", err
+	}
+	if stale := c.moved(ctx, op, addr); stale != nil {
+		return "", stale
+	}
+	allowed := exposedStrategies(&record)
+	known := slices.Contains(mergeStrategies, record.DefaultMergeStyle)
+	if known && slices.Contains(allowed, record.DefaultMergeStyle) {
+		return record.DefaultMergeStyle, nil
+	}
+	if !known && record.DefaultMergeStyle != "" {
+		c.unmapped("default merge style", record.DefaultMergeStyle)
+	}
+	message := "the repository record names no default merge style this family takes"
+	if known {
+		message = "the repository record names the default merge style " + record.DefaultMergeStyle + ", which it does not allow"
+	}
+	if len(allowed) > 0 {
+		message += ", and allows " + strings.Join(allowed, ", ")
+	} else {
+		message += " and allows no merge style"
+	}
+	return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), addr.answer, forgeapi.CodeStrategyRequired, forgeapi.KindNotMergeable,
+		message+", so a merge at the default intent names its strategy")
 }
 
 // MergeStatus implements [forgeapi.Merges].

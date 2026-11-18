@@ -84,6 +84,9 @@ type (
 		AllowRebase         bool `json:"allow_rebase"`
 		AllowRebaseExplicit bool `json:"allow_rebase_explicit"`
 		AllowFastForward    bool `json:"allow_fast_forward_only_merge"`
+		// DefaultMergeStyle is the style the repository's settings name as its
+		// default merge, empty where the record carries none.
+		DefaultMergeStyle string `json:"default_merge_style"`
 	}
 
 	// wireRepoMeta is the repository a CROSS-REPOSITORY row carries, the

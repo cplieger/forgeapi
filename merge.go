@@ -6,19 +6,26 @@ import "fmt"
 //
 // It is the one enumeration here whose zero value is not an unknown member:
 // IntentDefault at zero is genuinely the correct default rather than an absence,
-// because every family has a project-level default and "do what this repository
-// does" is a real request.
+// because "do what this repository does" is a real request.
 type MergeIntent int
 
 // The MergeIntent members. Default, squash and no-squash is what three forges
 // commonly express; a family spelling beyond that travels in
 // [MergeRequest.Strategy].
 const (
-	// IntentDefault takes the repository's own configured behaviour.
+	// IntentDefault merges as the repository is configured to: on GitLab by the
+	// project's merge method and squash option and the merge request's squash flag;
+	// on Gitea and Forgejo by the default merge style the repository record names
+	// and allows; on GitHub, which configures only allowed methods, by the one
+	// method the record allows. A record naming no such style or method is refused
+	// with [CodeStrategyRequired] before any write. What a branch rule or merge queue
+	// then does with a GitHub merge is the forge's own answer.
 	IntentDefault MergeIntent = iota
 	// IntentSquash asks for one commit.
 	IntentSquash
-	// IntentNoSquash asks for the branch's commits to survive.
+	// IntentNoSquash asks for the branch's commits to survive. On GitLab a merge
+	// request flagged to squash is updated first, and a project that always
+	// squashes is refused with [CodeStrategyNotAllowed] before any write.
 	IntentNoSquash
 )
 
