@@ -1449,6 +1449,13 @@ func (c *Client) documentStatus(ctx context.Context, op string, repo forgeapi.Re
 			forgeapi.CodeRefInvalid, forgeapi.KindNotFound,
 			"the document resolved the repository and no commit at that reference")
 	}
+	if commit.OID == "" {
+		// A Commit always carries its oid, so an object without one is a tree or a
+		// blob the ... on Commit selection did not match.
+		return forgeapi.CommitChecks{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
+			forgeapi.CodeRefInvalid, forgeapi.KindNotFound,
+			"the document resolved the repository and an object at that reference that is not a commit")
+	}
 	folded := c.foldRollup(commit.StatusCheckRollup)
 	at := result.placed(commitPath, false, nil)
 	folded, err = c.followCommitContexts(ctx, op, vars, &folded, &at)

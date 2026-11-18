@@ -825,6 +825,40 @@ func TestAnEmptyDegradedFoldIsUnknownRatherThanGreen(t *testing.T) {
 	}
 }
 
+// A 40-hex ref passes ValidateRef whatever object it names, and the document answers
+// a tree or a blob there with its __typename alone (measured: a tree sha of git/git
+// answers {"__typename":"Tree"}), so such a ref names no commit to fold.
+func TestACommitStatusAtAnObjectThatIsNoCommitIsRefused(t *testing.T) {
+	const tree = "bc57e2925a714c5f5696def079e395507a19424e"
+	for _, typename := range []string{"Tree", "Blob"} {
+		t.Run(typename, func(t *testing.T) {
+			h := newHarness(t, map[string]string{documentRoute: documentEnvelope(
+				`"repository":{"nameWithOwner":"example/example","object":{"__typename":"` + typename + `"}}`,
+			)})
+			got, err := h.client.CommitStatus(t.Context(), testRef(), tree)
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) {
+				t.Fatalf("CommitStatus at a %s = %+v, %v, want the ref refused", typename, got, err)
+			}
+			if fe.Code != forgeapi.CodeRefInvalid || fe.Kind != forgeapi.KindNotFound {
+				t.Errorf("CommitStatus at a %s = %s/%s, want %s/%s", typename, fe.Code, fe.Kind, forgeapi.CodeRefInvalid, forgeapi.KindNotFound)
+			}
+		})
+	}
+	t.Run("a_commit_with_no_rollup", func(t *testing.T) {
+		h := newHarness(t, map[string]string{documentRoute: documentEnvelope(
+			`"repository":{"nameWithOwner":"example/example","object":{"__typename":"Commit","oid":"` + testHeadSHA + `","statusCheckRollup":null}}`,
+		)})
+		got, err := h.client.CommitStatus(t.Context(), testRef(), "main")
+		if err != nil {
+			t.Fatalf("CommitStatus at a commit with no rollup = %v, want its fold", err)
+		}
+		if got.State != forgeapi.CheckUnknown || got.Ref != testHeadSHA {
+			t.Errorf("CommitStatus at a commit with no rollup = %v at %q, want %v at %q", got.State, got.Ref, forgeapi.CheckUnknown, testHeadSHA)
+		}
+	})
+}
+
 // TestTheVersionPinIsResolvedAtSetupAndRidesOnlyWhereItIsServed holds both arms of the
 // pin, which is the whole decision: the version set connection setup read is what says
 // which instance this is, and the pin rides every later REST request of the one that
