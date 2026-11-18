@@ -666,7 +666,7 @@ func TestLiveAnonymousCommitStatus(t *testing.T) {
 				t.Fatalf("CommitStatus(%q, %q) = error %v, want nil", s.repo.Selector, s.ref, err)
 			}
 			got := checks.(forgeapi.CommitChecks)
-			if got.State < forgeapi.CheckUnknown || got.State > forgeapi.CheckNone {
+			if got.State < forgeapi.CheckUnknown || got.State > forgeapi.CheckNeutral {
 				t.Errorf("CommitStatus(%q, %q) = state %v, want a declared CheckState member", s.repo.Selector, s.ref, got.State)
 			}
 			if sum := got.Passing + got.Failing + got.Pending + got.Neutral + got.Unknown; sum != got.Total {
@@ -674,7 +674,7 @@ func TestLiveAnonymousCommitStatus(t *testing.T) {
 					s.repo.Selector, s.ref, sum, got.Total)
 			}
 			if len(got.Contexts) == 0 {
-				checkEmptyFold(t, p, s, got)
+				checkEmptyFold(t, s, got)
 				t.Logf("CommitStatus(%q, %q) answered %v over 0 context(s) in %d request(s): this instance offered nothing to fold, so this run proved the price and the empty answer's own shape rather than a verdict",
 					s.repo.Selector, s.ref, got.State, wire.n.Load())
 				return
@@ -686,21 +686,16 @@ func TestLiveAnonymousCommitStatus(t *testing.T) {
 	}
 }
 
-// checkEmptyFold is what a whole read over nothing must be: the none member where p's
-// table entry proves the absence and the unknown member where it does not, a zero
+// checkEmptyFold is what a fold over nothing must be: the unknown member, a zero
 // total and no partial marker. That is a real statement rather than the absence of
 // one, because each of the three could be otherwise: a verdict over no evidence, a
 // total from the endpoint's own figure, or a remainder marked where nothing was
 // truncated.
-func checkEmptyFold(t *testing.T, p spec.Product, s subject, got forgeapi.CommitChecks) {
+func checkEmptyFold(t *testing.T, s subject, got forgeapi.CommitChecks) {
 	t.Helper()
-	want := forgeapi.CheckNone
-	if e := requireEntry(t, p, "Checks.CommitStatus"); !proved(&e) {
-		want = forgeapi.CheckUnknown
-	}
-	if got.State != want {
-		t.Errorf("CommitStatus(%q, %q) = state %v over no context at all, want %v: any other verdict over no check is one this library invented",
-			s.repo.Selector, s.ref, got.State, want)
+	if got.State != forgeapi.CheckUnknown {
+		t.Errorf("CommitStatus(%q, %q) = state %v over no context at all, want %v: a verdict over no evidence is a verdict this library invented",
+			s.repo.Selector, s.ref, got.State, forgeapi.CheckUnknown)
 	}
 	if got.Total != 0 {
 		t.Errorf("CommitStatus(%q, %q) = total %d over no context, want 0: the total is the rows held rather than the figure the endpoint reported",

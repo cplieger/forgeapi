@@ -71,7 +71,6 @@ type CheckContext struct {
 }
 const CheckFailing CheckState = iota + 2
 const CheckNeutral CheckState = iota + 4
-const CheckNone CheckState = iota + 5
 const CheckPassing CheckState = iota + 1
 const CheckPending CheckState = iota + 3
 type CheckState int

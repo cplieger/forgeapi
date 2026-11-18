@@ -26,10 +26,6 @@ func (r reviewsOption) applyReadOption(s *ReadSettings) { s.Reviews = bool(r) }
 // the honest answer for an unpopulated field rather than a wrong one.
 const nameUnknown = "unknown"
 
-// nameNone is the spelling the enumerations sharing a member for "there is none"
-// render it as.
-const nameNone = "none"
-
 // stateOpenName, stateClosedName and stateMergedName are the spellings three of this
 // library's state enumerations share, so one word is declared once rather than per
 // enumeration.

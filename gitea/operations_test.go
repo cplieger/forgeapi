@@ -1105,17 +1105,9 @@ func TestTheFoldIsComputedOverTheRowsRatherThanTakenFromTheEndpoint(t *testing.T
 			contexts: 2,
 		},
 		{
-			name:     "an_empty_page_of_a_collection_counted_seven_is_unknown",
+			name:     "an_empty_collection_is_unknown",
 			body:     combined("success", 7),
 			want:     forgeapi.CheckUnknown,
-			contexts: 0,
-		},
-		{
-			// The instance answers a commit with no status as state pending over a
-			// total of zero (services/convert/status.go ToCombinedStatus).
-			name:     "an_empty_collection_counted_zero_is_none",
-			body:     combined("pending", 0),
-			want:     forgeapi.CheckNone,
 			contexts: 0,
 		},
 	} {

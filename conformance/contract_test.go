@@ -270,7 +270,7 @@ var operations = []operation{
 		method:    "PullRequests.ListPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
 		rowArms:   []string{rowAuthorKind},
-		errorArms: []string{rowChecksUnderFineGrained, rowChecksOnNoCheck, rowMergeableUnderOption, rowMergeBlockedUnderOption, rowApprovalsUnderOption, rowChangesUnderOption},
+		errorArms: []string{rowChecksUnderFineGrained, rowMergeableUnderOption, rowMergeBlockedUnderOption, rowApprovalsUnderOption, rowChangesUnderOption},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -292,7 +292,7 @@ var operations = []operation{
 		method:    "PullRequests.ListMyPRs",
 		zero:      forgeapi.Page[forgeapi.PullRequest]{},
 		rowArms:   []string{rowAuthorKind},
-		errorArms: []string{rowChecksUnderFineGrained, rowChecksOnNoCheck, ownerUnresolved, scopeInsufficient, archivedRowsForOwner, rowMergeableUnderOption, rowMergeBlockedUnderOption, rowApprovalsUnderOption, rowChangesUnderOption},
+		errorArms: []string{rowChecksUnderFineGrained, ownerUnresolved, scopeInsufficient, archivedRowsForOwner, rowMergeableUnderOption, rowMergeBlockedUnderOption, rowApprovalsUnderOption, rowChangesUnderOption},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
 			if !ok {
@@ -314,7 +314,7 @@ var operations = []operation{
 		method:    "PullRequests.ReadPR",
 		zero:      forgeapi.PullRequest{},
 		rowArms:   []string{authorKind},
-		errorArms: []string{checksUnderFineGrained, checksOnNoCheck, approvalsUnderOption, changesUnderOption},
+		errorArms: []string{checksUnderFineGrained, approvalsUnderOption, changesUnderOption},
 		readsPR:   true,
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.PullRequests)
@@ -471,7 +471,7 @@ var operations = []operation{
 	{
 		method:    "Checks.CommitStatus",
 		zero:      forgeapi.CommitChecks{},
-		errorArms: []string{commitStateUnderFineGrained, commitStateOnNoCheck},
+		errorArms: []string{commitStateUnderFineGrained},
 		invoke: func(ctx context.Context, c any, s subject) (any, error) {
 			r, ok := c.(forgeapi.Checks)
 			if !ok {

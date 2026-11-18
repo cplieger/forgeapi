@@ -1005,13 +1005,18 @@ func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref st
 	return out, nil
 }
 
-// foldStatus reads the combined commit status and folds the verdict and counts
-// CLIENT-side over the rows held, never trusting the page's own state. maxPages is
-// the fold rule, one page on a list and the published bound on a read; a fold short
-// at it is unknown with the pagination cap, and a first page holding no row and
-// counting none is [forgeapi.CheckNone]. Each page asks for the instance's stated
-// maximum, because a page short of its limit reads as the last one, so a limit above
-// what the instance serves would fold one clamped page as every context there is.
+// foldStatus reads the combined commit status and folds the verdict and the
+// per-state counts CLIENT-side over the rows it holds, never trusting the state the
+// page itself reports.
+//
+// maxPages is the fold rule: one page on a list, the published bound on a read. A
+// fold still short at that bound reports the pagination cap with the verdict
+// unknown rather than a verdict over part of the evidence.
+//
+// Each page asks for the instance's stated maximum, because the fold is computed
+// over the rows a page carries and reads a page short of its limit as the last one:
+// a limit above what the instance serves would fold one clamped page as every
+// context there is.
 func (c *Client) foldStatus(ctx context.Context, op string, addr *address, ref string, maxPages int) (forgeapi.CommitChecks, error) {
 	out := forgeapi.CommitChecks{Ref: ref}
 	// A bound admitting no page is the literal zero its option publishes: nothing
@@ -1026,7 +1031,7 @@ func (c *Client) foldStatus(ctx context.Context, op string, addr *address, ref s
 	if err != nil {
 		return forgeapi.CommitChecks{}, err
 	}
-	truncated, countedNone := false, false
+	truncated := false
 	for page := 1; page <= maxPages; page++ {
 		var body wireCombined
 		query := url.Values{
@@ -1050,15 +1055,11 @@ func (c *Client) foldStatus(ctx context.Context, op string, addr *address, ref s
 		}
 		if len(body.Statuses) < limit {
 			truncated = false
-			countedNone = page == 1 && len(body.Statuses) == 0 && body.TotalCount != nil && *body.TotalCount == 0
 			break
 		}
 		truncated = true
 	}
 	count(&out)
-	if countedNone {
-		out.State = forgeapi.CheckNone
-	}
 	if truncated {
 		out.State = forgeapi.CheckUnknown
 		out.Partial = &forgeapi.Partial{

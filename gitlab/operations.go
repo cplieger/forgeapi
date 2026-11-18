@@ -1267,8 +1267,7 @@ func latestPerContext(rows []restStatus) []restStatus {
 
 // count is the fold itself, over the rows the caller holds. The verdict is the
 // worst state present, because one failing check makes the collection failing
-// however many passed, and [forgeapi.CheckUnknown] over no row: the statuses route
-// lists a pipeline's jobs alone, so a jobless or hidden pipeline answers no row too.
+// however many passed.
 //
 // The UNKNOWN arm sits second, above pending, passing and neutral, which is what
 // the totality discipline asks of a fold: a value this family's table did not map is

@@ -340,6 +340,23 @@ func TestPartialDataArrivesWithItsMarkerRatherThanTruncated(t *testing.T) {
 	}
 }
 
+// A single read answered beside envelope errors is marked as a list page is, since
+// the errors name no field and any of the merge request's may be the one nulled.
+func TestAPartialSingleReadArrivesWithItsMarker(t *testing.T) {
+	h := newHarness(t, map[string]string{documentRoute: `{"errors": [{"message": "one selection could not be resolved"}],
+  "data": {"queryComplexity": {"score": 46, "limit": 200},
+  "project": {"fullPath": "example/group/example",
+    "userPermissions": {"pushCode": true, "readMergeRequest": true},
+    "mergeRequest": ` + docNode + `}}}`})
+	got, err := h.client.ReadPR(t.Context(), testRef(), testPR())
+	if err != nil {
+		t.Fatalf("ReadPR against partial data = %v, want the merge request plus a marker", err)
+	}
+	if got.Partial == nil || got.Partial.Reason != forgeapi.PartialGraphQLPartial {
+		t.Errorf("ReadPR against partial data = partial %v, want %v: a consumer reads an unmarked answer as whole", got.Partial, forgeapi.PartialGraphQLPartial)
+	}
+}
+
 // TestADocumentRefusedDegradesTheConnectionToREST holds the price range the expectation
 // table publishes for the single read, and the mechanism under it.
 //

@@ -429,12 +429,7 @@ var Table = []Entry{
 			{
 				Field: "Items[].Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold; CheckUnknown where headPipeline is null, since GitLab's GraphQL nulls a pipeline the credential may not view with no error (Ci::PipelineType authorize :read_pipeline) and so cannot tell a head with no pipeline from one unread; CheckUnknown too where the documents are refused, since a REST list row carries no head_pipeline and so cannot tell no pipeline from one unread",
-			},
-			{
-				Field: "Items[].Action.Checks, on a head carrying no check",
-				Kind:  CannotSupply,
-				Says:  "CheckUnknown: a missing status or pipeline does not prove the head has none, since a hidden or jobless pipeline reads the same",
+				Says:  "headPipeline.status scalar, no fold; CheckUnknown where the documents are refused, since a REST list row carries no head_pipeline",
 			},
 			{
 				Field: "Items[].Action.ChecksPassing .. ChecksTotal",
@@ -932,12 +927,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold; CheckUnknown where headPipeline is null, since GitLab's GraphQL nulls a pipeline the credential may not view with no error (Ci::PipelineType authorize :read_pipeline) and so cannot tell a head with no pipeline from one unread; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a null head_pipeline and a merged results one included, since the record leaves the key out for a credential that may not view pipelines and that payload carries no source_sha to match it by",
-			},
-			{
-				Field: "Action.Checks, on a head carrying no check",
-				Kind:  CannotSupply,
-				Says:  "CheckUnknown: a missing status or pipeline does not prove the head has none, since a hidden or jobless pipeline reads the same",
+				Says:  "headPipeline.status scalar, no fold; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a merged results one included, since that payload carries no source_sha to match it by",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -1356,7 +1346,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown, since the answer leaves the key out for a credential that may not view pipelines; the head pipeline's own status, running here, where one ran",
+				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -1537,7 +1527,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown, since the answer leaves the key out for a credential that may not view pipelines; the head pipeline's own status, running here, where one ran",
+				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -2037,7 +2027,7 @@ var Table = []Entry{
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   GitHub,
-		Exercises: "the CommitRollup document, whose null rollup is a commit with no CI and CheckNone, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs, both empty CheckNone, where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers",
+		Exercises: "the CommitRollup document, the one source on this product that tells a commit with no CI from a commit whose checks all passed, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers",
 		Requests:  Requests{Min: 0, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
@@ -2056,11 +2046,6 @@ var Table = []Entry{
 		Support:   Supported,
 		Departures: []Departure{
 			{
-				Field: "State, on a head carrying no check",
-				Kind:  CannotSupply,
-				Says:  "CheckUnknown: a missing status or pipeline does not prove the head has none, since a hidden or jobless pipeline reads the same, the statuses route listing a pipeline's jobs alone (lib/api/commit_statuses.rb)",
-			},
-			{
 				Field: "Successor",
 				Kind:  CannotSupply,
 				Says:  "nil: no successor key",
@@ -2070,14 +2055,14 @@ var Table = []Entry{
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, whose first page holding no status at total_count 0 is CheckNone, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
 		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 	},
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, whose first page holding no status at total_count 0 is CheckNone, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
 		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 	},

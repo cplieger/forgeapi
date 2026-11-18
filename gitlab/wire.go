@@ -672,9 +672,6 @@ func (c *Client) normalizeDocPull(n *docMergeRequest, repo forgeapi.RepoRef) for
 	if n.Author != nil {
 		author, kind = n.Author.Username, accountKind(n.Author.Bot)
 	}
-	// A null headPipeline stays unknown: GraphQL nulls a pipeline the credential may
-	// not view, with no error, as it nulls one that never ran
-	// (app/graphql/types/ci/pipeline_type.rb authorize :read_pipeline).
 	checks := forgeapi.CheckUnknown
 	if n.HeadPipeline != nil {
 		checks = c.checkState("pipeline status (document)", n.HeadPipeline.Status)

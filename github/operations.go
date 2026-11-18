@@ -227,7 +227,7 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	items := make([]forgeapi.PullRequest, 0, len(rows.Nodes))
 	for i := range rows.Nodes {
 		item := c.rowWithFold(&rows.Nodes[i], canonical)
-		c.markListed(&item, at.refused[i], at.cut[i], &set)
+		c.markListed(&item, at.refused[i], &set)
 		c.markReviewsCut(&item, rows.Nodes[i].Reviews, set.Reviews)
 		items = append(items, item)
 	}
@@ -238,16 +238,11 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	return page, nil
 }
 
-// markListed applies a listed row's own markers: the refused check rollup, the
-// verdict an error under the rollup left unread, and the merge state and review
-// counts blanked when the list was asked not to read them. The page carries the
-// marker for a cut rollup.
-func (c *Client) markListed(item *forgeapi.PullRequest, rollupRefused, rollupCut bool, set *forgeapi.ListSettings) {
-	switch {
-	case rollupRefused:
+// markListed applies a listed row's own markers: the refused check rollup, and the
+// merge state and review counts blanked when the list was asked not to read them.
+func (c *Client) markListed(item *forgeapi.PullRequest, rollupRefused bool, set *forgeapi.ListSettings) {
+	if rollupRefused {
 		c.refuseChecks(item)
-	case rollupCut:
-		clearChecks(item)
 	}
 	if !set.MergeState {
 		blankMergeState(item)
@@ -283,7 +278,7 @@ func clearChecks(item *forgeapi.PullRequest) {
 // rollup is the forbidden marker only where nothing else is missing, since a consumer
 // reads that marker as the rest of the row whole.
 func (c *Client) markRead(item *forgeapi.PullRequest, at *placement) {
-	if at.refused[0] || at.cut[0] {
+	if at.refused[0] || at.rollup {
 		clearChecks(item)
 	}
 	switch {
@@ -299,7 +294,7 @@ func (c *Client) markRead(item *forgeapi.PullRequest, at *placement) {
 // exact either way, which is why the marker rides the row rather than blanking it.
 func (c *Client) rowWithFold(node *docPullRequest, repo forgeapi.RepoRef) forgeapi.PullRequest {
 	row := c.normalizeDocPull(node, repo)
-	if fold := c.foldRollup(headOf(node)); fold.truncated {
+	if fold := c.foldRollup(rollupOf(node)); fold.truncated {
 		row.Partial = c.partial(forgeapi.PartialPaginationCap, fold.total)
 	}
 	return row
@@ -377,10 +372,6 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	for i := range at.refused {
 		refused[rows.Nodes[i]] = true
 	}
-	cut := make(map[*docSearchPull]bool, len(at.cut))
-	for i := range at.cut {
-		cut[rows.Nodes[i]] = true
-	}
 	nodes, err := c.searchRows(ctx, op, &result, rows.Nodes, (*docSearchPull).typename, typePullRequest, rows.IssueCount, at.unplaced())
 	if err != nil {
 		return forgeapi.Page[forgeapi.PullRequest]{}, err
@@ -388,7 +379,7 @@ func (c *Client) ListMyPRs(ctx context.Context, opts ...forgeapi.ListOption) (fo
 	items := make([]forgeapi.PullRequest, 0, len(nodes))
 	for _, node := range nodes {
 		item := c.rowWithFold(&node.docPullRequest, rowRepo(node.Repository))
-		c.markListed(&item, refused[node], cut[node], &set)
+		c.markListed(&item, refused[node], &set)
 		c.markReviewsCut(&item, node.Reviews, set.Reviews)
 		items = append(items, item)
 	}
@@ -638,7 +629,7 @@ func (c *Client) documentRead(ctx context.Context, op string, repo forgeapi.Repo
 	}
 	canonical, _ := documentRepo(payload.Repository, repo)
 	item := c.normalizeDocPull(node, canonical)
-	folded := c.foldRollup(headOf(node))
+	folded := c.foldRollup(rollupOf(node))
 	at := result.placed(pullPath, false, nil)
 	if parts.fold {
 		followed, followErr := c.followContexts(ctx, op, vars, &folded, &at)
@@ -709,7 +700,7 @@ func (c *Client) followContexts(ctx context.Context, op string, vars map[string]
 		if err != nil {
 			return out, err
 		}
-		page := c.foldRollup(headOf(node))
+		page := c.foldRollup(rollupOf(node))
 		out = merged(&out, &page)
 	}
 	return out, nil
@@ -1398,12 +1389,24 @@ func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr 
 
 // CommitStatus implements [forgeapi.Checks].
 //
-// The fold is computed here over the statuses and the check runs together, through
-// the rollup document that unions them or the two REST reads a degraded connection
-// takes, never from a verdict field: the rollup's own state hides neutral, and the
-// combined status alone answers an Actions repository as it answers a commit with no
-// CI. Either source tells [forgeapi.CheckNone] from a passing fold. A call that meets
-// a document refusal answers it rather than paying for the REST reads in the same call.
+// The fold is computed here rather than taken from this product's rollup
+// verdict, because the neutral state is invisible in that field and reachable
+// only per run. The measurement covered the endpoints it reads from, and the combined
+// status alone is not one of them: on a repository whose CI is Actions that
+// endpoint answers an EMPTY array, byte-identical to a commit with no CI at all,
+// so a fold over it reports a green that is not there. The sources are the
+// statuses and the check runs together, or the one rollup document that unions
+// them and is the only read that tells an empty fold from a passing one. This
+// read addresses one commit, so the fold is COMPLETE and bounded by
+// [forgeapi.Budget.StatusPages].
+//
+// It is one to three requests. The document arm spends one plus a further page of the
+// contexts connection wherever that connection has one, up to that bound; the degraded
+// arm, which a connection takes once it has already discovered its documents refused,
+// spends the two REST reads, plus the one further read that resolves the successor
+// where they answered from another address, which both of them meet and one read
+// answers. A call that meets the refusal answers with it rather than
+// buying those two inside the same call.
 func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref string) (forgeapi.CommitChecks, error) {
 	const op = "CommitStatus"
 	ctx = transport.Call(ctx, op)
@@ -1422,8 +1425,8 @@ func (c *Client) CommitStatus(ctx context.Context, repo forgeapi.RepoRef, ref st
 	return c.documentStatus(ctx, op, repo, ref)
 }
 
-// documentStatus is the commit rollup read: one request for the union the REST arm
-// reads in two.
+// documentStatus is the commit rollup read, which is the only source on this product
+// that tells a commit with no CI from a commit whose checks all passed.
 func (c *Client) documentStatus(ctx context.Context, op string, repo forgeapi.RepoRef, ref string) (forgeapi.CommitChecks, error) {
 	owner, name, err := ownerName(repo)
 	if err != nil {
@@ -1446,7 +1449,7 @@ func (c *Client) documentStatus(ctx context.Context, op string, repo forgeapi.Re
 			forgeapi.CodeRefInvalid, forgeapi.KindNotFound,
 			"the document resolved the repository and no commit at that reference")
 	}
-	folded := c.foldRollup(commit)
+	folded := c.foldRollup(commit.StatusCheckRollup)
 	at := result.placed(commitPath, false, nil)
 	folded, err = c.followCommitContexts(ctx, op, vars, &folded, &at)
 	if err != nil {
@@ -1483,7 +1486,7 @@ func (c *Client) followCommitContexts(ctx context.Context, op string, vars map[s
 		if payload.Repository == nil || payload.Repository.Object == nil {
 			return out, c.core.FailBody(ctx, op, transport.Document(http.MethodPost), result.Answer, errCommitNull)
 		}
-		page := c.foldRollup(payload.Repository.Object)
+		page := c.foldRollup(payload.Repository.Object.StatusCheckRollup)
 		out = merged(&out, &page)
 	}
 	return out, nil
@@ -1548,11 +1551,6 @@ func (c *Client) degradedStatus(ctx context.Context, op string, repo forgeapi.Re
 		folded.add(state, 1)
 	}
 	folded.state = folded.verdict()
-	if folded.total == 0 {
-		// The two reads together are the union the rollup folds, so both empty is a
-		// commit that carries no check.
-		folded.state = forgeapi.CheckNone
-	}
 	out := c.checksOf(ref, combined.SHA, &folded)
 	out.Successor = moved.to
 	return out, nil

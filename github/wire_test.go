@@ -165,7 +165,7 @@ func TestABoundedFoldIsExactFromTheConnectionsOwnCounts(t *testing.T) {
 	var row docPullRequest
 	readCaptures(t).row(t, "graphql_search_row", &row)
 	h := newHarness(t, nil)
-	got := h.client.foldRollup(headOf(&row))
+	got := h.client.foldRollup(rollupOf(&row))
 	if got.total != 7 {
 		t.Errorf("foldRollup(the recorded search row).total = %d, want 7: the connection's own counts describe the collection, not the page", got.total)
 	}
@@ -188,29 +188,16 @@ func TestABoundedFoldIsExactFromTheConnectionsOwnCounts(t *testing.T) {
 }
 
 // TestAnEmptyRollupIsNotAPassingFold is the hazard this product's own REST combined
-// status cannot avoid, held on the source that can: a commit the document answered
-// with no rollup carries no check, and a commit it did not answer is a verdict nobody
-// read; neither is a green.
+// status cannot avoid, held on the source that can: a commit with nothing to fold
+// answers the unknown member with a zero total, never a green.
 func TestAnEmptyRollupIsNotAPassingFold(t *testing.T) {
 	h := newHarness(t, nil)
-	for _, test := range []struct {
-		commit *docCommit
-		name   string
-		want   forgeapi.CheckState
-	}{
-		{name: "a_commit_with_a_null_rollup", commit: &docCommit{OID: "1f0e7b3c"}, want: forgeapi.CheckNone},
-		{name: "no_commit_answered", commit: nil, want: forgeapi.CheckUnknown},
-		{name: "a_rollup_with_no_contexts", commit: &docCommit{OID: "1f0e7b3c", StatusCheckRollup: &docRollup{}}, want: forgeapi.CheckUnknown},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			got := h.client.foldRollup(test.commit)
-			if got.state != test.want {
-				t.Errorf("foldRollup(%s).state = %v, want %v", test.name, got.state, test.want)
-			}
-			if got.total != 0 || got.passing != 0 {
-				t.Errorf("foldRollup(%s) = total %d and %d passing, want zero of each", test.name, got.total, got.passing)
-			}
-		})
+	got := h.client.foldRollup(nil)
+	if got.state != forgeapi.CheckUnknown {
+		t.Errorf("foldRollup(a null rollup).state = %v, want %v: a verdict over no evidence is one this library invented", got.state, forgeapi.CheckUnknown)
+	}
+	if got.total != 0 || got.passing != 0 {
+		t.Errorf("foldRollup(a null rollup) = total %d and %d passing, want zero of each", got.total, got.passing)
 	}
 }
 

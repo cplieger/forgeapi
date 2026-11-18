@@ -167,13 +167,9 @@ type (
 		State       string `json:"state"`
 	}
 
-	// wireCombined is one page of a commit's combined status. TotalCount is the
-	// rows on that page (services/convert/status.go ToCombinedStatus), absent
-	// where the instance sent none.
 	wireCombined struct {
-		TotalCount *int         `json:"total_count"`
-		SHA        string       `json:"sha"`
-		Statuses   []wireStatus `json:"statuses"`
+		SHA      string       `json:"sha"`
+		Statuses []wireStatus `json:"statuses"`
 	}
 
 	wireVersion struct {
