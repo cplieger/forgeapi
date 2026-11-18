@@ -415,17 +415,6 @@ type (
 
 	restAutoMerge struct{}
 
-	// restBranchRule is one rule GET /repos/{owner}/{repo}/rules/branches/{branch}
-	// answers; a merge_queue rule's parameters carry the queue's merge method, a
-	// pull_request rule's the merge methods it allows, absent where it narrows none.
-	restBranchRule struct {
-		Parameters *struct {
-			MergeMethod         string   `json:"merge_method"`
-			AllowedMergeMethods []string `json:"allowed_merge_methods"`
-		} `json:"parameters"`
-		Type string `json:"type"`
-	}
-
 	restPull struct { //nolint:govet // fieldalignment: the field order is the wire document's own, so a reader compares this type against the response it decodes
 		Number         int            `json:"number"`
 		NodeID         string         `json:"node_id"`

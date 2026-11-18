@@ -2,7 +2,6 @@ package conformance
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 	"testing"
 
@@ -36,27 +35,10 @@ func repositoryRecord(t *testing.T, p spec.Product, set map[string]any) wire {
 	return record
 }
 
-// noQueue is GitHub's base branch rules naming no merge queue, as the sandbox's
-// default branch answers them.
-var noQueue = wire{Method: "GET", Path: "/repos/example/example/rules/branches/main", Status: 200, Body: json.RawMessage(`[]`)}
-
-// oneMethodRule is GitHub's base branch rules allowing one merge method, cut from a
-// recorded branch-rules read of a public repository whose default branch's
-// pull_request rule allows merge alone, read 2026-11-18, its deletion and
-// pull_request rules kept and their ruleset ids and source replaced with the
-// canonical subject.
-var oneMethodRule = wire{
-	Method: "GET", Path: "/repos/example/example/rules/branches/main", Status: 200,
-	Body: json.RawMessage(`[{"type":"deletion","ruleset_source_type":"Repository","ruleset_source":"example/example","ruleset_id":1},` +
-		`{"type":"pull_request","parameters":{"required_approving_review_count":1,"dismiss_stale_reviews_on_push":true,"required_reviewers":[],` +
-		`"require_code_owner_review":true,"require_last_push_approval":false,"required_review_thread_resolution":false,"allowed_merge_methods":["merge"]},` +
-		`"ruleset_source_type":"Repository","ruleset_source":"example/example","ruleset_id":1}]`),
-}
-
 // mergeAtTheDefault sends a merge at IntentDefault naming no strategy to p's merge
-// fixture, served behind record where record is non-nil and behind first, and answers
-// the requests that arrived and what the merge returned.
-func mergeAtTheDefault(t *testing.T, p spec.Product, record *wire, first ...wire) ([]sent, error) {
+// fixture, served behind record where record is non-nil, and answers the requests
+// that arrived and what the merge returned.
+func mergeAtTheDefault(t *testing.T, p spec.Product, record *wire) ([]sent, error) {
 	t.Helper()
 	f, err := loadFixture(p, "Merges.MergePR")
 	if err != nil {
@@ -65,7 +47,6 @@ func mergeAtTheDefault(t *testing.T, p spec.Product, record *wire, first ...wire
 	if record != nil {
 		f.Routes = append([]wire{*record}, f.Routes...)
 	}
-	f.Routes = append(first, f.Routes...)
 	srv, rec := newFixtureServer(t, f)
 	conn := forgeapi.Connection{WebBaseURL: srv.URL, APIBaseURL: srv.URL + apiRoot(p)}
 	client, err := guard(func() (any, error) { return newClient(p, conn, offlineOptions(srv)...) })
@@ -82,15 +63,9 @@ func mergeAtTheDefault(t *testing.T, p spec.Product, record *wire, first ...wire
 	return rec.since(0), err
 }
 
-// A merge at the default intent merges as the repository is configured to. GitLab's
-// merge route applies the project's merge method itself and updates the merge
-// request's squash flag only on a true squash (lib/api/merge_requests.rb,
-// build_merge_params), so the merge alone is sent. The Gitea family's route requires a
-// style (MergePullRequestOption's Do), and the repository record carries the
-// configured one as default_merge_style. GitHub configures no repository-wide default
-// method, only allowed ones, so the one method a repository allows is sent, else the
-// method of the base branch's merge queue, which merges by it whatever is sent, else
-// the one method the branch's pull_request rules leave of the allowed ones.
+// A merge at the default intent sends the strategy the repository is configured to
+// merge by, per product as [forgeapi.IntentDefault] states and the Merges.MergePR
+// spec rows price.
 func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 	for _, tc := range []struct {
 		set     map[string]any
@@ -98,21 +73,11 @@ func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 		name    string
 		field   string
 		want    string
-		first   []wire
 		reads   int
 	}{
 		{
 			name: "GitHub_allowing_one_method", product: spec.GitHub, field: "merge_method", want: `"rebase"`, reads: 1,
 			set: map[string]any{"allow_merge_commit": false, "allow_squash_merge": false, "allow_rebase_merge": true},
-		},
-		{
-			name: "GitHub_allowing_several_behind_a_merge_queue", product: spec.GitHub, field: "merge_method", want: `"squash"`, reads: 3,
-			set: map[string]any{"allow_merge_commit": true, "allow_squash_merge": true, "allow_rebase_merge": true},
-		},
-		{
-			name: "GitHub_allowing_several_with_a_branch_rule_allowing_one", product: spec.GitHub, field: "merge_method", want: `"merge"`, reads: 3,
-			set:   map[string]any{"allow_merge_commit": true, "allow_squash_merge": true, "allow_rebase_merge": true},
-			first: []wire{oneMethodRule},
 		},
 		{name: "Gitea", product: spec.Gitea, field: "Do", want: `"rebase-merge"`, reads: 1, set: map[string]any{"default_merge_style": "rebase-merge"}},
 		{name: "Forgejo", product: spec.Forgejo, field: "Do", want: `"squash"`, reads: 1, set: map[string]any{"default_merge_style": "squash"}},
@@ -124,7 +89,7 @@ func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 				w := repositoryRecord(t, tc.product, tc.set)
 				record = &w
 			}
-			arrived, err := mergeAtTheDefault(t, tc.product, record, tc.first...)
+			arrived, err := mergeAtTheDefault(t, tc.product, record)
 			if err != nil {
 				t.Fatalf("MergePR at the default intent on %s = %v, want the merge sent", tc.product, err)
 			}
@@ -154,14 +119,13 @@ func TestTheDefaultIntentIsRefusedWhereTheRepositoryNamesNoOneMerge(t *testing.T
 		product spec.Product
 		name    string
 		names   []string
-		reads   int
 	}{
 		{
-			name: "GitHub_allowing_several_methods_with_no_merge_queue", product: spec.GitHub, names: []string{"merge", "squash"}, reads: 3,
+			name: "GitHub_allowing_several_methods", product: spec.GitHub, names: []string{"merge", "squash"},
 			set: map[string]any{"allow_merge_commit": true, "allow_squash_merge": true, "allow_rebase_merge": false},
 		},
 		{
-			name: "GitHub_record_carrying_no_flags", product: spec.GitHub, reads: 3,
+			name: "GitHub_record_carrying_no_flags", product: spec.GitHub,
 			set: map[string]any{"allow_merge_commit": nil, "allow_squash_merge": nil, "allow_rebase_merge": nil},
 		},
 		{name: "Gitea_record_carrying_no_default", product: spec.Gitea, names: []string{"merge", "squash"}, set: map[string]any{"default_merge_style": nil}},
@@ -171,7 +135,7 @@ func TestTheDefaultIntentIsRefusedWhereTheRepositoryNamesNoOneMerge(t *testing.T
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			record := repositoryRecord(t, tc.product, tc.set)
-			arrived, err := mergeAtTheDefault(t, tc.product, &record, noQueue)
+			arrived, err := mergeAtTheDefault(t, tc.product, &record)
 			var fe *forgeapi.Error
 			if !asForgeError(err, &fe) {
 				t.Fatalf("MergePR at the default intent on %s = %v, want a *forgeapi.Error", tc.product, err)
@@ -179,9 +143,8 @@ func TestTheDefaultIntentIsRefusedWhereTheRepositoryNamesNoOneMerge(t *testing.T
 			if fe.Code != forgeapi.CodeStrategyRequired || fe.Kind != forgeapi.KindNotMergeable {
 				t.Errorf("MergePR at the default intent on %s = (%q, %v), want (%q, %v)", tc.product, fe.Code, fe.Kind, forgeapi.CodeStrategyRequired, forgeapi.KindNotMergeable)
 			}
-			reads := max(tc.reads, 1)
-			if len(arrived) != reads || slices.ContainsFunc(arrived, func(s sent) bool { return s.method != "GET" }) {
-				t.Errorf("MergePR at the default intent on %s sent %v, want %d read(s) and no write", tc.product, arrived, reads)
+			if len(arrived) != 1 || arrived[0].method != "GET" {
+				t.Errorf("MergePR at the default intent on %s sent %v, want the record read alone and no write", tc.product, arrived)
 			}
 			for _, name := range tc.names {
 				if !strings.Contains(fe.Message, name) {

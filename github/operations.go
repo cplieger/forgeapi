@@ -1134,13 +1134,12 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 	if err := forgeapi.ValidateRef(req.HeadSHA); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
-	var held *restPull
-	method, err := c.mergeMethod(ctx, repo, pr, req, &held)
+	method, err := c.mergeMethod(ctx, repo, req)
 	if err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
 	if req.AutoMerge {
-		return c.autoMerge(ctx, repo, pr, req.HeadSHA, method, &held)
+		return c.autoMerge(ctx, repo, pr, req.HeadSHA, method)
 	}
 	return c.mergeNow(ctx, repo, pr, req.HeadSHA, method)
 }
@@ -1151,10 +1150,11 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 var mergeableNow = []string{"clean", "has_hooks", "unstable"}
 
 // autoMerge is a merge asked to wait for its requirements. The pull request's own
-// record decides between merging now and arming.
-func (c *Client) autoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, head, method string, held **restPull) (forgeapi.MergeOutcome, error) {
-	record, err := c.pullRecord(ctx, repo, pr, held)
-	if err != nil {
+// record decides between merging now and arming, read where the merge is addressed, so
+// a repository that answers from another address is the stale refusal a write gets.
+func (c *Client) autoMerge(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, head, method string) (forgeapi.MergeOutcome, error) {
+	var record restPull
+	if _, err := c.readRepoJSON(ctx, opMergePR, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
 	if slices.Contains(mergeableNow, record.MergeableState) {
@@ -1241,7 +1241,7 @@ func (c *Client) inFlight(ctx context.Context, resp *transport.Response, answer 
 // REPOSITORY has disabled leaves the process and comes back as the forge's own refusal
 // mapped to the same code, because it is one cause a consumer branches on once. The
 // default intent is [Client.allowedMethod]'s.
-func (c *Client) mergeMethod(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest, held **restPull) (string, error) {
+func (c *Client) mergeMethod(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.MergeRequest) (string, error) {
 	switch {
 	case req.Strategy != "":
 		if !slices.Contains(mergeMethods, req.Strategy) {
@@ -1254,30 +1254,16 @@ func (c *Client) mergeMethod(ctx context.Context, repo forgeapi.RepoRef, pr forg
 	case req.Intent == forgeapi.IntentNoSquash:
 		return memberMerge, nil
 	}
-	return c.allowedMethod(ctx, repo, pr, held)
-}
-
-// pullRecord is the pull request's REST record, read where the merge is addressed so
-// a repository that answers from another address is the stale refusal a write gets,
-// and read once per merge: held is the record an earlier step of the merge read.
-func (c *Client) pullRecord(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, held **restPull) (*restPull, error) {
-	if *held == nil {
-		var record restPull
-		if _, err := c.readRepoJSON(ctx, opMergePR, repoRoute(repo, "/pulls/"+strconv.Itoa(pr.Number)), nil, &record); err != nil {
-			return nil, err
-		}
-		*held = &record
-	}
-	return *held, nil
+	return c.allowedMethod(ctx, repo)
 }
 
 // allowedMethod is [forgeapi.IntentDefault] here. This product configures no
 // repository-wide default method, only allowed ones, and its merge route and arm
 // default an omitted method to MERGE, whatever the repository allows
 // (https://docs.github.com/en/graphql/reference/input-objects#mergepullrequestinput).
-// So the method sent is the one the repository's record allows, else the one the base
-// branch's rules leave, and a merge left none or several is refused before any write.
-func (c *Client) allowedMethod(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, held **restPull) (string, error) {
+// So the method sent is the one the repository's record allows, and a record allowing
+// several or naming none is refused before any write.
+func (c *Client) allowedMethod(ctx context.Context, repo forgeapi.RepoRef) (string, error) {
 	var record restRepo
 	resp, err := c.readRepoJSON(ctx, opMergePR, repoRoute(repo, ""), nil, &record)
 	if err != nil {
@@ -1287,102 +1273,12 @@ func (c *Client) allowedMethod(ctx context.Context, repo forgeapi.RepoRef, pr fo
 	if len(allowed) == 1 {
 		return allowed[0], nil
 	}
-	method, why, resp, err := c.branchMethod(ctx, repo, pr, held, allowed, resp)
-	if err != nil || method != "" {
-		return method, err
-	}
 	message := "the repository record names no allowed merge method"
 	if len(allowed) > 0 {
 		message = "the repository allows the merge methods " + strings.Join(allowed, ", ") + " and configures no default among them"
 	}
 	return "", c.core.Fail(ctx, opMergePR, transport.REST(http.MethodGet), resp, forgeapi.CodeStrategyRequired,
-		forgeapi.KindNotMergeable, message+", and "+why+", so a merge at the default intent names its strategy")
-}
-
-// rulesPage is the page the branch rules read asks for, this product's maximum: a rule
-// past it is not read, and a queue it hides leaves the merge refused, never guessed.
-const rulesPage = 100
-
-// noOneMethod is why a merge is refused where the base branch's rules settle nothing.
-const noOneMethod = "the base branch's rules name no one merge method this family can send"
-
-// branchMethod is the one merge method the base branch's rules leave a merge whose
-// record allows allowed (every method where it names none), else empty with why. The
-// rules route is read because the GraphQL queue configuration answers null to a
-// credential that does not administer the repository.
-func (c *Client) branchMethod(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, held **restPull, allowed []string, last *transport.Response) (method, why string, _ *transport.Response, _ error) {
-	record, err := c.pullRecord(ctx, repo, pr, held)
-	if err != nil || record.Base == nil || record.Base.Ref == "" {
-		return "", noOneMethod, last, err
-	}
-	var rules []restBranchRule
-	resp, err := c.readRepoJSON(ctx, opMergePR, repoRoute(repo, "/rules/branches/"+record.Base.Ref),
-		url.Values{"per_page": {strconv.Itoa(rulesPage)}}, &rules)
-	if err != nil {
-		return "", "", resp, err
-	}
-	if queued, ok := c.queueMethod(rules); ok {
-		return queued, noOneMethod, resp, nil
-	}
-	if len(allowed) == 0 {
-		allowed = mergeMethods
-	}
-	left, narrowed := c.ruleAllowed(rules, allowed)
-	switch {
-	case !narrowed:
-		return "", noOneMethod, resp, nil
-	case len(left) == 1:
-		return left[0], "", resp, nil
-	case len(left) == 0:
-		return "", "the base branch's rules allow none of the merge methods " + strings.Join(allowed, ", "), resp, nil
-	}
-	return "", "the base branch's rules allow the merge methods " + strings.Join(left, ", "), resp, nil
-}
-
-// queueMethod is the merge method of the base branch's merge queue, which merges every
-// pull request into that branch whatever method is sent
-// (https://docs.github.com/en/graphql/reference/input-objects#mergepullrequestinput);
-// ok is false where no rule is a queue. Queues that disagree, or a method this family
-// does not spell, name no method.
-func (c *Client) queueMethod(rules []restBranchRule) (method string, ok bool) {
-	for _, rule := range rules {
-		if rule.Type != "merge_queue" || rule.Parameters == nil {
-			continue
-		}
-		named := strings.ToLower(rule.Parameters.MergeMethod)
-		if !slices.Contains(mergeMethods, named) {
-			c.unmapped("merge queue method", rule.Parameters.MergeMethod)
-			return "", true
-		}
-		if method != "" && method != named {
-			return "", true
-		}
-		method = named
-	}
-	return method, method != ""
-}
-
-// ruleAllowed is allowed narrowed by every pull_request rule's allowed_merge_methods
-// (https://docs.github.com/en/rest/repos/rules), in allowed's order; narrowed is false
-// where no rule carries the key. A method this family does not spell is dropped.
-func (c *Client) ruleAllowed(rules []restBranchRule, allowed []string) (left []string, narrowed bool) {
-	left = slices.Clone(allowed)
-	for _, rule := range rules {
-		if rule.Type != "pull_request" || rule.Parameters == nil || rule.Parameters.AllowedMergeMethods == nil {
-			continue
-		}
-		narrowed = true
-		named := make([]string, 0, len(rule.Parameters.AllowedMergeMethods))
-		for _, m := range rule.Parameters.AllowedMergeMethods {
-			if lower := strings.ToLower(m); slices.Contains(mergeMethods, lower) {
-				named = append(named, lower)
-				continue
-			}
-			c.unmapped("branch rule merge method", m)
-		}
-		left = slices.DeleteFunc(left, func(m string) bool { return !slices.Contains(named, m) })
-	}
-	return left, narrowed
+		forgeapi.KindNotMergeable, message+", so a merge at the default intent names its strategy")
 }
 
 // handleOf is the handle this product minted for a pending merge, empty where the
