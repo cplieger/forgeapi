@@ -257,17 +257,11 @@ var issueMine = document{
 }
 
 // commitRollup is the commit's own rollup document, whose caller is
-// [Client.CommitStatus]. It is a document rather than the REST pair because it is the
-// only source on this product that tells an empty fold from a passing one: measured on
-// a commit with no CI at all, the REST combined status answers a state of pending with
-// an empty statuses array, byte-identical to what an Actions-only repository with
-// twenty-one green checks answers, while the rollup here is NULL.
-//
-// It resolves the commit by EXPRESSION rather than by object id, because the published
-// operation takes a REF: a branch name is what a caller reading a repository view has,
-// and the id-typed variable refuses one outright, which the live lane caught as a
-// document refused for its variable's type and a connection degraded to REST for the
-// rest of its life. The expression form takes a SHA too, so nothing is lost.
+// [Client.CommitStatus]: one read for the union the REST pair reads in two. It
+// resolves the commit by EXPRESSION rather than by object id, because the published
+// operation takes a REF and the id-typed variable refuses a branch name outright,
+// which the live lane caught as a refused document degrading the connection to REST
+// for good. The expression form takes a SHA too.
 var commitRollup = document{
 	name: "CommitRollup",
 	text: `query CommitRollup($owner: String!, $name: String!, $ref: String!, $checksAfter: String) {` + rateLimitSelection + `
@@ -432,8 +426,9 @@ type placement struct {
 	// refused holds the row indices whose check rollup the product refused to the
 	// credential; on a read of one node the only index is zero.
 	refused map[int]bool
-	// rollup reports another error under the node's check rollup.
-	rollup bool
+	// cut holds the row indices with another error under their check rollup; on a
+	// read of one node the only index is zero.
+	cut map[int]bool
 	// other reports an error anywhere else, which leaves unnamed what it nulled.
 	other bool
 }
@@ -454,7 +449,10 @@ func (r *docResult) placed(prefix []string, rows bool, present func(int) bool) p
 			}
 			out.refused[row] = true
 		case rollup:
-			out.rollup = true
+			if out.cut == nil {
+				out.cut = map[int]bool{}
+			}
+			out.cut[row] = true
 		default:
 			out.other = true
 		}
@@ -464,7 +462,7 @@ func (r *docResult) placed(prefix []string, rows bool, present func(int) bool) p
 
 // unplaced reports an error no row's own marker names, which leaves its page or its
 // read partial.
-func (p *placement) unplaced() bool { return p.rollup || p.other }
+func (p *placement) unplaced() bool { return len(p.cut) > 0 || p.other }
 
 // whole reports a placement of no error at all.
 func (p *placement) whole() bool { return len(p.refused) == 0 && !p.unplaced() }
@@ -477,7 +475,12 @@ func (p *placement) add(q placement) {
 		}
 		p.refused[i] = true
 	}
-	p.rollup = p.rollup || q.rollup
+	for i := range q.cut {
+		if p.cut == nil {
+			p.cut = map[int]bool{}
+		}
+		p.cut[i] = true
+	}
 	p.other = p.other || q.other
 }
 

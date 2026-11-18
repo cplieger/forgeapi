@@ -243,8 +243,9 @@ type RepoAffordances struct { //nolint:govet // fieldalignment: field order here
 // CheckState is the folded CI verdict for one commit.
 type CheckState int
 
-// The CheckState members. Each has a count of its own in ActionState, because
-// the fold is policy and a consumer may want to parameterize it.
+// The CheckState members. Each but CheckNone has a count of its own in
+// ActionState, because the fold is policy and a consumer may want to
+// parameterize it; CheckNone is the fold over no check, so every count is zero.
 const (
 	// CheckUnknown is the zero value: no check state was read, which includes
 	// the case where a paginated status endpoint was truncated.
@@ -263,12 +264,17 @@ const (
 	// is unreachable through one product's rollup field and only visible per
 	// check run, which is why a document selects the runs.
 	CheckNeutral
+	// CheckNone means the checks were read and the commit carries none: no CI
+	// reported on it at all. It is answered only where the read proves that
+	// absence, and a read that cannot tell it from a verdict nobody read
+	// answers CheckUnknown.
+	CheckNone
 )
 
 // String returns the member's wire spelling: "unknown", "passing", "failing",
-// "pending" or "neutral".
+// "pending", "neutral" or "none".
 func (c CheckState) String() string {
-	return nameOf([]string{nameUnknown, "passing", "failing", "pending", "neutral"}, c)
+	return nameOf([]string{nameUnknown, "passing", "failing", "pending", "neutral", nameNone}, c)
 }
 
 var _ fmt.Stringer = CheckState(0)
@@ -311,7 +317,7 @@ const (
 // disable Merge on every mergeable pull request.
 func (m MergeBlockReason) String() string {
 	return nameOf([]string{
-		nameUnknown, "none", "draft", "conflicts",
+		nameUnknown, nameNone, "draft", "conflicts",
 		"checks_failing", "checks_running", "behind", "blocked",
 	}, m)
 }
@@ -349,7 +355,7 @@ const (
 // "unmergeable" or "locked".
 func (q QueueState) String() string {
 	return nameOf([]string{
-		nameUnknown, "none", "queued", "awaiting_checks",
+		nameUnknown, nameNone, "queued", "awaiting_checks",
 		"mergeable", "unmergeable", "locked",
 	}, q)
 }

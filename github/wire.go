@@ -982,27 +982,28 @@ func (f *fold) add(state forgeapi.CheckState, n int) {
 	f.total += n
 }
 
-// foldRollup folds one rollup's contexts connection.
-//
-// The counts come from the connection's own per-state ARRAYS where it carries them,
-// because those describe the WHOLE collection: measured byte-identical across three
-// pages of a 446-context collection and summing to its total on every row of a list,
-// which is what makes a bounded fold exact on this product and leaves the bound
-// truncating the check NAMES rather than the verdict. Where the connection
-// carries no counts the fold is over the nodes held, which is the whole collection
-// exactly when the connection reports no next page.
-//
-// A null rollup is nothing to fold, and it is the one source on this product that
-// tells a commit with no CI from a commit whose checks all passed: measured, the REST
-// combined status answers the two identically.
-func (c *Client) foldRollup(rollup *docRollup) fold {
+// foldRollup folds one head commit's rollup. The counts come from the connection's
+// per-state arrays where it carries them, which describe the WHOLE collection
+// (measured byte-identical across three pages of 446 contexts), so a bounded fold
+// truncates the names rather than the verdict; otherwise it folds the nodes held.
+// A null rollup on an answered commit is [forgeapi.CheckNone]; an unanswered commit
+// is a verdict nobody read. A caller holding an envelope error under the rollup
+// clears the fold, since that error nulls the rollup too.
+func (c *Client) foldRollup(commit *docCommit) fold {
 	const field = "checks (document)"
 	var out fold
-	if rollup == nil || rollup.Contexts == nil {
+	switch {
+	case commit == nil:
+		out.state = forgeapi.CheckUnknown
+		return out
+	case commit.StatusCheckRollup == nil:
+		out.state = forgeapi.CheckNone
+		return out
+	case commit.StatusCheckRollup.Contexts == nil:
 		out.state = forgeapi.CheckUnknown
 		return out
 	}
-	ctxs := rollup.Contexts
+	ctxs := commit.StatusCheckRollup.Contexts
 	for i := range ctxs.Nodes {
 		out.contexts = append(out.contexts, c.normalizeDocContext(field, &ctxs.Nodes[i]))
 	}
@@ -1071,7 +1072,7 @@ func isCheckRun(node *docContext) bool { return node.Typename == "CheckRun" }
 // verdict at all.
 func (c *Client) normalizeDocPull(n *docPullRequest, repo forgeapi.RepoRef) forgeapi.PullRequest {
 	author, kind := c.docAuthor(n.Author)
-	checks := c.foldRollup(rollupOf(n))
+	checks := c.foldRollup(headOf(n))
 	action := forgeapi.ActionState{
 		Mergeable:      c.mergeableSupport("mergeable (document)", n.Mergeable),
 		Checks:         checks.state,
@@ -1116,17 +1117,13 @@ func (c *Client) normalizeDocPull(n *docPullRequest, repo forgeapi.RepoRef) forg
 	return out
 }
 
-// rollupOf is the status rollup of a pull request's head commit, which the documents
-// select as the last commit of the pull request's own commit connection.
-func rollupOf(n *docPullRequest) *docRollup {
+// headOf is a pull request's head commit, which the documents select as the last
+// commit of the pull request's own commit connection, nil where none was answered.
+func headOf(n *docPullRequest) *docCommit {
 	if n.Commits == nil || len(n.Commits.Nodes) == 0 {
 		return nil
 	}
-	commit := n.Commits.Nodes[len(n.Commits.Nodes)-1].Commit
-	if commit == nil {
-		return nil
-	}
-	return commit.StatusCheckRollup
+	return n.Commits.Nodes[len(n.Commits.Nodes)-1].Commit
 }
 
 // normalizeRESTPull is the pull-request normalizer for the REST arm, which serves the

@@ -669,8 +669,13 @@ func (c *Client) normalizeDocPull(n *docMergeRequest, repo forgeapi.RepoRef) for
 		author, kind = n.Author.Username, accountKind(n.Author.Bot)
 	}
 	checks := forgeapi.CheckUnknown
-	if n.HeadPipeline != nil {
+	switch {
+	case n.HeadPipeline != nil:
 		checks = c.checkState("pipeline status (document)", n.HeadPipeline.Status)
+	case n.DiffHeadSHA != "":
+		// headPipeline is diff_head_pipeline, null where no pipeline ran on the head
+		// (app/models/merge_request.rb); a caller holding a partial answer clears it.
+		checks = forgeapi.CheckNone
 	}
 	approvals, changes := approvalCount(n.ApprovedBy), changesRequested(n.Reviewers)
 	partial := c.labelCut(n.Labels)

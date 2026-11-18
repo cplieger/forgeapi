@@ -38,6 +38,29 @@ func TestProduct_String_renders_each_product(t *testing.T) {
 	}
 }
 
+func TestCheckState_String_renders_each_member(t *testing.T) {
+	for state, want := range map[forgeapi.CheckState]string{
+		forgeapi.CheckUnknown:  "unknown",
+		forgeapi.CheckPassing:  "passing",
+		forgeapi.CheckFailing:  "failing",
+		forgeapi.CheckPending:  "pending",
+		forgeapi.CheckNeutral:  "neutral",
+		forgeapi.CheckNone:     "none",
+		forgeapi.CheckState(9): "unknown",
+	} {
+		if got := state.String(); got != want {
+			t.Errorf("CheckState(%d).String() = %q, want %q", int(state), got, want)
+		}
+	}
+}
+
+func TestCheckNone_is_appended_after_every_earlier_member(t *testing.T) {
+	if forgeapi.CheckNone != forgeapi.CheckNeutral+1 {
+		t.Errorf("CheckNone = %d, want %d: appended after neutral, so every earlier member keeps its value",
+			int(forgeapi.CheckNone), int(forgeapi.CheckNeutral+1))
+	}
+}
+
 func TestRunTrigger_String_renders_each_trigger(t *testing.T) {
 	for trigger, want := range map[forgeapi.RunTrigger]string{
 		forgeapi.TriggerUnknown:     "unknown",

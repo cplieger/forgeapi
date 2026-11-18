@@ -797,10 +797,11 @@ func TestATruncatedFoldedStatusSaysSo(t *testing.T) {
 	}
 }
 
-// TestAnEmptyDegradedFoldIsUnknownRatherThanGreen holds the same hazard's own worst
-// case: both sources empty is a commit with nothing to fold, so the answer is the unknown
-// member over a zero total rather than the combined status's own word for it.
-func TestAnEmptyDegradedFoldIsUnknownRatherThanGreen(t *testing.T) {
+// TestAnEmptyDegradedFoldIsNoneRatherThanGreen holds the same hazard's own worst
+// case: both sources read and both empty is a commit that carries no check, so the
+// answer is the none member over a zero total rather than the combined status's own
+// word for it.
+func TestAnEmptyDegradedFoldIsNoneRatherThanGreen(t *testing.T) {
 	recorded := readCaptures(t)
 	h := newHarness(t, map[string]string{
 		documentRoute:  `{"errors":[{"type":"UNPROCESSABLE","message":"refused"}],"data":null}`,
@@ -814,8 +815,8 @@ func TestAnEmptyDegradedFoldIsUnknownRatherThanGreen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommitStatus = %v, want the empty answer", err)
 	}
-	if got.State != forgeapi.CheckUnknown || got.Total != 0 {
-		t.Errorf("CommitStatus over nothing = %v at total %d, want %v at 0", got.State, got.Total, forgeapi.CheckUnknown)
+	if got.State != forgeapi.CheckNone || got.Total != 0 {
+		t.Errorf("CommitStatus over nothing = %v at total %d, want %v at 0", got.State, got.Total, forgeapi.CheckNone)
 	}
 	if got.Partial != nil {
 		t.Errorf("CommitStatus over nothing = partial %v, want none: nothing was truncated", got.Partial)

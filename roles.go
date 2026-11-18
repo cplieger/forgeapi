@@ -146,7 +146,7 @@ type PullRequests interface {
 	//	Items[].Ref                                                differs in spelling  iid, sigil "!"
 	//	Items[].Labels[].Name                                      differs in spelling  labels.nodes[].title, not name
 	//	Items[].Labels[].Color                                     differs in spelling  color string, leading #
-	//	Items[].Action.Checks                                      differs in shape     headPipeline.status scalar, no fold; CheckUnknown where the documents are refused, since a REST list row carries no head_pipeline
+	//	Items[].Action.Checks                                      differs in shape     headPipeline.status scalar, no fold; CheckNone where headPipeline is null on a row with a diffHeadSha, GitLab's GraphQL answers an object the credential may not read as null, so a credential that may not view the project's pipelines reads CheckNone too; CheckUnknown on a document answered in part, and where the documents are refused, since a REST list row carries no head_pipeline and so cannot tell no pipeline from one unread
 	//	Items[].Action.ChecksPassing .. ChecksTotal                cannot supply        absent: one scalar status
 	//	Items[].Action.QueueState                                  cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
 	//	Items[].Action.QueuePosition                               cannot supply        no position; train index null
@@ -322,7 +322,7 @@ type PullRequests interface {
 	//	Ref                                                differs in spelling  iid, sigil "!"
 	//	Labels[].Name                                      differs in spelling  labels.nodes[].title, not name
 	//	Labels[].Color                                     differs in spelling  color string, leading #
-	//	Action.Checks                                      differs in shape     headPipeline.status scalar, no fold; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a merged results one included, since that payload carries no source_sha to match it by
+	//	Action.Checks                                      differs in shape     headPipeline.status scalar, no fold; CheckNone where headPipeline is null on a merge request with a diffHeadSha, GitLab's GraphQL answers an object the credential may not read as null, so a credential that may not view the project's pipelines reads CheckNone too; CheckUnknown on a document answered in part; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a null head_pipeline and a merged results one included, since the record leaves the key out for a credential that may not view pipelines and that payload carries no source_sha to match it by
 	//	Action.ChecksPassing .. ChecksTotal                cannot supply        absent: one scalar status
 	//	Action.QueueState                                  cannot supply        QueueNone always: every field that would name a train carries a deprecation reason, so no document can select one
 	//	Action.QueuePosition                               cannot supply        no position; train index null
@@ -440,7 +440,7 @@ type PullRequests interface {
 	//	Labels[].Color                        cannot supply        no colour on the answer: its labels arrive as name strings
 	//	Labels[].Description                  cannot supply        no description on the answer: its labels arrive as name strings
 	//	Action.Mergeable                      cannot supply        merge_status checking and detailed_merge_status preparing on the answer before the asynchronous check settles, can_be_merged and not_open after it, unknown on both: the REST arm reads no mergeable flag
-	//	Action.Checks                         differs in shape     head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran
+	//	Action.Checks                         differs in shape     head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown, since the answer leaves the key out for a credential that may not view pipelines; the head pipeline's own status, running here, where one ran
 	//	Action.ChecksPassing .. ChecksTotal   cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
 	//	Action.QueueState                     cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
 	//	Action.QueuePosition                  cannot supply        QueuePositionUnknown: no merge-train key on the answer
@@ -492,7 +492,7 @@ type PullRequests interface {
 	//	Labels[].Color                        cannot supply        no colour on the answer: its labels arrive as name strings
 	//	Labels[].Description                  cannot supply        no description on the answer: its labels arrive as name strings
 	//	Action.Mergeable                      cannot supply        merge_status unchecked and detailed_merge_status unchecked on the answer, unknown until the asynchronous check settles
-	//	Action.Checks                         differs in shape     head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran
+	//	Action.Checks                         differs in shape     head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown, since the answer leaves the key out for a credential that may not view pipelines; the head pipeline's own status, running here, where one ran
 	//	Action.ChecksPassing .. ChecksTotal   cannot supply        zero: the answer's head_pipeline is one scalar status, null or set, with nothing under it to count
 	//	Action.QueueState                     cannot supply        QueueNone always: no merge-train key among the 61 keys the answer carries
 	//	Action.QueuePosition                  cannot supply        QueuePositionUnknown: no merge-train key on the answer
@@ -750,10 +750,10 @@ type Checks interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   the CommitRollup document, the one source on this product that tells a commit with no CI from a commit whose checks all passed, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers, 0 to 5 requests
-	//	GitLab   GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, 1 to 3 requests
-	//	Gitea    GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 4 requests
-	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 4 requests
+	//	GitHub   the CommitRollup document, whose null rollup is a commit with no CI and CheckNone, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs, both empty CheckNone, where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers, 0 to 5 requests
+	//	GitLab   GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, whose empty answer is CheckNone: the route refuses a credential that may not read commit statuses rather than answering it empty (lib/api/commit_statuses.rb), 1 to 3 requests
+	//	Gitea    GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, whose first page holding no status at total_count 0 is CheckNone, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 4 requests
+	//	Forgejo  GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, whose first page holding no status at total_count 0 is CheckNone, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor, 1 to 4 requests
 	//
 	// GitHub departs from the normalized contract:
 	//

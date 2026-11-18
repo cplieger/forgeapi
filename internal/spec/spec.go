@@ -429,7 +429,7 @@ var Table = []Entry{
 			{
 				Field: "Items[].Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold; CheckUnknown where the documents are refused, since a REST list row carries no head_pipeline",
+				Says:  "headPipeline.status scalar, no fold; CheckNone where headPipeline is null on a row with a diffHeadSha, GitLab's GraphQL answers an object the credential may not read as null, so a credential that may not view the project's pipelines reads CheckNone too; CheckUnknown on a document answered in part, and where the documents are refused, since a REST list row carries no head_pipeline and so cannot tell no pipeline from one unread",
 			},
 			{
 				Field: "Items[].Action.ChecksPassing .. ChecksTotal",
@@ -927,7 +927,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "headPipeline.status scalar, no fold; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a merged results one included, since that payload carries no source_sha to match it by",
+				Says:  "headPipeline.status scalar, no fold; CheckNone where headPipeline is null on a merge request with a diffHeadSha, GitLab's GraphQL answers an object the credential may not read as null, so a credential that may not view the project's pipelines reads CheckNone too; CheckUnknown on a document answered in part; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a null head_pipeline and a merged results one included, since the record leaves the key out for a credential that may not view pipelines and that payload carries no source_sha to match it by",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -1346,7 +1346,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran",
+				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown, since the answer leaves the key out for a credential that may not view pipelines; the head pipeline's own status, running here, where one ran",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -1527,7 +1527,7 @@ var Table = []Entry{
 			{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
-				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown; the head pipeline's own status, running here, where one ran",
+				Says:  "head_pipeline.status scalar on the answer, no fold, read only where that pipeline's sha is the head's: null where the head ran no pipeline, and a stored pipeline on another commit, a merged results one included, since the payload carries no source_sha to match it by, both CheckUnknown, since the answer leaves the key out for a credential that may not view pipelines; the head pipeline's own status, running here, where one ran",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -2027,7 +2027,7 @@ var Table = []Entry{
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   GitHub,
-		Exercises: "the CommitRollup document, the one source on this product that tells a commit with no CI from a commit whose checks all passed, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers",
+		Exercises: "the CommitRollup document, whose null rollup is a commit with no CI and CheckNone, or GET /repos/{owner}/{repo}/commits/{ref}/status beside GET /repos/{owner}/{repo}/commits/{ref}/check-runs, both empty CheckNone, where this connection has already discovered the documents refused, plus one read against the id-addressed location to resolve the successor where those reads answered from another address, which both of them meet and one read answers",
 		Requests:  Requests{Min: 0, Max: 5},
 		Support:   Supported,
 		Departures: []Departure{
@@ -2041,7 +2041,7 @@ var Table = []Entry{
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects/{id}/repository/commits/{sha}/statuses",
+		Exercises: "GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, whose empty answer is CheckNone: the route refuses a credential that may not read commit statuses rather than answering it empty (lib/api/commit_statuses.rb)",
 		Requests:  Requests{Min: 1, Max: 3},
 		Support:   Supported,
 		Departures: []Departure{
@@ -2055,14 +2055,14 @@ var Table = []Entry{
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   Gitea,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, whose first page holding no status at total_count 0 is CheckNone, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
 		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 	},
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   Forgejo,
-		Exercises: "GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
+		Exercises: "GET /api/v1/repos/{owner}/{repo}/commits/{ref}/status, whose first page holding no status at total_count 0 is CheckNone, and where the repository moved, the one 301 its old path answers, whose Location names the successor, every later request of the call addressing that successor",
 		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 	},

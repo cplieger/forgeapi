@@ -303,6 +303,9 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 	for i := range rows.Nodes {
 		item := c.normalizeDocPull(&rows.Nodes[i], documentRepo(payload.Project, repo))
 		blankUnread(&item, &set)
+		if result.Partial {
+			unreadNone(&item)
+		}
 		items = append(items, item)
 	}
 	page := forgeapi.Page[forgeapi.PullRequest]{Items: items}
@@ -313,6 +316,15 @@ func (c *Client) ListPRs(ctx context.Context, repo forgeapi.RepoRef, opts ...for
 		page.Partial = c.partial(forgeapi.PartialGraphQLPartial, len(items))
 	}
 	return page, nil
+}
+
+// unreadNone answers unknown a verdict of no check on an answer that came beside
+// envelope errors: they name no row, and an error nulls the head pipeline the
+// verdict was read from.
+func unreadNone(item *forgeapi.PullRequest) {
+	if item.Action.Checks == forgeapi.CheckNone {
+		item.Action.Checks = forgeapi.CheckUnknown
+	}
 }
 
 // blankUnread answers unknown what a listed row was asked not to read: its merge
@@ -580,8 +592,13 @@ func (c *Client) readMergeRequest(ctx context.Context, op string, repo forgeapi.
 			forgeapi.CodePRNotFound, forgeapi.KindNotFound,
 			"the document resolved the project and no merge request with that number")
 	}
+	item := c.normalizeDocPull(node, documentRepo(payload.Project, repo))
+	if result.Partial {
+		unreadNone(&item)
+		item.Partial = c.partial(forgeapi.PartialGraphQLPartial, 0)
+	}
 	return mergeRequestRead{
-		item:   c.normalizeDocPull(node, documentRepo(payload.Project, repo)),
+		item:   item,
 		merged: c.mergedSupport("merge request state (document)", node.State, node.MergedAt),
 	}, nil
 }
@@ -1193,7 +1210,8 @@ func latestPerContext(rows []restStatus) []restStatus {
 
 // count is the fold itself, over the rows the caller holds. The verdict is the
 // worst state present, because one failing check makes the collection failing
-// however many passed.
+// however many passed, and [forgeapi.CheckNone] over no row: the caller read the
+// whole collection, and a caller that stopped short overwrites it.
 //
 // The UNKNOWN arm sits second, above pending, passing and neutral, which is what
 // the totality discipline asks of a fold: a value this family's table did not map is
@@ -1226,7 +1244,7 @@ func count(out *forgeapi.CommitChecks) {
 	case out.Neutral > 0:
 		out.State = forgeapi.CheckNeutral
 	default:
-		out.State = forgeapi.CheckUnknown
+		out.State = forgeapi.CheckNone
 	}
 }
 
