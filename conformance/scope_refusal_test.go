@@ -42,18 +42,26 @@ func refusedOn(t *testing.T, p spec.Product, method string, status int, body str
 // refusedOnWith is refusedOn whose answer also carries header.
 func refusedOnWith(t *testing.T, p spec.Product, method string, status int, header http.Header, body string) error {
 	t.Helper()
+	_, err := answeredOn(t, p, method, status, header, body)
+	return err
+}
+
+// answeredOn drives method on p against a server answering every request with
+// status, header and body, and answers the client it ran on and its error.
+func answeredOn(t *testing.T, p spec.Product, method string, status int, header http.Header, body string, opts ...forgeapi.Option) (any, error) {
+	t.Helper()
 	op, ok := operationFor(method)
 	if !ok {
 		t.Fatalf("Setup: the contract declares no case for %s", method)
 	}
 	srv, _ := newAnswerServerWith(t, requireEntry(t, p, method), status, header, body)
 	conn := forgeapi.Connection{WebBaseURL: srv.URL, APIBaseURL: srv.URL + apiRoot(p)}
-	client, err := guard(func() (any, error) { return newClient(p, conn, offlineOptions(srv)...) })
+	client, err := guard(func() (any, error) { return newClient(p, conn, append(offlineOptions(srv), opts...)...) })
 	if err != nil {
 		t.Fatalf("Setup: %s client: %v", p, err)
 	}
 	_, err = guard(func() (any, error) { return op.invoke(t.Context(), client, canonicalSubject(p)) })
-	return err
+	return client, err
 }
 
 // forgeErrorOf is the *forgeapi.Error an operation answered, failing the case for

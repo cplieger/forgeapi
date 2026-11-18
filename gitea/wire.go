@@ -780,14 +780,16 @@ func statusState(s *wireStatus) string {
 // rather than branching on the product marker, because reading a signal where it
 // exists is cheaper and more honest than a second product branch: one of the two
 // products sends a structured rate-limit header on every response and the other
-// sends nothing at all.
+// sends nothing at all. ok is false where the header states no remaining figure;
+// the reset is the window the header states whatever ok reads, the zero time
+// where it states none.
 func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 	raw := header.Get("RateLimit")
 	if raw == "" {
 		return 0, time.Time{}, false
 	}
 	var seconds int
-	var haveRemaining bool
+	var haveRemaining, haveWindow bool
 	for part := range strings.SplitSeq(raw, ";") {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok {
@@ -801,13 +803,13 @@ func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
 		case "r":
 			remaining, haveRemaining = n, true
 		case "t":
-			seconds = n
+			seconds, haveWindow = n, true
 		}
 	}
-	if !haveRemaining {
-		return 0, time.Time{}, false
+	if haveWindow {
+		reset = time.Now().Add(time.Duration(seconds) * time.Second)
 	}
-	return remaining, time.Now().Add(time.Duration(seconds) * time.Second), true
+	return remaining, reset, haveRemaining
 }
 
 // runEvents maps a run's trigger onto the trigger, totally over the union of both
@@ -896,7 +898,7 @@ func statusMapped(op string, status int, header http.Header) (kind forgeapi.Erro
 	case http.StatusUnauthorized:
 		return forgeapi.KindUnauthorized, ""
 	case http.StatusForbidden:
-		if header.Get("RateLimit-Remaining") == "0" {
+		if remaining, _, ok := signal(header); ok && remaining <= 0 {
 			return forgeapi.KindRateLimited, ""
 		}
 		return forgeapi.KindForbidden, ""

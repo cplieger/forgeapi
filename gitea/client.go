@@ -1,6 +1,7 @@
 package gitea
 
 import (
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -23,6 +24,8 @@ type Client struct {
 	caps    *forgeapi.ConnectionCaps
 	swagger *swaggerDoc
 	foldAt  map[string]int
+	// versionAnswer is the answer the version body came on.
+	versionAnswer *transport.Response
 	// resolve is the connection's one resolution owner, a capacity-one channel
 	// so a caller waits for it under its own context (takeResolve). It is held
 	// across the version, swagger and settings READS, not only across the cache
@@ -35,8 +38,7 @@ type Client struct {
 	namedBy string
 	// rerunVerb is the last path segment of the re-run route the swagger
 	// declares, held with caps; empty where it declares none.
-	rerunVerb     string
-	versionStatus int
+	rerunVerb string
 	// maxItems is the instance's stated max_response_items, zero while the
 	// connection holds none.
 	maxItems int
@@ -83,7 +85,7 @@ func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error) {
 // time itself. Every consumer reaches this through New, on the real clock.
 func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Option) (*Client, error) {
 	settings := forgeapi.Resolve(opts...)
-	core, err := transport.Open(conn, &settings, transport.Options{
+	core, err := transport.Open(conn, &settings, &transport.Options{
 		Mapper:        mapper,
 		Signal:        signal,
 		DeriveAPIBase: deriveAPIBase,
@@ -146,23 +148,20 @@ func (c *Client) foldPosition(list string) (int, bool) {
 	return at, ok
 }
 
-// BudgetState implements [forgeapi.Governor]. It is the read-only view of this
-// connection's governor, and which of its four fields carry a read value depends
-// on the PRODUCT rather than the family. Forgejo sends a structured `ratelimit`
-// header on every response, so Remaining is its `r` parameter and Reset its `t`
-// seconds; Gitea sends no rate-limit header at all, so there Remaining is
-// [forgeapi.BudgetRemainingUnknown] and Reset is the zero time. On both, LastCost
-// is this library's own per-call price, one per request, with the folded status
-// read as the expensive member, since neither product prices a call on the wire.
-// The governor's reserve has a signal to hold against on Forgejo and is inert on
-// Gitea; what bounds this family's folded-status work on either is the two
-// per-interval caps [forgeapi.Budget] publishes, counted by this client over a
-// rolling window of its own, and [forgeapi.BudgetState.RotationCursor] is where
-// that rotation stands.
-//
-// It performs no I/O and is safe to call concurrently with operations; it is
-// never written from outside. See [forgeapi.BudgetState].
+// BudgetState implements [forgeapi.Governor]; what it reads depends on the
+// PRODUCT. Forgejo's structured `ratelimit` header gives Remaining (its `r`),
+// Reset (its `t` seconds) and [forgeapi.BudgetState.Pools] as that one figure
+// under no name; Gitea sends none, so Remaining is [forgeapi.BudgetRemainingUnknown],
+// Reset the zero time and Pools empty, and the reserve is inert there. LastCost
+// is this library's own price, one per request, since neither product prices a
+// call; the folded-status work is bounded by [forgeapi.Budget]'s per-interval caps,
+// whose rotation [forgeapi.BudgetState.RotationCursor] holds. No I/O; safe concurrently.
 func (c *Client) BudgetState() forgeapi.BudgetState { return c.core.BudgetState() }
+
+// PoolOf is the pool the operation req belongs to last drew on, which on this
+// family is always empty, the whole service: Forgejo reports its one figure under
+// no pool name and Gitea reports none. No I/O; safe concurrently.
+func (c *Client) PoolOf(req *http.Request) string { return c.core.PoolOf(req) }
 
 // Close implements [forgeapi.Core]: it releases this client's pool, the idle
 // connections of the transport the library built for the connection, at once,

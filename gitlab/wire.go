@@ -1059,20 +1059,6 @@ func pushSupport(p *restPermissions) forgeapi.Support {
 	return supportOf(level >= developerAccess)
 }
 
-// pool names the throttle a response reports and its whole limit, the most
-// restrictive one the request counted against
-// (https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/#response-headers):
-// on gitlab.com throttle_authenticated_api, 2000 a minute, for most routes and
-// burst_traffic_per_user_free_plan, 100 a minute, for the project listings
-// (measured 2026-10-20). [parentPool] is what else such a request spent.
-func pool(header http.Header) (name string, limit int) {
-	limit, err := strconv.Atoi(strings.TrimSpace(header.Get("RateLimit-Limit")))
-	if err != nil || limit < 0 {
-		limit = 0
-	}
-	return strings.TrimSpace(header.Get("RateLimit-Name")), limit
-}
-
 // apiThrottleApart is the authenticated API throttle and the throttles
 // throttle_authenticated_api? excludes from it
 // (https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/rack_attack/request.rb).
@@ -1092,25 +1078,6 @@ func parentPool(name string) string {
 		return ""
 	}
 	return "throttle_authenticated_api"
-}
-
-// signal reads this product's budget signal, which rides EVERY response including a
-// refusal: the remaining figure for the credential's own quota and the instant that
-// window renews, as epoch seconds.
-func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
-	raw := header.Get("RateLimit-Remaining")
-	if raw == "" {
-		return 0, time.Time{}, false
-	}
-	remaining, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil {
-		return 0, time.Time{}, false
-	}
-	seconds, err := strconv.ParseInt(strings.TrimSpace(header.Get("RateLimit-Reset")), 10, 64)
-	if err != nil {
-		return remaining, time.Time{}, true
-	}
-	return remaining, time.Unix(seconds, 0).UTC(), true
 }
 
 // conflictCodes is the code a 409 carries per operation, empty elsewhere: on the merge

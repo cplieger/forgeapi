@@ -1,10 +1,12 @@
 package github
 
 import (
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/githublimit"
 	"github.com/cplieger/forgeapi/v3/internal/githubroot"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
@@ -80,14 +82,15 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 	// version pin, which is a fact the connection learns and not one the mapping
 	// can read off a response.
 	client := &Client{}
-	core, err := transport.Open(conn, &settings, transport.Options{
-		Mapper:         client.mapper,
-		Signal:         signal,
-		Pool:           pool,
-		DeriveAPIBase:  githubroot.API,
-		Clock:          clock,
-		Family:         forgeapi.FamilyGitHub,
-		MessageClasses: messageClasses,
+	core, err := transport.Open(conn, &settings, &transport.Options{
+		Mapper:        client.mapper,
+		Limit:         limit,
+		Signal:        githublimit.Signal,
+		Pool:          githublimit.Pool,
+		DeriveAPIBase: githubroot.API,
+		Clock:         clock,
+		Family:        forgeapi.FamilyGitHub,
+		MessageClass:  messageClass,
 		// A not-modified answer to an authorized conditional request bills
 		// nothing here, which the transport checks per request:
 		// spec.Revalidations owns the fact.
@@ -176,15 +179,22 @@ func (c *Client) isDegraded() bool {
 	return c.degraded
 }
 
-// BudgetState implements [forgeapi.Governor]: the USER's primary quota, shared by
-// every application acting for the credential, as the last response's rate-limit
-// headers report it, never the rate-limit endpoint, measured to report a full pool
-// while documents drew it down. REST and documents draw separate windows, and the
-// one reported is the last call's. [forgeapi.BudgetState.LastCost] is what the call
-// spent: 1 per REST attempt, 0 for an authorized conditional 304, replaced by a
-// document's reported cost where a document is its last exchange. No I/O; safe
-// concurrently. RotationCursor is empty: a list's folded verdict is exact here.
+// BudgetState implements [forgeapi.Governor]: the USER's quota, shared by every
+// application acting for the credential, as the last answer's rate-limit headers
+// report it, never the rate-limit endpoint (measured to report a full pool while
+// documents drew it down). Remaining is the last call's pool; Pools holds each by
+// its X-RateLimit-Resource (core, graphql, search). LastCost is 1 per REST attempt,
+// 0 for an authorized conditional 304, a document's reported cost where a document
+// is its last exchange. RotationCursor is empty: a list's folded verdict is exact
+// here. No I/O; safe concurrently.
 func (c *Client) BudgetState() forgeapi.BudgetState { return c.core.BudgetState() }
+
+// PoolOf is the X-RateLimit-Resource (core, graphql, search) the operation req
+// belongs to last drew on, for a request this client built as its hooks and wire
+// transport receive it: empty before that operation's first answer named a pool,
+// and for any other request. The governor holds the operation's next read against
+// this pool. No I/O; safe concurrently.
+func (c *Client) PoolOf(req *http.Request) string { return c.core.PoolOf(req) }
 
 // Close implements [forgeapi.Core]: it releases this client's pool, the idle
 // connections of the transport the library built for the connection, at once,

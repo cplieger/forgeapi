@@ -239,13 +239,13 @@ type docError struct {
 }
 
 // docResult is what one document execution answered beside the decoded payload: the
-// complexity the endpoint charged, the real status, and whether data arrived BESIDE
-// errors, which is the partial success the caller marks rather than truncating or
-// failing. Refusal is the first envelope error's message, quoted, on that answer.
+// complexity the endpoint charged, the answer it came on, and whether data arrived
+// BESIDE errors, which is the partial success the caller marks rather than truncating
+// or failing. Refusal is the first envelope error's message, quoted, on that answer.
 type docResult struct {
+	Answer  *transport.Response
 	Refusal string
 	Cost    int
-	Status  int
 	Partial bool
 }
 
@@ -275,11 +275,11 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 		Document:    true,
 		AbsoluteURL: target,
 	})
-	body, status := responseBody(resp)
+	body := responseBody(resp)
 	var env envelope
 	decodeErr := transport.Decode(body, &env)
 	decoded := decodeErr == nil
-	if err != nil && (!decoded || len(env.Errors) == 0) {
+	if err != nil && (!decoded || len(env.Errors) == 0 || transport.IsThrottled(err)) {
 		c.degradeOn(err)
 		return docResult{}, err
 	}
@@ -292,7 +292,7 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	if err := transport.Decode(env.Data, out); err != nil {
 		return docResult{}, c.core.FailDecode(ctx, op, transport.Document(http.MethodPost), resp, err)
 	}
-	result := docResult{Cost: complexityOf(out), Status: status, Partial: len(env.Errors) > 0}
+	result := docResult{Answer: resp, Cost: complexityOf(out), Partial: len(env.Errors) > 0}
 	if result.Cost > 0 {
 		c.core.Price(result.Cost)
 	}
@@ -303,13 +303,13 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 	return result, nil
 }
 
-// responseBody is the bytes and the status of a response that may have come back
-// with a failure, because the envelope is read on that arm too.
-func responseBody(resp *transport.Response) (body []byte, status int) {
+// responseBody is the bytes of a response that may have come back with a failure,
+// because the envelope is read on that arm too.
+func responseBody(resp *transport.Response) []byte {
 	if resp == nil {
-		return nil, 0
+		return nil
 	}
-	return resp.Body, resp.Status
+	return resp.Body
 }
 
 // refuseDocument is the refusal an envelope carrying errors and no data earns.
@@ -326,7 +326,7 @@ func responseBody(resp *transport.Response) (body []byte, status int) {
 func (c *Client) refuseDocument(ctx context.Context, op string, doc document, resp *transport.Response, errs []docError) *forgeapi.Error {
 	c.countEnvelope(errs)
 	c.markDegraded()
-	return c.core.Fail(ctx, op, transport.Document(http.MethodPost), "", forgeapi.KindUpstream, resp.Status,
+	return c.core.Fail(ctx, op, transport.Document(http.MethodPost), resp, "", forgeapi.KindUpstream,
 		resp.Quote("the "+doc.name+" document was refused: "+errs[0].Message))
 }
 
@@ -348,12 +348,13 @@ func (c *Client) countEnvelope(errs []docError) {
 }
 
 // degradeOn marks the connection degraded where the failure was the document's own.
-// A credential failure, a throttle, an absence and a transport failure are not: a
-// connection that meets one of those would answer the document on the next call, and
-// degrading it would spend the rest of its life on REST for a reason that has passed.
+// A credential failure, a throttle, an absence, a transport failure and a refused
+// attempt are not: a connection that meets one of those would answer the document on
+// the next call, and degrading it would spend the rest of its life on REST for a
+// reason that has passed.
 func (c *Client) degradeOn(err error) {
 	var fe *forgeapi.Error
-	if !asForgeError(err, &fe) {
+	if !asForgeError(err, &fe) || transport.IsRefused(err) {
 		return
 	}
 	switch fe.Kind {

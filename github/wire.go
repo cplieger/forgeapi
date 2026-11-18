@@ -4,11 +4,11 @@ import (
 	"errors"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/githublimit"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
@@ -1505,42 +1505,6 @@ func pushSupport(p *restPermissions) forgeapi.Support {
 	return supportOf(p.Push)
 }
 
-// pool names the rate-limit pool a response drew on, core for REST and graphql for
-// documents among them, and that pool's whole limit
-// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit).
-func pool(header http.Header) (name string, limit int) {
-	limit, err := strconv.Atoi(strings.TrimSpace(header.Get("X-RateLimit-Limit")))
-	if err != nil || limit < 0 {
-		limit = 0
-	}
-	return strings.TrimSpace(header.Get("X-RateLimit-Resource")), limit
-}
-
-// signal reads this product's budget signal, which rides EVERY response on both
-// surfaces: the remaining units for the credential's own quota and the instant that
-// window renews, as epoch seconds.
-//
-// It is read from the response just received and NEVER from the rate-limit endpoint,
-// which is measured to report a full pool with a fresh window while the same
-// credential's document budget was demonstrably drawn down. The two
-// surfaces draw on separate windows, so what is reported is the window the last call
-// drew on, which is the one the header names.
-func signal(header http.Header) (remaining int, reset time.Time, ok bool) {
-	raw := header.Get("X-RateLimit-Remaining")
-	if raw == "" {
-		return 0, time.Time{}, false
-	}
-	remaining, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil {
-		return 0, time.Time{}, false
-	}
-	seconds, err := strconv.ParseInt(strings.TrimSpace(header.Get("X-RateLimit-Reset")), 10, 64)
-	if err != nil {
-		return remaining, time.Time{}, true
-	}
-	return remaining, time.Unix(seconds, 0).UTC(), true
-}
-
 // mapper is this connection's error mapping: the mapping below, over the one fact
 // about the connection that a response cannot carry, which is whether the request
 // that was refused carried the version pin.
@@ -1554,16 +1518,29 @@ func (c *Client) mapper(op string, status int, header http.Header, member transp
 // "Resource not accessible").
 const classResourceRefused = "resource_refused"
 
-// messageClasses is the refusal messages this family's mapping reads, by class.
+// messageClasses is the refusal messages this family's mapping reads whole, by
+// class.
 var messageClasses = map[string]string{
 	"Resource not accessible by integration":           classResourceRefused,
 	"Resource not accessible by personal access token": classResourceRefused,
 }
 
-// mapping is this family's error mapping: the cells a header decides
-// ([headerMapped]) first, then [statusMapped]'s. class is the refusal message's
-// class from [messageClasses]; pinned says the refused request carried the version
-// pin, the only state in which a 400 can be that version's fault.
+// messageClass is the class of a refusal's message member, [messageClasses]'s.
+func messageClass(message string) string { return messageClasses[message] }
+
+// limit is this family's rate-limit reading of a refusal, [githublimit.Read]'s,
+// which the transport takes before the mapping so nobody is told to fix a token
+// while the quota refills.
+func limit(status int, header http.Header, body []byte) (limited, secondary bool) {
+	l := githublimit.Read(status, header, body)
+	return l.Limited, l.Secondary
+}
+
+// mapping is this family's error mapping of a refusal that is no rate limit
+// ([limit]): the cells a header decides ([headerMapped]), then [statusMapped]'s.
+// class is the refusal message's class from [messageClass]; pinned says the
+// refused request carried the version pin, the only state in which a 400 can be
+// that version's fault.
 func mapping(op string, status int, header http.Header, class string, pinned bool) transport.Verdict {
 	if mapped, ok := headerMapped(op, status, header, class, pinned); ok {
 		return mapped
@@ -1608,23 +1585,17 @@ func statusMapped(op string, status int) (kind forgeapi.ErrorKind, code string) 
 			return forgeapi.KindNotMergeable, forgeapi.CodeBranchCannotMerge
 		}
 		return forgeapi.KindUpstream, forgeapi.CodeValidation
-	case http.StatusTooManyRequests:
-		return forgeapi.KindRateLimited, ""
 	}
 	return forgeapi.KindUpstream, ""
 }
 
-// headerMapped is the part of the mapping a header decides. A 403 whose headers say
-// throttle is a rate limit, so nobody is told to fix a token while the quota refills.
-// Any other 403 that names what the credential lacks ([lacking]) is the scope
+// headerMapped is the part of the mapping a header decides. A 403 that names what the credential lacks ([lacking]) is the scope
 // refusal, except the merge's, whose 403 is the merge permission a role grants. A 400
 // to a pinned request not answered under the pin is that version out of the
 // instance's reach; an unpinned request's echo names the instance's default, so it is
 // read only when pinned.
 func headerMapped(op string, status int, header http.Header, class string, pinned bool) (transport.Verdict, bool) {
 	switch {
-	case status == http.StatusForbidden && throttled(header):
-		return transport.Verdict{Kind: forgeapi.KindRateLimited}, true
 	case status == http.StatusForbidden && op != opMergePR:
 		if needs := lacking(header, class); needs != "" {
 			return transport.Verdict{Kind: forgeapi.KindForbidden, Code: forgeapi.CodeScopeInsufficient, Needs: needs}, true
@@ -1671,19 +1642,6 @@ const (
 	headerAcceptedScopes      = "X-Accepted-Oauth-Scopes"
 	headerScopes              = "X-Oauth-Scopes"
 )
-
-// throttled reports whether a refusal is this product's quota rather than a
-// permission: the remaining-budget header at zero, the primary or a secondary limit
-// spent, or a Retry-After header, which a secondary limit sends while that header may
-// still report budget left
-// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
-func throttled(header http.Header) bool {
-	if header.Get("Retry-After") != "" {
-		return true
-	}
-	remaining, _, ok := signal(header)
-	return ok && remaining <= 0
-}
 
 // retiredVersion reports whether a response did NOT answer under the version this
 // family pins, which is what a version outside an instance's reach looks like on the

@@ -24,11 +24,11 @@ func itoa(n int) string { return string(rune('0' + n)) }
 
 const forkLookup = "GET /api/v4/projects/9"
 
-// TestListMyPRsResolvesEachDistinctForkOnce holds ADR-0104's price on this product's
-// cross-repository list: a row whose source id equals its target id names the row's
-// own project and buys nothing, every row from one fork shares one GET
-// /api/v4/projects/:id, and a deleted fork's null id buys nothing and answers the zero
-// reference.
+// TestListMyPRsResolvesEachDistinctForkOnce holds the price of SourceRepo, the
+// repository each head lives in, on this product's cross-repository list: a row
+// whose source id equals its target id names the row's own project and buys nothing,
+// every row from one fork shares one GET /api/v4/projects/:id, and a deleted fork's
+// null id buys nothing and answers the zero reference.
 func TestListMyPRsResolvesEachDistinctForkOnce(t *testing.T) {
 	rows := "[" + strings.Join([]string{sourceRow(1, "7"), sourceRow(2, "9"), sourceRow(3, "9"), sourceRow(4, "null")}, ",") + "]"
 	h := newHarness(t, map[string]string{
@@ -170,10 +170,11 @@ func TestAForkLookupTheOperationsBoundEndsMarksItsRowBudget(t *testing.T) {
 	}
 }
 
-// TestEveryOtherAnswerNamesTheSourceFromItsOwnFields holds the rest of ADR-0104 on
-// this product: the documents name the head's project by path, null on a deleted
-// fork, and a REST answer other than the cross-repository list names the addressed
-// project where the two ids are equal and the zero reference for a fork.
+// TestEveryOtherAnswerNamesTheSourceFromItsOwnFields holds the rest of SourceRepo,
+// the repository the head lives in, on this product: the documents name the head's
+// project by path, null on a deleted fork, and a REST answer other than the
+// cross-repository list names the addressed project where the two ids are equal and
+// the zero reference for a fork.
 func TestEveryOtherAnswerNamesTheSourceFromItsOwnFields(t *testing.T) {
 	c := newHarness(t, nil).client
 	repo := testRef()

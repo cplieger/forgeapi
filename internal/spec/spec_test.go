@@ -27,6 +27,35 @@ func TestEveryProductStatesItsConditionalReads(t *testing.T) {
 	}
 }
 
+func TestEveryProductStatesEachRateLimitFigure(t *testing.T) {
+	for _, product := range Products {
+		for _, field := range FigureFields {
+			var rows []Figure
+			for _, f := range Figures {
+				if f.Product == product && f.Field == field {
+					rows = append(rows, f)
+				}
+			}
+			if len(rows) != 1 {
+				t.Errorf("Figures holds %d %s row(s) for %s, want 1", len(rows), field, product)
+				continue
+			}
+			f := rows[0]
+			if f.Says == "" || (f.Header == "") != (f.Value == "") || (f.Param != "" && f.Header == "") {
+				t.Errorf("the %s %s row = %+v, want Says stated, a Value exactly where a Header is, and a Param only on a Header", product, field, f)
+			}
+			if (f.Relative && field != "Reset") || (f.Message != "" && field != "Secondary") {
+				t.Errorf("the %s %s row = %+v, want Relative only on Reset and Message only on Secondary", product, field, f)
+			}
+		}
+	}
+	for _, f := range Figures {
+		if !slices.Contains(FigureFields[:], f.Field) {
+			t.Errorf("Figures holds a %s row for %q, want one of %v", f.Product, f.Field, FigureFields)
+		}
+	}
+}
+
 // officialSources are the documentation sites and source repositories of the four
 // products and of the components their answers come from; a cache fact cites one.
 var officialSources = []string{

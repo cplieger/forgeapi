@@ -199,14 +199,14 @@ func (c *Client) resolveVersion(ctx context.Context) error {
 	}
 	version := strings.TrimSpace(body.Version)
 	if !numericRelease(version) {
-		return c.undetected(ctx, op, resp.Status,
+		return c.undetected(ctx, op, resp,
 			"the version body carries no release this family's products report")
 	}
 	c.mu.Lock()
 	c.version = version
 	c.forgejo = strings.Contains(version, forgejoMarker)
 	c.namedBy = namingHeader(resp.Header)
-	c.versionStatus = resp.Status
+	c.versionAnswer = resp
 	c.mu.Unlock()
 	return nil
 }
@@ -263,11 +263,11 @@ func numericRelease(version string) bool {
 // the version string alone.
 func (c *Client) establishFamily(ctx context.Context, doc *swaggerDoc) error {
 	c.mu.Lock()
-	forgejo, namedBy, status := c.forgejo, c.namedBy, c.versionStatus
+	forgejo, namedBy, answer := c.forgejo, c.namedBy, c.versionAnswer
 	c.mu.Unlock()
 	product := witnessedProduct(namedBy, forgejo, doc)
 	if product == forgeapi.ProductUnknown {
-		return c.undetected(ctx, "ConnectionCaps", status,
+		return c.undetected(ctx, "ConnectionCaps", answer,
 			"no second witness of this family on the instance: the version body carries neither product's own marker, no version header names one, and no API document of this family's own names the product")
 	}
 	c.mu.Lock()
@@ -296,11 +296,11 @@ func witnessedProduct(namedBy string, marker bool, doc *swaggerDoc) forgeapi.Pro
 }
 
 // undetected is the refusal a connection whose family cannot be established answers.
-// It carries the real status, because the request WAS made and identified no family,
-// which is what separates this code from the refusals reached before anything was
-// sent.
-func (c *Client) undetected(ctx context.Context, op string, status int, message string) *forgeapi.Error {
-	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeFamilyUndetected, forgeapi.KindUnknown, status, message)
+// It carries the real status of answer, because the request WAS made and identified no
+// family, which is what separates this code from the refusals reached before anything
+// was sent.
+func (c *Client) undetected(ctx context.Context, op string, answer *transport.Response, message string) *forgeapi.Error {
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), answer, forgeapi.CodeFamilyUndetected, forgeapi.KindUnknown, message)
 }
 
 // resolveSwagger fetches the document once per connection and caches it, never per
@@ -407,7 +407,7 @@ func (c *Client) resolveMaximum(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	if body.MaxResponseItems <= 0 {
-		return 0, c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeValidation, forgeapi.KindUpstream, resp.Status,
+		return 0, c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, forgeapi.CodeValidation, forgeapi.KindUpstream,
 			"the API settings answered no positive max_response_items, which is what says whether a short page is the end of a list")
 	}
 	c.mu.Lock()

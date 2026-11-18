@@ -612,3 +612,155 @@ func TestANarrowPoolUnderTheReserveIsNotHeldBesideItsParent(t *testing.T) {
 		t.Errorf("the instance saw %d ListRepos request(s), want 5", got)
 	}
 }
+
+// TestTheDeferralNamesThePoolItHeld holds the governor's deferral to the
+// figures of the pool it held the read against: Error.Pool, Error.Remaining
+// and Error.Reset are that pool's, as BudgetState then reports them.
+func TestTheDeferralNamesThePoolItHeld(t *testing.T) {
+	clock := newFakeClock()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	defer srv.Close()
+	reset := clock.read().Add(time.Minute)
+	opts := testOptions()
+	opts.Clock = clock.read
+	opts.Signal = func(http.Header) (int, time.Time, bool) { return 1, reset, true }
+	opts.Pool = func(http.Header) (string, int) { return "core", 5000 }
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts, forgeapi.WithMutationReserve(1))
+	read := func() error {
+		_, err := c.Do(Call(t.Context(), "ListPRs"), &Request{Op: "ListPRs", Method: http.MethodGet, Path: "/x"})
+		return err
+	}
+	if err := read(); err != nil {
+		t.Fatalf("Setup: the first read = %v, want nil", err)
+	}
+	var fe *forgeapi.Error
+	if err := read(); !IsDeferred(err) || !asError(err, &fe) {
+		t.Fatalf("a read at the reserve = %v, want the deferral", err)
+	}
+	if fe.Pool != "core" || fe.Remaining != 1 || !fe.Reset.Equal(reset) {
+		t.Errorf("the deferral = pool %q, remaining %d, reset %v, want pool core, remaining 1, reset %v", fe.Pool, fe.Remaining, fe.Reset, reset)
+	}
+}
+
+// TestBudgetStatePools holds BudgetState.Pools to each pool's own last answer:
+// two pools answered keep their figures apart, in name order, and the slice a
+// caller holds is its own copy.
+func TestBudgetStatePools(t *testing.T) {
+	clock := newFakeClock()
+	coreReset, searchReset := clock.read().Add(time.Hour), clock.read().Add(time.Minute)
+	answers := map[string][4]string{
+		"/core":   {"core", "4990", "5000", strconv.FormatInt(coreReset.Unix(), 10)},
+		"/search": {"search", "29", "30", strconv.FormatInt(searchReset.Unix(), 10)},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a := answers[strings.TrimPrefix(r.URL.Path, "/api/v1")]
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Pool", a[0])
+		w.Header().Set("X-Remaining", a[1])
+		w.Header().Set("X-Limit", a[2])
+		w.Header().Set("X-Reset", a[3])
+		if _, err := io.WriteString(w, `{}`); err != nil {
+			t.Errorf("Setup: writing the answer: %v", err)
+		}
+	}))
+	defer srv.Close()
+	opts := testOptions()
+	opts.Clock = clock.read
+	opts.Signal = func(h http.Header) (int, time.Time, bool) {
+		remaining, _ := strconv.Atoi(h.Get("X-Remaining"))
+		seconds, _ := strconv.ParseInt(h.Get("X-Reset"), 10, 64)
+		return remaining, time.Unix(seconds, 0).UTC(), true
+	}
+	opts.Pool = func(h http.Header) (string, int) {
+		limit, _ := strconv.Atoi(h.Get("X-Limit"))
+		return h.Get("X-Pool"), limit
+	}
+	c := openConnWith(t, forgeapi.Connection{WebBaseURL: srv.URL}, opts)
+	if got := c.BudgetState().Pools; len(got) != 0 {
+		t.Errorf("Pools before any answer = %v, want none", got)
+	}
+	if err := readOp(t, c, "Search", "/search"); err != nil {
+		t.Fatalf("Setup: Search = %v, want nil", err)
+	}
+	if err := readOp(t, c, "ListPRs", "/core"); err != nil {
+		t.Fatalf("Setup: ListPRs = %v, want nil", err)
+	}
+	got := c.BudgetState().Pools
+	want := []forgeapi.PoolState{
+		{Name: "core", Remaining: 4990, Limit: 5000, Reset: coreReset.UTC()},
+		{Name: "search", Remaining: 29, Limit: 30, Reset: searchReset.UTC()},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Pools = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].Name != want[i].Name || got[i].Remaining != want[i].Remaining ||
+			got[i].Limit != want[i].Limit || !got[i].Reset.Equal(want[i].Reset) {
+			t.Errorf("Pools[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	got[0].Remaining = 0
+	if again := c.BudgetState().Pools; again[0].Remaining != 4990 {
+		t.Errorf("Pools[0].Remaining after the caller wrote its copy = %d, want 4990", again[0].Remaining)
+	}
+	clock.advance(time.Minute)
+	if renewed := c.BudgetState().Pools; len(renewed) != 1 || renewed[0].Name != "core" {
+		t.Errorf("Pools once search's window renewed = %v, want core alone: only an answer reports the renewed figure", renewed)
+	}
+}
+
+// TestPoolOfAfterAnswer holds PoolOf to the pool a request's operation last drew
+// on: empty while its first attempt is in flight, the answer's pool after, kept
+// per operation, and empty for a request this library never built.
+func TestPoolOfAfterAnswer(t *testing.T) {
+	var c *Conn
+	var attempts []*http.Request
+	var during []string
+	observe := forgeapi.WithAttemptObserver(func(next http.RoundTripper) http.RoundTripper {
+		return roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			attempts = append(attempts, r)
+			during = append(during, c.PoolOf(r))
+			return next.RoundTrip(r)
+		})
+	})
+	c, _ = pooledConn(t, map[string][3]string{
+		"/main":   {"main", "1990", "2000"},
+		"/narrow": {"narrow", "500", "1000"},
+	}, 10, nil, observe)
+	if err := readOp(t, c, "ListPRs", "/main"); err != nil {
+		t.Fatalf("Setup: ListPRs = %v, want nil", err)
+	}
+	if err := readOp(t, c, "ListRepos", "/narrow"); err != nil {
+		t.Fatalf("Setup: ListRepos = %v, want nil", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("Setup: %d attempts reached the hook, want 2", len(attempts))
+	}
+	if during[0] != "" {
+		t.Errorf("PoolOf(ListPRs) before its first answer = %q, want empty", during[0])
+	}
+	if during[1] != "" {
+		t.Errorf("PoolOf(ListRepos) before its first answer = %q, want empty: another operation's answer places only that operation", during[1])
+	}
+	if got := c.PoolOf(attempts[0]); got != "main" {
+		t.Errorf("PoolOf(ListPRs) after its answer = %q, want main", got)
+	}
+	if got := c.PoolOf(attempts[1]); got != "narrow" {
+		t.Errorf("PoolOf(ListRepos) after its answer = %q, want narrow", got)
+	}
+	foreign, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://forge.example/main", http.NoBody)
+	if err != nil {
+		t.Fatalf("Setup: NewRequest = %v", err)
+	}
+	if got := c.PoolOf(foreign); got != "" {
+		t.Errorf("PoolOf(a request this library never built) = %q, want empty", got)
+	}
+	if got := c.PoolOf(nil); got != "" {
+		t.Errorf("PoolOf(nil) = %q, want empty", got)
+	}
+}

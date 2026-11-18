@@ -26,8 +26,8 @@ var documents = []document{prList, prRead, prMine, issueMine, commitRollup, enab
 
 // TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn holds every query
 // document to selecting the budget object, where this product reports what the
-// document cost. A mutation is the schema's exception (ADR-0103): the Mutation root
-// has no rate-limit field, so the arm document selects no budget object.
+// document cost. A mutation is the schema's exception: the Mutation root has no
+// rate-limit field, so the arm document selects no budget object.
 func TestEveryDocumentThisFamilyShipsSelectsWhatItIsPricedOn(t *testing.T) {
 	if len(documents) != 7 {
 		t.Errorf("this family ships %d document(s), want 7: the pull-request list, the single read, the two cross-repository searches, the commit rollup, the auto-merge arm and the owner's repositories", len(documents))

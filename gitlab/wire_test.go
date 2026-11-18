@@ -692,30 +692,6 @@ func TestEveryWireTypeDecodesTheBytesTheProductSent(t *testing.T) {
 	}
 }
 
-// TestTheBudgetSignalIsReadFromEveryResponse holds the signal this product rides on
-// every response, a refusal included, which is what makes the governor's figure
-// cost-free: a reserve held against a figure nobody read would read as full at the
-// moment the quota was gone.
-func TestTheBudgetSignalIsReadFromEveryResponse(t *testing.T) {
-	header := http.Header{
-		"Ratelimit-Remaining": {"4990"},
-		"Ratelimit-Reset":     {"1790000000"},
-	}
-	remaining, reset, ok := signal(header)
-	if !ok {
-		t.Fatal("signal read no figure from the headers this product sends on every response")
-	}
-	if remaining != 4990 {
-		t.Errorf("signal = remaining %d, want 4990", remaining)
-	}
-	if reset.IsZero() || reset.Unix() != 1790000000 {
-		t.Errorf("signal = reset %v, want the epoch second the header carries", reset)
-	}
-	if _, _, ok := signal(http.Header{}); ok {
-		t.Error("signal read a figure from a response carrying no header, so a connection that has seen no answer would publish a budget it never read")
-	}
-}
-
 // TestThePushAffordanceReadsTheRoleInteger holds the one affordance this product
 // answers as a NUMBER rather than a flag, which is why it is three-valued: a record
 // carrying no permissions at all is a caller who cannot see the grant, not one who
@@ -816,18 +792,6 @@ func TestTheAuthorKindIsTheUsersBotFlag(t *testing.T) {
 	}
 	if !strings.Contains(mergeRequestFields("", ""), "author { username bot }") {
 		t.Error("the merge-request documents select no author bot flag, so their rows answer AccountKindUnknown")
-	}
-}
-
-// TestThePoolIsTheThrottleTheResponseNames holds the pool reader to the two headers
-// this product sends on every response, the throttle's name and its whole limit.
-func TestThePoolIsTheThrottleTheResponseNames(t *testing.T) {
-	name, limit := pool(http.Header{"Ratelimit-Name": {"burst_traffic_per_user_free_plan"}, "Ratelimit-Limit": {"100"}})
-	if name != "burst_traffic_per_user_free_plan" || limit != 100 {
-		t.Errorf("pool(the recorded headers) = %q, %d, want burst_traffic_per_user_free_plan and 100", name, limit)
-	}
-	if name, limit := pool(http.Header{}); name != "" || limit != 0 {
-		t.Errorf("pool(no headers) = %q, %d, want the unnamed pool with no limit", name, limit)
 	}
 }
 

@@ -69,10 +69,10 @@ type AppSource struct {
 	instance string
 	renew    renewal
 	conn     forgeapi.Connection
-	wait     hold
 	install  Installation
 	grant    AppGrant
 	set      forgeapi.Settings
+	wait     hold
 	mu       sync.Mutex
 	id       int64
 	endedN   int
@@ -96,12 +96,18 @@ type issued struct {
 }
 
 // hold is the instant before which the source sends nothing, and what a call
-// answers until then. Its kind and message are read only while no terminal
-// refusal stands, which answers in their place.
+// answers until then. Its kind, message and figures are read only while no
+// terminal refusal stands, which answers in their place; the figures are the
+// limiting answer's own, zero on a hold no limit set.
 type hold struct {
-	until   time.Time
-	message string
-	kind    forgeapi.ErrorKind
+	until     time.Time
+	reset     time.Time
+	message   string
+	pool      string
+	kind      forgeapi.ErrorKind
+	remaining int
+	status    int
+	secondary bool
 }
 
 // NewAppSource builds the source for the installation cfg names, signing with
@@ -275,7 +281,7 @@ func (s *AppSource) Discard(token string) (retry bool) {
 		return true
 	}
 	if age < earlyRejection {
-		s.extend(hold{
+		s.extend(&hold{
 			until: now.Add(doubling(reprobeFirst, reprobeCeiling, s.discardN)), kind: forgeapi.KindUnauthorized,
 			message: "GitHub rejected a token minted under a minute earlier, so the App source waits before minting again",
 		})
@@ -324,8 +330,8 @@ func (s *AppSource) known() (int64, bool) {
 }
 
 // held is what a call answers before the instant the source sends nothing
-// until: the terminal refusal while one stands, else the hold's own failure
-// with the time left. It answers nil once that instant has passed.
+// until: the terminal refusal while one stands, else the hold's own failure,
+// with its answer's status and figures and the time left. It answers nil once that instant has passed.
 func (s *AppSource) held(op string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -336,17 +342,18 @@ func (s *AppSource) held(op string, now time.Time) error {
 		return copyOf(s.ended)
 	}
 	return &forgeapi.Error{
-		Op: op, Family: forgeapi.FamilyGitHub, Kind: s.wait.kind,
-		Retryable: transport.Retryable(s.wait.kind, 0), Message: s.wait.message,
-		RetryAfter: s.wait.until.Sub(now),
+		Op: op, Family: forgeapi.FamilyGitHub, Status: s.wait.status, Kind: s.wait.kind,
+		Retryable: transport.Retryable(s.wait.kind, s.wait.status), Message: s.wait.message,
+		RetryAfter: s.wait.until.Sub(now), Pool: s.wait.pool, Remaining: s.wait.remaining,
+		Reset: s.wait.reset, Secondary: s.wait.secondary,
 	}
 }
 
 // extend moves the hold to h where h ends later, so no wait shortens another.
 // It runs under s.mu.
-func (s *AppSource) extend(h hold) {
+func (s *AppSource) extend(h *hold) {
 	if h.until.After(s.wait.until) {
-		s.wait = h
+		s.wait = *h
 	}
 }
 
@@ -361,7 +368,7 @@ func (s *AppSource) forget() {
 // open builds one request core for the source's connection, GitHub's by
 // construction.
 func (s *AppSource) open() (*transport.Conn, error) {
-	return transport.Open(&s.conn, &s.set, transport.Options{
+	return transport.Open(&s.conn, &s.set, &transport.Options{
 		Mapper: appMapper, DeriveAPIBase: githubroot.API, Family: forgeapi.FamilyGitHub,
 	})
 }

@@ -1,0 +1,70 @@
+package creds_test
+
+import (
+	"net/http"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/forgeapi/v3/github/githubtest"
+)
+
+// TestReadLimit runs every GitHub REST rate-limit case through the App mint: a
+// limit answers rate-limited with the wait the case's effect names (its
+// Retry-After, else its reset, else the back-off's first minute), any other
+// answer the case's kind, and both carry the figures github.ReadLimit reads.
+func TestReadLimit(t *testing.T) {
+	for i, named := range githubtest.LimitCases(time.Time{}) {
+		if named.Document {
+			continue
+		}
+		t.Run(named.Name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				now := time.Now()
+				c := githubtest.LimitCases(now)[i]
+				g := newFakeGitHub(t, answering(appReply{status: c.Status, header: c.Header, body: string(c.Body)}))
+				s := appSource(t, g, creds.InstallationByID(42))
+				_, err := s.Token(t.Context())
+				fe := forgeError(t, err)
+				if fe.Kind != c.Kind || fe.Status != c.Status {
+					t.Errorf("Token() = kind %v status %d, want %v, %d", fe.Kind, fe.Status, c.Kind, c.Status)
+				}
+				if fe.Pool != c.Read.Pool || fe.Remaining != c.Read.Remaining || !fe.Reset.Equal(c.Read.Reset) || fe.Secondary != c.Read.Secondary {
+					t.Errorf("Token() = pool %q remaining %d reset %v secondary %t, want ReadLimit's %q, %d, %v, %t",
+						fe.Pool, fe.Remaining, fe.Reset, fe.Secondary, c.Read.Pool, c.Read.Remaining, c.Read.Reset, c.Read.Secondary)
+				}
+				if !c.Read.Limited {
+					return
+				}
+				wait := time.Minute
+				switch {
+				case c.Effect.RetryAfter > 0:
+					wait = c.Effect.RetryAfter
+				case !c.Effect.Reset.IsZero():
+					wait = c.Effect.Reset.Sub(now)
+				}
+				if fe.RetryAfter != wait {
+					t.Errorf("Token() = retry after %v, want the effect's %v", fe.RetryAfter, wait)
+				}
+			})
+		})
+	}
+}
+
+// TestErrorRetryAfterUncapped holds the App mint to a Retry-After of 120
+// seconds as a 120 s wait: the figure is GitHub's own, never bounded by a retry
+// loop's cap.
+func TestErrorRetryAfterUncapped(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		header := http.Header{"Retry-After": {"120"}, "X-Ratelimit-Remaining": {"4000"}, "X-Ratelimit-Resource": {"core"}}
+		body := `{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}`
+		g := newFakeGitHub(t, answering(appReply{status: http.StatusForbidden, header: header, body: body}))
+		_, err := appSource(t, g, creds.InstallationByID(42)).Token(t.Context())
+		fe := forgeError(t, err)
+		if fe.Kind != forgeapi.KindRateLimited || fe.RetryAfter != 120*time.Second {
+			t.Errorf("Token() = kind %v retry after %v, want %v, 2m0s", fe.Kind, fe.RetryAfter, forgeapi.KindRateLimited)
+		}
+	})
+}

@@ -43,7 +43,7 @@ func TestMapperAnswersOneCellPerStatus(t *testing.T) {
 		{
 			name:   "403_with_an_exhausted_window_is_a_throttle",
 			status: http.StatusForbidden,
-			header: http.Header{"Ratelimit-Remaining": {"0"}},
+			header: http.Header{"Ratelimit": {`"baseline";r=0;t=60`}},
 			kind:   forgeapi.KindRateLimited,
 		},
 		{
@@ -491,7 +491,7 @@ func TestSignalReadsTheStructuredRateLimitHeader(t *testing.T) {
 		{name: "a_full_header", raw: "r=4990;t=60", remaining: 4990, seconds: 60, ok: true},
 		{name: "remaining_alone", raw: "r=7", remaining: 7, ok: true},
 		{name: "no_header_at_all", raw: ""},
-		{name: "a_header_with_no_remaining", raw: "t=60"},
+		{name: "a_header_with_no_remaining", raw: "t=60", seconds: 60},
 		{name: "a_header_whose_value_is_not_a_number", raw: "r=soon"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -503,11 +503,14 @@ func TestSignalReadsTheStructuredRateLimitHeader(t *testing.T) {
 			if ok != test.ok {
 				t.Fatalf("signal(%q) = ok %t, want %t", test.raw, ok, test.ok)
 			}
-			if !ok {
-				return
-			}
 			if remaining != test.remaining {
 				t.Errorf("signal(%q) = remaining %d, want %d", test.raw, remaining, test.remaining)
+			}
+			if test.seconds == 0 {
+				if !reset.IsZero() {
+					t.Errorf("signal(%q) = reset %v, want the zero time: the header states no window", test.raw, reset)
+				}
+				return
 			}
 			if got := time.Until(reset).Round(time.Second); got != time.Duration(test.seconds)*time.Second {
 				t.Errorf("signal(%q) = reset in %v, want %v", test.raw, got, time.Duration(test.seconds)*time.Second)

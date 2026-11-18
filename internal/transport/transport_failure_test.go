@@ -358,3 +358,36 @@ func TestABodyFailureIsClassifiedApartFromReachability(t *testing.T) {
 		})
 	}
 }
+
+// A refusal whose body was not read still carries its answer's own figures, read off
+// the headers that arrived, so its remaining figure never reads a spent budget it did
+// not state; the endpoint core reads none and states the unknown figure.
+func TestABodyFailureCarriesItsAnswersFigures(t *testing.T) {
+	answering := func(body func() io.ReadCloser) roundTripFunc {
+		return func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusForbidden, Header: http.Header{"Content-Type": {"application/json"}, "X-Remaining": {"4000"}},
+				Body: body(), Request: r,
+			}, nil
+		}
+	}
+	over := func() io.ReadCloser { return io.NopCloser(strings.NewReader(strings.Repeat("a", 17))) }
+	c := openTestConn(t, forgeapi.Connection{WebBaseURL: "http://forge.example"}, forgeapi.WithWireTransport(answering(over)))
+	_, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user", MaxBytes: 16})
+	var fe *forgeapi.Error
+	if !asError(err, &fe) || fe.Status != http.StatusForbidden || fe.Remaining != 4000 || fe.Reset.IsZero() {
+		t.Errorf("a 403 over its bound = %v, want status 403 with the answer's remaining 4000 and its reset", err)
+	}
+	ep, openErr := OpenEndpoint(&forgeapi.Connection{WebBaseURL: "http://forge.example"}, settingsFor(
+		forgeapi.WithWireTransport(answering(func() io.ReadCloser { return &cutBody{} })), forgeapi.WithPlaintextHTTP(true),
+		forgeapi.WithCredentialSource(stubCredential{}), forgeapi.WithLogger(discardLogger()),
+	), forgeapi.FamilyGitHub)
+	if openErr != nil {
+		t.Fatalf("Setup: OpenEndpoint: %v", openErr)
+	}
+	t.Cleanup(ep.Close)
+	_, err = ep.PostForm(t.Context(), "Token", "/login/oauth/access_token", url.Values{"a": {"b"}})
+	if !asError(err, &fe) || fe.Status != http.StatusForbidden || fe.Remaining != forgeapi.BudgetRemainingUnknown {
+		t.Errorf("an OAuth 403 cut short = %v, want status 403 with remaining %d", err, forgeapi.BudgetRemainingUnknown)
+	}
+}

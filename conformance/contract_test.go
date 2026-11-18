@@ -851,7 +851,7 @@ func pullRequestChecks(prefix string, p spec.Product, g forgeapi.PullRequest, st
 		eq(prefix+"Body", g.Body, prBody),
 		eq(prefix+"Author", g.Author, author),
 		eq(prefix+"SourceBranch", g.SourceBranch, sourceBranch),
-		// The fixture's pull request is opened inside its repository (ADR-0104).
+		// The fixture's pull request is opened inside its repository, so its head lives there.
 		eq(prefix+"SourceRepo", g.SourceRepo, repoRef(p)),
 		eq(prefix+"TargetBranch", g.TargetBranch, targetBranch),
 		eq(prefix+"WebURL", g.WebURL, prWebURL),

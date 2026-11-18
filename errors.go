@@ -236,6 +236,13 @@ const (
 	// reaches it.
 	CodeCapabilityUnsupported = "capability_unsupported"
 
+	// CodeAttemptRefused is an attempt the [WithAttemptObserver] hook answered
+	// with an error of its own instead of passing it on: nothing was sent for it,
+	// and it is never retried. [Error.Refusal] holds the hook's error, which
+	// errors.As reaches through the *Error. Kind is [KindUnknown] and Retryable
+	// false, since what the refusal means is the hook's to say.
+	CodeAttemptRefused = "attempt_refused"
+
 	// CodeFamilyUndetected is a connection whose forge family detection could
 	// not establish. It carries the status where one arrived, and
 	// [FamilyUnknown] always. The remedy is a corrected instance URL.
@@ -323,6 +330,7 @@ func Codes() []string {
 		CodeRefInvalid,
 		CodeHeaderReserved,
 		CodeCapabilityUnsupported,
+		CodeAttemptRefused,
 		CodeFamilyUndetected,
 		CodeReconnectRequired,
 		CodeGrantDenied,
@@ -343,8 +351,8 @@ const DiagIDLength = 13
 // Every operation here and in every family package answers nil, a *Error, or
 // context.Canceled or context.DeadlineExceeded unchanged where its context
 // ended, the library's own per-operation deadline included. Recover this type
-// with errors.As on a *Error. It wraps nothing, so no dependency's error type
-// reaches the surface; branch on Code and Kind, never on Message.
+// with errors.As on a *Error. It wraps only [Error.Refusal], never a
+// dependency's error; branch on Code and Kind, never on Message.
 type Error struct { //nolint:govet // fieldalignment: field order here is declared order, which api/forgeapi.txt records
 	// Op is the role method that failed, spelled as the method that names it,
 	// such as "ListPRs" or "MergePR": the eighteen operations, "ConnectionCaps",
@@ -365,8 +373,9 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// [CodeCapabilityUnsupported] sends nothing and still carries the family
 	// detection identified.
 	Family Family
-	// Status is the real HTTP status, and zero exactly where no request was
-	// made. A document error arriving at HTTP 200 keeps the 200.
+	// Status is the real HTTP status of the answer the failure reports, and
+	// zero exactly where it reports none. A document error arriving at HTTP 200
+	// keeps the 200.
 	Status int
 	// Kind is the class of failure.
 	Kind ErrorKind
@@ -382,6 +391,31 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	Message string
 	// RetryAfter is the wait upstream asked for, zero when it named none.
 	RetryAfter time.Duration
+	// Pool is the rate-limit pool the failing answer names, as it names it:
+	// GitHub's X-RateLimit-Resource, GitLab's RateLimit-Name, empty where the
+	// answer names none, as no product of the Gitea family does. A secondary
+	// limit names its pool too; that it holds every pool is [Error.Secondary]'s
+	// to say. The governor's deferral names the pool it held the read against.
+	Pool string
+	// Remaining is the remaining figure of the failing answer's own budget
+	// signal, read as [BudgetState.Remaining] is, on every error carrying a
+	// Status, an OAuth endpoint's included: [BudgetRemainingUnknown] where the
+	// answer carries none. The governor's deferral carries the held pool's. On
+	// any other error it is zero and states nothing.
+	Remaining int
+	// Reset is when the budget window the failing answer reports renews, as
+	// that answer's own reset states it (GitHub's X-RateLimit-Reset, GitLab's
+	// RateLimit-Reset, Forgejo's RateLimit t), whatever Remaining reads: the
+	// zero time where the answer carries none, as Gitea's never does, and where
+	// no answer arrived. The governor's deferral carries the held pool's.
+	Reset time.Time
+	// Secondary reports a GitHub secondary rate limit: a 403 or 429 carrying
+	// Retry-After or GitHub's secondary-limit message, whatever its remaining
+	// figure reads, and a document's errors-only answer at 200 carrying either
+	// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits).
+	// Only the GitHub family sets it. A GitHub limit on a document can arrive
+	// at Status 200, so branch on Kind.
+	Secondary bool
 	// DiagID is a per-failure random identifier, [DiagIDLength] characters,
 	// carried in the user-visible error and in every log line for that
 	// operation; never a session identifier or a lookup key, and not stable
@@ -403,6 +437,10 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// such as a permission or a scope list; empty where its answer names
 	// nothing. It is carried on [CodeScopeInsufficient].
 	Needs string
+	// Refusal is the error a [WithAttemptObserver] hook answered in place of
+	// sending an attempt, carried on [CodeAttemptRefused] and nil everywhere
+	// else. [Error.Unwrap] answers it.
+	Refusal error
 }
 
 // Error renders the operation, code, status and message. The separator after
@@ -426,6 +464,10 @@ func (e *Error) Error() string {
 	}
 	return b.String()
 }
+
+// Unwrap answers [Error.Refusal], so errors.Is and errors.As reach an attempt
+// hook's own error; it is nil on every other code.
+func (e *Error) Unwrap() error { return e.Refusal }
 
 // localError builds a refusal reached before any operation began: no
 // operation, family, status or diagnostic id exists to report.

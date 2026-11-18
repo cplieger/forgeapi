@@ -37,7 +37,7 @@ func OpenEndpoint(conn *forgeapi.Connection, set *forgeapi.Settings, family forg
 	s := *set
 	s.Credential = endpointCredential{}
 	s.ReadCacheBytes = 0
-	return Open(&c, &s, Options{Family: family})
+	return Open(&c, &s, &Options{Family: family})
 }
 
 // PostForm sends one form-encoded POST to path under the web base and answers the
@@ -80,7 +80,7 @@ func (c *Conn) PostForm(ctx context.Context, op, path string, form url.Values) (
 	body, err := httpclient.ReadLimitedBody(resp.Body, maxEndpointBytes)
 	if err != nil {
 		lost := &Response{Header: resp.Header, Status: resp.StatusCode, quote: c.quoter("")}
-		return lost, c.bodyError(ctx, req, resp.StatusCode, err, started)
+		return lost, c.bodyError(ctx, req, lost, err, started)
 	}
 	return &Response{
 		Header: resp.Header, Body: body, Status: resp.StatusCode, quote: c.quoter(""),

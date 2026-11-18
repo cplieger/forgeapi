@@ -46,24 +46,25 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 		return *caps, nil
 	}
 	if c.sawWitness() {
-		c.askVersions(ctx, op)
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return forgeapi.ConnectionCaps{}, ctxErr
+		if err := c.askVersions(ctx, op); err != nil {
+			return forgeapi.ConnectionCaps{}, err
 		}
 		return c.holdCaps(rerunEvidence(forgeapi.EvidenceResponseHeader,
 			"a response on this connection carried "+headerRequestID+", which this product sends on every response including a refusal")), nil
 	}
 	var meta restMeta
-	_, err := c.readJSON(ctx, op, "/meta", nil, &meta)
+	resp, err := c.readJSON(ctx, op, "/meta", nil, &meta)
 	if sentinel := transport.ContextSentinel(err); sentinel != nil {
 		return forgeapi.ConnectionCaps{}, sentinel
 	}
-	if !c.sawWitness() {
-		return forgeapi.ConnectionCaps{}, c.undetected(ctx, op, err)
+	if transport.IsRefused(err) || transport.IsDeferred(err) {
+		return forgeapi.ConnectionCaps{}, err
 	}
-	c.askVersions(ctx, op)
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return forgeapi.ConnectionCaps{}, ctxErr
+	if !c.sawWitness() {
+		return forgeapi.ConnectionCaps{}, c.undetected(ctx, op, resp, err)
+	}
+	if askErr := c.askVersions(ctx, op); askErr != nil {
+		return forgeapi.ConnectionCaps{}, askErr
 	}
 	source, detail := forgeapi.EvidenceMetadata, "the metadata endpoint answered for "+productName(meta.InstalledVersion)
 	if err != nil {
@@ -77,20 +78,21 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 }
 
 // askVersions resolves whether this instance serves the version this family pins,
-// which decides whether every later REST request of this connection carries the pin,
-// and it is asked on the connection whose family has just been established, again
-// only where the caller's context ended inside it.
-//
-// A read the credential cannot make, a route an instance does not serve and a set the
-// pinned version is absent from all leave the pin OFF, which is why none of them is a
-// failure of connection setup: the instance then answers under its own default, and
-// that is the arm an appliance below the pinned version takes.
-func (c *Client) askVersions(ctx context.Context, op string) {
+// which decides whether every later REST request of this connection carries the pin.
+// A read the credential cannot make, a route the instance does not serve and a set
+// without the pinned version leave the pin OFF, the instance's own default, which an
+// appliance below that version takes, so none of them fails setup. It answers only
+// the caller's context ending, a refused attempt and a deferral, which asked nothing.
+func (c *Client) askVersions(ctx context.Context, op string) error {
 	var served []string
-	if _, err := c.readJSON(ctx, op, versionsPath, nil, &served); err != nil {
-		return
+	_, err := c.readJSON(ctx, op, versionsPath, nil, &served)
+	switch {
+	case transport.IsRefused(err), transport.IsDeferred(err):
+		return err
+	case err == nil:
+		c.holdPin(slices.Contains(served, APIVersion))
 	}
-	c.holdPin(slices.Contains(served, APIVersion))
+	return ctx.Err()
 }
 
 // holdCaps records this connection's one-time answers and returns them.
@@ -128,16 +130,16 @@ func productName(version string) string {
 // undetected is the refusal a connection whose family cannot be established answers.
 // It carries the real status where a request was made and answered, because the
 // request WAS made and identified no family, which is what separates this code from
-// the refusals reached before anything was sent.
-func (c *Client) undetected(ctx context.Context, op string, err error) *forgeapi.Error {
-	status := http.StatusOK
+// the refusals reached before anything was sent: err's own where the read failed,
+// else resp's.
+func (c *Client) undetected(ctx context.Context, op string, resp *transport.Response, err error) *forgeapi.Error {
+	const message = "no witness of this family on the instance: no response has carried the " + headerRequestID +
+		" header, which this product sends on every response including a refusal"
 	var fe *forgeapi.Error
 	if asForgeError(err, &fe) {
-		status = fe.Status
+		return c.core.FailOn(ctx, op, transport.REST(http.MethodGet), fe, forgeapi.CodeFamilyUndetected, forgeapi.KindUnknown, message)
 	}
-	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), forgeapi.CodeFamilyUndetected, forgeapi.KindUnknown, status,
-		"no witness of this family on the instance: no response has carried the "+headerRequestID+
-			" header, which this product sends on every response including a refusal")
+	return c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, forgeapi.CodeFamilyUndetected, forgeapi.KindUnknown, message)
 }
 
 func (c *Client) cachedCaps() *forgeapi.ConnectionCaps {
@@ -256,7 +258,7 @@ func (c *Client) RepoAffordances(ctx context.Context, repo forgeapi.RepoRef) (fo
 		return forgeapi.RepoAffordances{}, err
 	}
 	var record restRepo
-	if err := c.readRepoJSON(ctx, op, repoRoute(repo, ""), nil, &record); err != nil {
+	if _, err := c.readRepoJSON(ctx, op, repoRoute(repo, ""), nil, &record); err != nil {
 		return forgeapi.RepoAffordances{}, err
 	}
 	return normalizeAffordances(&record), nil

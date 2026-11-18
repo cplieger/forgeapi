@@ -348,7 +348,7 @@ func (c *Client) listRunsSince(ctx context.Context, op string, repo forgeapi.Rep
 		}
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
-	kept, err := c.keptRuns(ctx, op, runs.Runs, set, resp.Status)
+	kept, err := c.keptRuns(ctx, op, runs.Runs, set, resp)
 	if err != nil {
 		return forgeapi.Page[forgeapi.Run]{}, err
 	}
@@ -356,7 +356,7 @@ func (c *Client) listRunsSince(ctx context.Context, op string, repo forgeapi.Rep
 	served := (walk.window-1)*n + len(runs.Runs)
 	answer, next, short := walk.step(kept, served, runs.TotalCount, hasNextLink(resp.Header), n)
 	if short {
-		return forgeapi.Page[forgeapi.Run]{}, c.refuseRun(ctx, op, resp.Status, "the run listing stated more runs than it served where no second holds more than its result window, so the rest cannot be reached")
+		return forgeapi.Page[forgeapi.Run]{}, c.refuseRun(ctx, op, resp, "the run listing stated more runs than it served where no second holds more than its result window, so the rest cannot be reached")
 	}
 	page := forgeapi.Page[forgeapi.Run]{Items: c.normalizeRuns(answer, repo), Successor: moved.to}
 	if next == nil && walk.omitted > 0 {

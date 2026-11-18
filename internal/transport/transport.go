@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -87,8 +86,7 @@ type errorMapper func(op string, status int, header http.Header, member Member) 
 
 // Member is the machine-readable part of a refusal's body: RFC 6750's error code
 // and the scope it names, each empty where the body carries none, and Class, the
-// family's name for a message member it lists in [Options.MessageClasses], empty for
-// any other message.
+// family's name for the message member as [Options.MessageClass] answers it.
 type Member struct {
 	Error string
 	Scope string
@@ -96,18 +94,25 @@ type Member struct {
 }
 
 // Verdict is a family's reading of one refusal: the code and kind the caller
-// branches on, and what the forge says the call needs, which becomes
-// [forgeapi.Error.Needs].
+// branches on, what the forge says the call needs, which becomes
+// [forgeapi.Error.Needs], and whether a rate limit is GitHub's secondary one,
+// which becomes [forgeapi.Error.Secondary].
 type Verdict struct {
-	Code  string
-	Needs string
-	Kind  forgeapi.ErrorKind
+	Code      string
+	Needs     string
+	Kind      forgeapi.ErrorKind
+	Secondary bool
 }
 
+// limitReader is how a family reads whether a refusal is its product's rate
+// limit, and a secondary one, from the whole answer, where its body decides
+// that.
+type limitReader func(status int, header http.Header, body []byte) (limited, secondary bool)
+
 // budgetSignal is how a family reads its product's budget signal off a response. It
-// returns the remaining units, the reset instant and whether the response carried
-// a signal at all; a family whose product sends none returns false and the
-// governor then reports the neutral value.
+// returns the remaining units, the reset instant the response states whatever ok
+// reads, and ok, whether the response carried a remaining figure; a family whose
+// product sends none returns false and the governor then reports the neutral value.
 type budgetSignal func(header http.Header) (remaining int, reset time.Time, ok bool)
 
 // budgetPool is how a family reads which of its product's rate-limit pools a
@@ -133,7 +138,8 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	logger     *slog.Logger
 	credential forgeapi.CredentialSource
 	mapper     errorMapper
-	classes    map[string]string
+	limit      limitReader
+	class      func(message string) string
 	signal     budgetSignal
 	pool       budgetPool
 	apiBase    *url.URL
@@ -163,17 +169,20 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 // caller can advance; no exported surface carries it, so a consumer cannot replace
 // the pacing this governor exists to do.
 type Options struct {
-	Mapper        errorMapper
+	Mapper errorMapper
+	// Limit is asked before Mapper, which never sees a limit it reads; nil
+	// leaves every limit to Mapper.
+	Limit         limitReader
 	Signal        budgetSignal
 	Pool          budgetPool
 	PoolParent    budgetParent
 	DeriveAPIBase func(web *url.URL) string
 	Clock         func() time.Time
-	// MessageClasses maps each message member a product answers a stated cause with,
-	// matched whole after trimming space, to the class its mapper reads in
-	// [Member.Class]; no other message text reaches the mapper.
-	MessageClasses map[string]string
-	Family         forgeapi.Family
+	// MessageClass names the class of a refusal's message member, trimmed of
+	// space, that its mapper reads in [Member.Class], empty for a message it does
+	// not read; no other message text reaches the mapper. Nil reads none.
+	MessageClass func(message string) string
+	Family       forgeapi.Family
 	// FreeNotModified says the product bills nothing for a not-modified answer to
 	// an authorized conditional request, as its spec.Revalidations row states.
 	FreeNotModified bool
@@ -182,7 +191,7 @@ type Options struct {
 // Open validates one connection and builds its request core. It performs no I/O:
 // what it refuses is a client it could not run honestly, and each refusal carries
 // its own code so a consumer names the remedy rather than showing a warning.
-func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Conn, error) {
+func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts *Options) (*Conn, error) {
 	if set.Credential == nil {
 		return nil, local(forgeapi.CodeAnonymousRefused, "no credential source: this client would send anonymous requests")
 	}
@@ -240,14 +249,15 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts Options) (*Con
 	// above the cache guard ([httpcache.Guard]), which must see a request as
 	// either hook passes it on.
 	if set.AttemptObserver != nil {
-		base = set.AttemptObserver(base)
+		base = hookAttempts(base, set.AttemptObserver)
 	}
 
 	c := &Conn{
 		logger:     loggerOf(set),
 		credential: set.Credential,
 		mapper:     opts.Mapper,
-		classes:    maps.Clone(opts.MessageClasses),
+		limit:      opts.Limit,
+		class:      opts.MessageClass,
 		signal:     opts.Signal,
 		pool:       opts.Pool,
 		apiBase:    apiBase,
@@ -534,8 +544,8 @@ func opFrom(req *http.Request) string {
 	return op
 }
 
-// retryCheck retries a transport failure [Retryable] calls retryable, and the
-// gateway statuses. It does not retry:
+// retryCheck retries a transport failure [Retryable] calls retryable, save the
+// attempt hook's refusal, and the gateway statuses. It does not retry:
 //   - a 429: the default sleeps its retry-after, so a throttle would reach the
 //     caller as a deadline rather than a rate-limited error with its duration;
 //   - a 408 or another 5xx, which the instance answered after reading the
@@ -547,6 +557,9 @@ func retryCheck(ctx context.Context, resp *http.Response, err error) (bool, erro
 		return false, ctx.Err()
 	}
 	if err != nil {
+		if _, refused := errors.AsType[*refusedAttemptError](err); refused {
+			return false, nil
+		}
 		if own, ok := errors.AsType[*forgeapi.Error](err); ok {
 			return own.Retryable, nil
 		}
@@ -661,7 +674,7 @@ func publicHost(host string) bool {
 
 // resolveAPIBase takes the connection's API base where it names one and derives
 // the family's own root where it does not.
-func resolveAPIBase(conn *forgeapi.Connection, web *url.URL, set *forgeapi.Settings, opts Options) (*url.URL, error) {
+func resolveAPIBase(conn *forgeapi.Connection, web *url.URL, set *forgeapi.Settings, opts *Options) (*url.URL, error) {
 	raw := conn.APIBaseURL
 	if raw == "" && opts.DeriveAPIBase != nil {
 		raw = opts.DeriveAPIBase(web)
@@ -845,6 +858,17 @@ func (c *Conn) BudgetState() forgeapi.BudgetState {
 	state := c.gov.state()
 	state.ReadCache = forgeapi.ReadCacheState(c.cache.State())
 	return state
+}
+
+// PoolOf is the pool req's operation last drew on, by the name the product's
+// answer gave it: empty before an answer named one, on a product whose figure is
+// the whole service's, and for a request this library did not build.
+func (c *Conn) PoolOf(req *http.Request) string {
+	op := opFrom(req)
+	if op == "" {
+		return ""
+	}
+	return c.gov.poolOf(op)
 }
 
 // Logger is the injected logger, for the family's own lines.
@@ -1133,7 +1157,7 @@ func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *ht
 	}
 	body, readErr := httpclient.ReadLimitedBody(resp.Body, bodyLimit(req))
 	if readErr != nil {
-		return nil, c.bodyError(ctx, req, resp.StatusCode, readErr, started)
+		return nil, c.bodyError(ctx, req, out, readErr, started)
 	}
 	out.Body = body
 	if x.Answered() {
@@ -1224,8 +1248,8 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 		return c.refusal(ctx, req, c.fail(req.Op, forgeapi.CodeMutationsDisabled, forgeapi.KindForbidden, 0,
 			"mutations are disabled on this client"))
 	}
-	if !c.admitRead(ctx, req) {
-		return c.refusal(ctx, req, c.deferred(req.Op))
+	if held, ok := c.admitRead(ctx, req); !ok {
+		return c.refusal(ctx, req, c.deferred(req.Op, held))
 	}
 	return nil
 }
@@ -1235,17 +1259,16 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 // zero and spends one of the bound when admitted, so a read deferred at zero
 // leaves it to the action's next read. A credential source's read is never the
 // action's, and a read-only client has no reserve to spend.
-func (c *Conn) admitRead(ctx context.Context, req *Request) bool {
+func (c *Conn) admitRead(ctx context.Context, req *Request) (heldPool, bool) {
 	if c.mutations && !req.Credential && callmark.ActionReadsLeft(ctx) {
-		if _, ok := c.gov.admitWithin(req.Op, 0); !ok {
-			return false
+		if held, ok := c.gov.admitWithin(req.Op, 0); !ok {
+			return held, false
 		}
 		if callmark.TakeActionRead(ctx) {
-			return true
+			return heldPool{}, true
 		}
 	}
-	ok := c.gov.admit(req.Op)
-	return ok
+	return c.gov.admit(req.Op)
 }
 
 // discarder is the optional method of a credential source that is told when the
@@ -1539,22 +1562,46 @@ func (c *Conn) fail(op, code string, kind forgeapi.ErrorKind, status int, messag
 
 // Fail builds a failure the family reached after a request: it names the operation
 // and the family, so it carries a diagnostic id, and the line that id names is
-// recorded here rather than left to the caller.
+// recorded here rather than left to the caller. It carries answer's status and
+// figures ([Conn.answered]), none where answer is nil because none arrived.
 //
 // The exchange is the one the family reached this failure ON, which only the family
 // knows: the response is already in its hand and this core never saw which of the
 // two arms answered it.
-func (c *Conn) Fail(ctx context.Context, op string, ex Exchange, code string, kind forgeapi.ErrorKind, status int, message string) *forgeapi.Error {
-	fe := c.fail(op, code, kind, status, message)
+func (c *Conn) Fail(ctx context.Context, op string, ex Exchange, answer *Response, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
+	fe := c.answered(op, code, kind, answer, message)
 	c.record(ctx, op, ex, fe)
+	return fe
+}
+
+// FailOn is [Conn.Fail] for a failure the family reached on cause, an earlier
+// failure of the same exchange: it carries cause's status and figures, which
+// cause took from its own answer where one arrived.
+func (c *Conn) FailOn(ctx context.Context, op string, ex Exchange, cause *forgeapi.Error, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
+	fe := c.fail(op, code, kind, cause.Status, message)
+	fe.Pool, fe.Remaining, fe.Reset, fe.Secondary = cause.Pool, cause.Remaining, cause.Reset, cause.Secondary
+	c.record(ctx, op, ex, fe)
+	return fe
+}
+
+// answered is [Conn.fail] for a failure reached on answer, the instance's answer:
+// it carries that answer's status and its own figures ([AnswerFigures]), read by
+// this connection's readers, so no failure built from an answer can carry a status
+// without them. A nil answer is a failure no answer reached, with no status.
+func (c *Conn) answered(op, code string, kind forgeapi.ErrorKind, answer *Response, message string) *forgeapi.Error {
+	if answer == nil {
+		return c.fail(op, code, kind, 0, message)
+	}
+	fe := c.fail(op, code, kind, answer.Status, message)
+	AnswerFigures(fe, answer.Header, c.signal, c.pool)
 	return fe
 }
 
 // FailBody is what a response body that decoded but is not an answer earns. cause is
 // the non-nil sentinel naming the check that failed, which the line carries as its
 // error; the returned message is [bodyFailure]'s whatever the check.
-func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, status int, cause error) *forgeapi.Error {
-	fe := c.bodyFailure(op, status)
+func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, answer *Response, cause error) *forgeapi.Error {
+	fe := c.bodyFailure(op, answer)
 	c.emit(ctx, &Request{Op: op}, familyEntry(ctx, ex, fe, cause.Error()))
 	return fe
 }
@@ -1564,7 +1611,7 @@ func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, status int,
 // since a decode error can quote an instance string whole, and the body's content
 // type and length beside it, never the body.
 func (c *Conn) FailDecode(ctx context.Context, op string, ex Exchange, resp *Response, cause error) *forgeapi.Error {
-	fe := c.bodyFailure(op, resp.Status)
+	fe := c.bodyFailure(op, resp)
 	e := familyEntry(ctx, ex, fe, decodeText(resp, cause))
 	e.header, e.answer = resp.Header, resp
 	c.emit(ctx, &Request{Op: op}, e)
@@ -1574,7 +1621,7 @@ func (c *Conn) FailDecode(ctx context.Context, op string, ex Exchange, resp *Res
 // failDecode is [Conn.FailDecode] for [Conn.Do]'s own decode into [Request.Into], whose
 // line is the exchange's one line, with that request's attempt, retry and duration.
 func (c *Conn) failDecode(ctx context.Context, req *Request, resp *Response, cause error, started time.Time) *forgeapi.Error {
-	fe := c.bodyFailure(req.Op, resp.Status)
+	fe := c.bodyFailure(req.Op, resp)
 	c.emit(ctx, req, &entry{
 		header: resp.Header, answer: resp, ex: exchange(req), code: fe.Code, diag: fe.DiagID,
 		cause: decodeText(resp, cause), sent: requestSlot(ctx).since(started),
@@ -1590,8 +1637,8 @@ func (c *Conn) failDecode(ctx context.Context, req *Request, resp *Response, cau
 // status is the real one always, and it is immediately wrong on a creation, which
 // answers 201. The code is the validation one, so a consumer branching on it is
 // handed the class a response this library will not accept already carries.
-func (c *Conn) bodyFailure(op string, status int) *forgeapi.Error {
-	return c.fail(op, forgeapi.CodeValidation, forgeapi.KindUpstream, status, "response body did not decode")
+func (c *Conn) bodyFailure(op string, answer *Response) *forgeapi.Error {
+	return c.answered(op, forgeapi.CodeValidation, forgeapi.KindUpstream, answer, "response body did not decode")
 }
 
 // decodeText is a decode error as a line carries it. A nil cause is a caller's bug,
@@ -1661,10 +1708,13 @@ func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capabi
 // turns this into one rather than into a failure; one that cannot reports it.
 // It carries the throttle kind with no code and no status, which is the same pair
 // this family's mapper answers an upstream throttle with minus the status: a
-// consumer tells the two apart by that status.
-func (c *Conn) deferred(op string) *forgeapi.Error {
-	return c.fail(op, "", forgeapi.KindRateLimited, 0,
+// consumer tells the two apart by that status. It carries the held pool's name
+// and figures, as an answer's own would.
+func (c *Conn) deferred(op string, held heldPool) *forgeapi.Error {
+	fe := c.fail(op, "", forgeapi.KindRateLimited, 0,
 		"this read was deferred: a rate-limit pool it draws on is at or under the mutation reserve")
+	fe.Pool, fe.Remaining, fe.Reset = held.name, held.figure.remaining, held.figure.reset
+	return fe
 }
 
 // IsDeferred reports whether an error is the governor's deferral rather than an
@@ -1673,6 +1723,14 @@ func (c *Conn) deferred(op string) *forgeapi.Error {
 func IsDeferred(err error) bool {
 	fe, ok := errors.AsType[*forgeapi.Error](err)
 	return ok && fe.Kind == forgeapi.KindRateLimited && fe.Status == 0
+}
+
+// IsRefused reports whether an error is an attempt the attempt hook refused
+// ([forgeapi.CodeAttemptRefused]). Nothing was sent, so it says nothing about the
+// instance: a caller returns it unchanged rather than reading it as an answer.
+func IsRefused(err error) bool {
+	fe, ok := errors.AsType[*forgeapi.Error](err)
+	return ok && fe.Code == forgeapi.CodeAttemptRefused
 }
 
 // IsThrottled reports whether an error is a throttle the INSTANCE answered rather
@@ -1726,20 +1784,57 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 	answer := readRefusal(resp.Body)
 	verdict := Verdict{Kind: forgeapi.KindNotFound, Code: forgeapi.CodeOwnerUnresolved}
 	if req.OwnerStatus == 0 || resp.Status != req.OwnerStatus {
-		member := Member{Error: answer.Error, Scope: answer.Scope, Class: c.classes[strings.TrimSpace(answer.instanceText())]}
-		verdict = c.mapper(req.Op, resp.Status, resp.Header, member)
+		verdict = c.verdict(req.Op, resp, &answer)
 	}
 	kind, code := verdict.Kind, verdict.Code
-	fe := c.fail(req.Op, code, kind, resp.Status, resp.Quote(answer.text(code)))
+	fe := c.answered(req.Op, code, kind, resp, resp.Quote(answer.text(code)))
 	fe.Needs = resp.Quote(verdict.Needs) // upstream text, made safe as the message is
+	fe.Secondary = kind == forgeapi.KindRateLimited && verdict.Secondary
 	if kind == forgeapi.KindRateLimited {
-		fe.RetryAfter = httpclient.ParseRetryAfter(resp.Header.Get("Retry-After"))
+		fe.RetryAfter = RetryAfter(resp.Header)
 		if c.counters.RateLimited != nil {
 			c.counters.RateLimited(c.family)
 		}
 	}
 	c.log(ctx, req, exchange(req), resp.Status, code, fe.DiagID, kind, resp.Header, started, fe.Message, false)
 	return fe
+}
+
+// verdict is the family's reading of a refusal: its limit reader's, else its
+// mapper's.
+func (c *Conn) verdict(op string, resp *Response, answer *refusal) Verdict {
+	if c.limit != nil {
+		if limited, secondary := c.limit(resp.Status, resp.Header, resp.Body); limited {
+			return Verdict{Kind: forgeapi.KindRateLimited, Secondary: secondary}
+		}
+	}
+	member := Member{Error: answer.Error, Scope: answer.Scope, Class: c.classOf(answer.instanceText())}
+	return c.mapper(op, resp.Status, resp.Header, member)
+}
+
+// AnswerFigures sets fe's Remaining, Reset and Pool from the failing answer's
+// own budget signal and pool, as the governor reads them off every answer, raw:
+// what a limit holds is the consumer's to read from them and Secondary.
+func AnswerFigures(fe *forgeapi.Error, header http.Header, signal budgetSignal, pool budgetPool) {
+	fe.Remaining, fe.Reset = forgeapi.BudgetRemainingUnknown, time.Time{}
+	if signal != nil {
+		remaining, reset, ok := signal(header)
+		if fe.Reset = reset; ok {
+			fe.Remaining = remaining
+		}
+	}
+	if pool != nil {
+		fe.Pool, _ = pool(header)
+	}
+}
+
+// classOf is the family's class for a refusal's message member, empty where the
+// family reads none.
+func (c *Conn) classOf(message string) string {
+	if c.class == nil {
+		return ""
+	}
+	return c.class(strings.TrimSpace(message))
 }
 
 // refusal is the part of a refusal's body this package reads: the instance's own

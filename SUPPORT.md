@@ -51,12 +51,42 @@ Every operation reports these answers as `KindRateLimited`, with `RetryAfter` se
 | --- | --- | --- | --- |
 | GitHub | 403 | `X-RateLimit-Remaining: 0` | the primary or a secondary limit spent, with no budget left in the window |
 | GitHub | 403 | `Retry-After`, any value | a secondary limit, whatever X-RateLimit-Remaining reads, as [GitHub documents it](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) |
+| GitHub | 403 | none: a message carrying "secondary rate limit" | a secondary limit, whatever X-RateLimit-Remaining reads, where the answer carries no Retry-After |
 | GitHub | 429 | none: the status alone | a primary or a secondary limit |
+| GitHub | 200, a document's errors and no data | `X-RateLimit-Remaining: 0` | a document's primary or secondary limit spent, with no budget left in the window ([GraphQL rate limits](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#exceeding-the-rate-limit)) |
+| GitHub | 200, a document's errors and no data | `Retry-After`, any value | a document's secondary limit, whatever X-RateLimit-Remaining reads |
+| GitHub | 200, a document's errors and no data | none: a message carrying "secondary rate limit" | a document's secondary limit, whatever X-RateLimit-Remaining reads |
+| GitHub | 403, a document's errors and no data | none: a message carrying "secondary rate limit" | a document's secondary limit, its message in the envelope's errors |
+| GitHub | 403, a document's errors and no data | `X-RateLimit-Remaining: 0` and a message carrying "secondary rate limit" | a document's secondary limit with no budget left in the window, its message in the envelope's errors |
+| GitHub | 429, a document's errors and no data | `X-RateLimit-Remaining: 0` and a message carrying "secondary rate limit" | a document's secondary limit with no budget left in the window, its message in the envelope's errors |
 | GitLab | 429 | none: the status alone | a rate limit |
-| Gitea | 403 | `RateLimit-Remaining: 0` | a rate limit with no budget left in the window |
+| Gitea | 403 | `RateLimit: r=0` | a rate limit with no budget left in the window, the structured header's r parameter at 0 |
 | Gitea | 429 | none: the status alone | a rate limit |
-| Forgejo | 403 | `RateLimit-Remaining: 0` | a rate limit with no budget left in the window |
+| Forgejo | 403 | `RateLimit: r=0` | a rate limit with no budget left in the window, the structured header's r parameter at 0 |
 | Forgejo | 429 | none: the status alone | a rate limit |
+
+## Rate-limit figures
+
+A failed answer's `Error` carries the figures its answer states: `Pool`, `Remaining`, `Reset` and `Secondary`. Where the answer states none, `Pool` is empty, `Remaining` reads `BudgetRemainingUnknown` and `Reset` is the zero time. `BudgetState().Pools` and each client's `PoolOf` read the pool and its figures from every answer.
+
+| Product | Figure | Header | Answer |
+| --- | --- | --- | --- |
+| GitHub | `Pool` | `X-RateLimit-Resource` | the pool the answer drew on, `core` for REST, `graphql` for documents and `search` for searches, named on a secondary limit too, which holds every pool ([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#checking-the-status-of-your-rate-limit)) |
+| GitHub | `Remaining` | `X-RateLimit-Remaining` | the units left in that pool's window: requests on REST, points on documents |
+| GitHub | `Reset` | `X-RateLimit-Reset` | the instant that window renews, in epoch seconds |
+| GitHub | `Secondary` | `Retry-After`, or a message carrying "secondary rate limit" | a secondary limit, set on a 403 or 429 carrying either signal whatever X-RateLimit-Remaining reads, and on a document's errors-only answer at 200 carrying either, its message in the envelope's errors ([rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits)) |
+| GitLab | `Pool` | `RateLimit-Name` | the throttle the request counted against, the most restrictive one: on gitlab.com `throttle_authenticated_api` for most routes ([response headers](https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/#response-headers)) |
+| GitLab | `Remaining` | `RateLimit-Remaining` | the requests left in that throttle's window |
+| GitLab | `Reset` | `RateLimit-Reset` | the instant that window renews, in epoch seconds |
+| GitLab | `Secondary` | none | never set: every limit this product answers names its throttle |
+| Gitea | `Pool` | none | empty: the product sends no budget signal (measured on gitea.com) |
+| Gitea | `Remaining` | none | `BudgetRemainingUnknown`, since the product sends no budget signal |
+| Gitea | `Reset` | none | the zero time, since the product sends no budget signal |
+| Gitea | `Secondary` | none | never set: the product has no secondary limit |
+| Forgejo | `Pool` | none | empty: the header's one figure is the whole service's, reported under no name, though the header names its policy (`baseline` on codeberg.org, measured) |
+| Forgejo | `Remaining` | `RateLimit`, its `r` parameter | the requests left in the window ([RateLimit header fields](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/)) |
+| Forgejo | `Reset` | `RateLimit`, its `t` parameter | the instant the window renews, counted in seconds after the answer, and the zero time where the header has no `t` |
+| Forgejo | `Secondary` | none | never set: the product has no secondary limit |
 
 ## Conditional reads
 

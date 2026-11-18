@@ -106,16 +106,16 @@ type rename struct {
 // readRepoJSON is readJSON for a REPOSITORY-addressed route whose own answer declares
 // no successor carrier: a hop the transport followed is the rename witness, and here
 // it becomes the stale code carrying the successor the further read resolved.
-func (c *Client) readRepoJSON(ctx context.Context, op, path string, query url.Values, out any) error {
+func (c *Client) readRepoJSON(ctx context.Context, op, path string, query url.Values, out any) (*transport.Response, error) {
 	var moved rename
 	resp, err := c.readMovedJSON(ctx, op, path, query, out, &moved)
 	if err != nil {
-		return err
+		return resp, err
 	}
 	if moved.to != nil {
-		return c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+		return resp, c.stale(ctx, op, http.MethodGet, resp, moved.to)
 	}
-	return nil
+	return resp, nil
 }
 
 // readMovedJSON is readJSON for a repository-addressed route on a call whose ANSWER
@@ -142,7 +142,7 @@ func (c *Client) followMove(ctx context.Context, op string, resp *transport.Resp
 		moved.to = c.successorOf(ctx, op, resp.Ended)
 	}
 	if moved.to == nil || err != nil {
-		return c.stale(ctx, op, http.MethodGet, resp.Status, moved.to)
+		return c.stale(ctx, op, http.MethodGet, resp, moved.to)
 	}
 	return nil
 }
@@ -231,13 +231,14 @@ func (c *Client) transferredTo(address string) *forgeapi.RepoRef {
 //
 // It carries the successor where one resolved, which is the value a consumer re-points
 // its stored reference to, and none where the further read could not answer, which is
-// the case whose remedy is listing the repositories again.
-func (c *Client) stale(ctx context.Context, op, method string, status int, to *forgeapi.RepoRef) error {
+// the case whose remedy is listing the repositories again. answer is the answer the
+// move arrived on.
+func (c *Client) stale(ctx context.Context, op, method string, answer *transport.Response, to *forgeapi.RepoRef) error {
 	reason := "this repository answered from another address, which on this product is a rename or a transfer; the location it sends is id-addressed and the read that resolves its canonical name did not answer, so re-point by listing the repositories again"
 	if to != nil {
 		reason = "this repository answered from another address, which on this product is a rename or a transfer; the successor named here is its canonical selector, so re-point the reference that was stored"
 	}
-	fe := c.core.Fail(ctx, op, transport.REST(method), forgeapi.CodeRepoRefStale, forgeapi.KindNotFound, status, reason)
+	fe := c.core.Fail(ctx, op, transport.REST(method), answer, forgeapi.CodeRepoRefStale, forgeapi.KindNotFound, reason)
 	fe.Successor = to
 	return fe
 }
@@ -285,7 +286,7 @@ func (c *Client) exchange(ctx context.Context, req *transport.Request) (*transpo
 		return nil, err
 	}
 	if resp.Redirected {
-		return resp, c.stale(ctx, req.Op, req.Method, resp.Status, c.successorOf(ctx, req.Op, resp.Ended))
+		return resp, c.stale(ctx, req.Op, req.Method, resp, c.successorOf(ctx, req.Op, resp.Ended))
 	}
 	return resp, nil
 }

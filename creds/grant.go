@@ -74,9 +74,9 @@ func StartDeviceGrant(ctx context.Context, conn forgeapi.Connection, family forg
 	if len(req.Scopes) > 0 {
 		form.Set("scope", strings.Join(req.Scopes, " "))
 	}
-	a, status, err := post(ctx, ep, "StartDeviceGrant", ends.codes, form)
-	if err == nil && !a.issuedCodes(status) {
-		err = unanswered(family, status, &a)
+	a, r, err := post(ctx, ep, "StartDeviceGrant", ends.codes, form)
+	if err == nil && !a.issuedCodes(r.status) {
+		err = unanswered(family, r, &a)
 	}
 	if err != nil {
 		ep.Close()
@@ -111,16 +111,17 @@ func (g *DeviceGrant) Poll(ctx context.Context) (Record, bool, error) {
 	case g.ended != nil:
 		return Record{}, false, g.ended
 	case !time.Now().Before(g.Expires):
-		return Record{}, false, g.end(g.refusal(forgeapi.CodeGrantExpired, forgeapi.KindUnauthorized, 0,
+		return Record{}, false, g.end(endpointFailure(g.family, reply{}, forgeapi.CodeGrantExpired, forgeapi.KindUnauthorized,
 			"the device codes expired before the grant was approved"))
 	}
 	form := url.Values{formClientID: {g.clientID}, "device_code": {g.deviceCode}, "grant_type": {deviceGrantType}}
-	a, status, err := post(ctx, g.ep, "Poll", g.grantPath, form)
+	a, r, err := post(ctx, g.ep, "Poll", g.grantPath, form)
+	status := r.status
 	switch {
 	case err != nil && status != 0 && a.succeeded(status):
 		// The spent code ends the grant even where the context ended the read, whose
 		// own answer stays the context's sentinel under the three-way contract.
-		end := g.end(tokenless(g.family, status))
+		end := g.end(tokenless(g.family, r))
 		if transport.ContextSentinel(err) != nil {
 			return Record{}, false, err
 		}
@@ -128,16 +129,16 @@ func (g *DeviceGrant) Poll(ctx context.Context) (Record, bool, error) {
 	case err != nil:
 		return Record{}, false, err
 	case a.granted(status) && !a.readable():
-		return Record{}, false, g.end(unreadable(g.family, status))
+		return Record{}, false, g.end(unreadable(g.family, r))
 	case a.granted(status):
 		rec := minted(&Record{Family: g.family, WebBaseURL: g.webBase, ClientID: g.clientID}, &a, time.Now())
 		g.granted = &rec
 		g.ep.Close()
 		return rec, true, nil
 	case a.succeeded(status):
-		return Record{}, false, g.end(tokenless(g.family, status))
+		return Record{}, false, g.end(tokenless(g.family, r))
 	}
-	return Record{}, false, g.outcome(&a, status)
+	return Record{}, false, g.outcome(&a, r)
 }
 
 // Close ends a pending grant on the consumer's own word and releases its endpoint,
@@ -152,14 +153,14 @@ func (g *DeviceGrant) Close() {
 	if g.granted != nil || g.ended != nil {
 		return
 	}
-	g.ended = g.refusal(forgeapi.CodeGrantDenied, forgeapi.KindForbidden, 0,
+	g.ended = endpointFailure(g.family, reply{}, forgeapi.CodeGrantDenied, forgeapi.KindForbidden,
 		"the consumer ended the grant before it was approved")
 	g.ep.Close()
 }
 
 // outcome reads an answer that issued nothing: nil while approval is pending or
 // after slow_down, the grant's end on a denial or an expiry, the failure otherwise.
-func (g *DeviceGrant) outcome(a *answer, status int) error {
+func (g *DeviceGrant) outcome(a *answer, r reply) error {
 	switch a.Error {
 	case errPending:
 		return nil
@@ -170,20 +171,13 @@ func (g *DeviceGrant) outcome(a *answer, status int) error {
 		}
 		return nil
 	case errAccessDenied:
-		return g.end(g.refusal(forgeapi.CodeGrantDenied, forgeapi.KindForbidden, status,
+		return g.end(endpointFailure(g.family, r, forgeapi.CodeGrantDenied, forgeapi.KindForbidden,
 			"the user declined the grant"))
 	case errExpiredToken:
-		return g.end(g.refusal(forgeapi.CodeGrantExpired, forgeapi.KindUnauthorized, status,
+		return g.end(endpointFailure(g.family, r, forgeapi.CodeGrantExpired, forgeapi.KindUnauthorized,
 			"the device codes expired before the grant was approved"))
 	}
-	return unanswered(g.family, status, a)
-}
-
-func (g *DeviceGrant) refusal(code string, kind forgeapi.ErrorKind, status int, message string) *forgeapi.Error {
-	return &forgeapi.Error{
-		Code: code, Family: g.family, Status: status, Kind: kind,
-		Retryable: transport.Retryable(kind, status), Message: message,
-	}
+	return unanswered(g.family, r, a)
 }
 
 // end makes err the grant's terminal answer and releases its connection.

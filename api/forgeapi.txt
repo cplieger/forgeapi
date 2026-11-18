@@ -50,6 +50,7 @@ type BudgetState struct {
 	LastCost int
 	RotationCursor RotationCursor
 	ReadCache ReadCacheState
+	Pools []PoolState
 }
 const CapCanPush Capability = "can_push"
 const CapHasIssues Capability = "has_issues"
@@ -85,6 +86,7 @@ const CodeAlreadyEnqueued = "already_enqueued"
 const CodeAnonymousRefused = "anonymous_refused"
 const CodeAppGrantInvalid = "app_grant_invalid"
 const CodeAppKeyInvalid = "app_key_invalid"
+const CodeAttemptRefused = "attempt_refused"
 const CodeBranchCannotMerge = "branch_cannot_merge"
 const CodeBudgetInvalid = "budget_invalid"
 const CodeCapabilityUnsupported = "capability_unsupported"
@@ -230,13 +232,19 @@ type Error struct {
 	Retryable bool
 	Message string
 	RetryAfter time.Duration
+	Pool string
+	Remaining int
+	Reset time.Time
+	Secondary bool
 	DiagID string
 	Successor *RepoRef
 	Capability Capability
 	Evidence Evidence
 	Needs string
+	Refusal error
 }
 func (e *Error) Error() string
+func (e *Error) Unwrap() error
 type ErrorKind int
 func (k ErrorKind) String() string
 type Evidence struct {
@@ -441,6 +449,7 @@ type Page[T any] struct {
 	Successor *RepoRef
 	Indexed bool
 }
+func ParseRemote(raw string) (Remote, bool)
 type Partial struct {
 	Reason PartialReason
 	Fetched int
@@ -456,6 +465,12 @@ type PartialReason int
 func (p PartialReason) String() string
 const PartialResultWindow PartialReason = iota + 6
 const PartialUnknown PartialReason = iota
+type PoolState struct {
+	Reset time.Time
+	Name string
+	Remaining int
+	Limit int
+}
 type Product int
 func (p Product) String() string
 const ProductForgejo Product = iota + 4
@@ -528,6 +543,14 @@ type Releases interface {
 	ListReleases(ctx context.Context, repo RepoRef, opts ...ListOption) (Page[Release], error)
 	CreateRelease(ctx context.Context, repo RepoRef, req NewRelease) (Release, error)
 }
+type Remote struct {
+	Host string
+	Path string
+	WebOrigin string
+}
+func (r Remote) Key() string
+func (r Remote) Name() string
+func (r Remote) Owner() string
 type RepoAffordances struct {
 	MergeStrategies []string
 	HasIssues Support
@@ -803,6 +826,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error)
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
+func (c *Client) PoolOf(req *http.Request) string
 func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error)
 func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
@@ -843,6 +867,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error)
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
+func (c *Client) PoolOf(req *http.Request) string
 func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error)
 func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error
@@ -853,6 +878,38 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run forgeapi.RunRef) error
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error)
 func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error)
+type RateLimit struct {
+	Reset time.Time
+	Pool string
+	RetryAfter time.Duration
+	Remaining int
+	Limit int
+	Limited bool
+	Secondary bool
+}
+func ReadLimit(status int, h http.Header, body []byte) RateLimit
+
+## package githubtest (./github/githubtest)
+
+type Effect struct {
+	Reset time.Time
+	Pool string
+	RetryAfter time.Duration
+	Limited bool
+	Refused bool
+	Attributed bool
+}
+type LimitCase struct {
+	Header http.Header
+	Body []byte
+	Name string
+	Effect Effect
+	Read github.RateLimit
+	Status int
+	Kind forgeapi.ErrorKind
+	Document bool
+}
+func LimitCases(now time.Time) []LimitCase
 
 ## package gitlab (./gitlab)
 
@@ -881,6 +938,7 @@ func (c *Client) ListRepos(ctx context.Context, opts ...forgeapi.ListOption) (fo
 func (c *Client) ListRuns(ctx context.Context, repo forgeapi.RepoRef, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.Run], error)
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error)
 func (c *Client) MergeStatus(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef) (forgeapi.MergeStatus, error)
+func (c *Client) PoolOf(req *http.Request) string
 func (c *Client) ReadIssue(ctx context.Context, repo forgeapi.RepoRef, issue forgeapi.IssueRef) (forgeapi.Issue, error)
 func (c *Client) ReadPR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, opts ...forgeapi.ReadOption) (forgeapi.PullRequest, error)
 func (c *Client) RemoveLabels(ctx context.Context, repo forgeapi.RepoRef, target forgeapi.LabelTarget, names []string) error

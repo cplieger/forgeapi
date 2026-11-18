@@ -44,11 +44,18 @@ func failureOf(err error) (code string, kind forgeapi.ErrorKind) {
 // is kept. A *forgeapi.Error this library produced below the call, such as the
 // redirect policy's inside net/http's *url.Error, is recovered rather than
 // rebuilt, so a containment refusal stays permanent and a stale reference keeps
-// its successor.
+// its successor. An attempt the attempt hook refused is answered first, since the
+// hook's own error may itself be a *forgeapi.Error.
 func (c *Conn) transportError(ctx context.Context, req *Request, err error, started time.Time) error {
 	if ctxErr := ctx.Err(); ctxErr != nil && contextSentinel(err) != nil {
 		c.log(ctx, req, exchange(req), 0, "", "", forgeapi.KindUnknown, nil, started, ctxErr.Error(), true)
 		return ctxErr
+	}
+	if refused, ok := errors.AsType[*refusedAttemptError](err); ok {
+		fe := c.fail(req.Op, forgeapi.CodeAttemptRefused, forgeapi.KindUnknown, 0, causeText(refused.err))
+		fe.Refusal = refused.err
+		c.log(ctx, req, exchange(req), 0, fe.Code, fe.DiagID, fe.Kind, nil, started, fe.Message, true)
+		return fe
 	}
 	if own, ok := errors.AsType[*forgeapi.Error](err); ok {
 		if own.Op == "" {
@@ -71,21 +78,22 @@ func (c *Conn) transportError(ctx context.Context, req *Request, err error, star
 }
 
 // bodyError maps a response body that could not be read. The instance answered,
-// so the failure carries its status; a body over the bound is the instance's
-// answer and the same again next time, a body cut short is the network's.
-func (c *Conn) bodyError(ctx context.Context, req *Request, status int, err error, started time.Time) error {
+// so the failure carries its status and figures, read off answer's header; a body
+// over the bound is the instance's answer and the same again next time, a body cut
+// short is the network's.
+func (c *Conn) bodyError(ctx context.Context, req *Request, answer *Response, err error, started time.Time) error {
 	if ctxErr := ctx.Err(); ctxErr != nil && contextSentinel(err) != nil {
-		c.log(ctx, req, exchange(req), status, "", "", forgeapi.KindUnknown, nil, started, ctxErr.Error(), true)
+		c.log(ctx, req, exchange(req), answer.Status, "", "", forgeapi.KindUnknown, nil, started, ctxErr.Error(), true)
 		return ctxErr
 	}
 	var fe *forgeapi.Error
 	if _, tooLarge := errors.AsType[*httpclient.ResponseTooLargeError](err); tooLarge {
-		fe = c.fail(req.Op, forgeapi.CodeResponseTooLarge, forgeapi.KindUpstream, status, sanitize(err.Error()))
+		fe = c.answered(req.Op, forgeapi.CodeResponseTooLarge, forgeapi.KindUpstream, answer, sanitize(err.Error()))
 	} else {
-		fe = c.fail(req.Op, "", forgeapi.KindTransient, status,
+		fe = c.answered(req.Op, "", forgeapi.KindTransient, answer,
 			"lost the answer from "+c.hostOf(req, err)+": "+sanitize(err.Error()))
 	}
-	c.log(ctx, req, exchange(req), status, fe.Code, fe.DiagID, fe.Kind, nil, started, fe.Message, true)
+	c.log(ctx, req, exchange(req), answer.Status, fe.Code, fe.DiagID, fe.Kind, nil, started, fe.Message, true)
 	return fe
 }
 
