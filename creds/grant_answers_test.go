@@ -3,6 +3,7 @@ package creds_test
 import (
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -207,35 +208,84 @@ func TestATokenEndpointThatTimedOutOrThrottledLeavesTheGrantPollable(t *testing.
 	}
 }
 
-// An OAuth endpoint's throttle carries the wait its Retry-After asks for, and no
-// budget figure, since the endpoints' answers state none; every other refusal of
-// theirs states no figure either.
-func TestAnOAuthEndpointsRefusalCarriesItsWaitAndNoBudgetFigure(t *testing.T) {
-	for _, status := range []int{http.StatusTooManyRequests, http.StatusBadRequest} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			ep := &endpoint{}
-			ep.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Retry-After", "30")
+// An OAuth endpoint's refusal carries the figures its answer states, read as the
+// family's client reads them, and on a limit the wait its Retry-After asks for:
+// GitLab's throttles name themselves on every answer, and a GitHub answer is a
+// limit by the same reading its API's answers take.
+func TestAnOAuthEndpointsRefusalCarriesItsAnswersFigures(t *testing.T) {
+	reset := time.Unix(1790000000, 0)
+	for _, test := range []struct {
+		header    http.Header
+		reset     time.Time
+		name      string
+		body      string
+		pool      string
+		family    forgeapi.Family
+		status    int
+		remaining int
+		wait      time.Duration
+		kind      forgeapi.ErrorKind
+		secondary bool
+	}{
+		{
+			name: "a_github_429_asking_a_wait", family: forgeapi.FamilyGitHub, status: http.StatusTooManyRequests,
+			header: http.Header{"Retry-After": {"30"}}, body: `{}`,
+			kind: forgeapi.KindRateLimited, remaining: forgeapi.BudgetRemainingUnknown, wait: 30 * time.Second, secondary: true,
+		},
+		{
+			name: "a_github_400_beside_a_retry_after", family: forgeapi.FamilyGitHub, status: http.StatusBadRequest,
+			header: http.Header{"Retry-After": {"30"}}, body: `{}`,
+			kind: forgeapi.KindUpstream, remaining: forgeapi.BudgetRemainingUnknown,
+		},
+		{
+			name: "a_github_403_with_the_budget_spent", family: forgeapi.FamilyGitHub, status: http.StatusForbidden,
+			header: http.Header{"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {"1790000000"}, "X-Ratelimit-Resource": {"core"}},
+			body:   `{"message":"API rate limit exceeded"}`,
+			kind:   forgeapi.KindRateLimited, pool: "core", reset: reset,
+		},
+		{
+			name: "a_github_403_carrying_the_secondary_message", family: forgeapi.FamilyGitHub, status: http.StatusForbidden,
+			header: http.Header{"X-Ratelimit-Remaining": {"4000"}, "X-Ratelimit-Reset": {"1790000000"}, "X-Ratelimit-Resource": {"core"}},
+			body:   `{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}`,
+			kind:   forgeapi.KindRateLimited, pool: "core", remaining: 4000, reset: reset, secondary: true,
+		},
+		{
+			name: "a_gitlab_throttle", family: forgeapi.FamilyGitLab, status: http.StatusTooManyRequests,
+			header: http.Header{
+				"Retry-After": {"30"}, "Ratelimit-Name": {"throttle_unauthenticated_web"},
+				"Ratelimit-Remaining": {"0"}, "Ratelimit-Reset": {"1790000000"},
+			},
+			body: `{}`, kind: forgeapi.KindRateLimited, pool: "throttle_unauthenticated_web", reset: reset, wait: 30 * time.Second,
+		},
+		{
+			name: "a_gitlab_refusal_with_budget_left", family: forgeapi.FamilyGitLab, status: http.StatusBadRequest,
+			header: http.Header{"Ratelimit-Name": {"throttle_unauthenticated_web"}, "Ratelimit-Remaining": {"10"}, "Ratelimit-Reset": {"1790000000"}},
+			body:   `{}`, kind: forgeapi.KindUpstream, pool: "throttle_unauthenticated_web", remaining: 10, reset: reset,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				maps.Copy(w.Header(), test.header)
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(status)
-				if _, err := io.WriteString(w, `{}`); err != nil {
+				w.WriteHeader(test.status)
+				if _, err := io.WriteString(w, test.body); err != nil {
 					t.Errorf("Setup: writing the answer: %v", err)
 				}
 			}))
-			t.Cleanup(ep.srv.Close)
-			_, err := creds.StartDeviceGrant(t.Context(), ep.conn(), forgeapi.FamilyGitHub,
+			t.Cleanup(srv.Close)
+			ep := &endpoint{srv: srv}
+			_, err := creds.StartDeviceGrant(t.Context(), ep.conn(), test.family,
 				creds.GrantRequest{ClientID: clientID, Scopes: scopes}, ep.options()...)
 			fe, ok := errors.AsType[*forgeapi.Error](err)
-			if !ok || fe.Status != status {
-				t.Fatalf("StartDeviceGrant() over a %d = %v, want a *forgeapi.Error at that status", status, err)
+			if !ok || fe.Status != test.status || fe.Kind != test.kind {
+				t.Fatalf("StartDeviceGrant() = %v, want a *forgeapi.Error of kind %v at status %d", err, test.kind, test.status)
 			}
-			wait := time.Duration(0)
-			if status == http.StatusTooManyRequests {
-				wait = 30 * time.Second
+			if fe.Pool != test.pool || fe.Remaining != test.remaining || !fe.Reset.Equal(test.reset) {
+				t.Errorf("StartDeviceGrant() = pool %q remaining %d reset %v, want the answer's %q, %d, %v",
+					fe.Pool, fe.Remaining, fe.Reset, test.pool, test.remaining, test.reset)
 			}
-			if fe.Remaining != forgeapi.BudgetRemainingUnknown || fe.RetryAfter != wait {
-				t.Errorf("StartDeviceGrant() over a %d = remaining %d retry after %v, want %d and %v",
-					status, fe.Remaining, fe.RetryAfter, forgeapi.BudgetRemainingUnknown, wait)
+			if fe.RetryAfter != test.wait || fe.Secondary != test.secondary {
+				t.Errorf("StartDeviceGrant() = retry after %v secondary %t, want %v, %t", fe.RetryAfter, fe.Secondary, test.wait, test.secondary)
 			}
 		})
 	}

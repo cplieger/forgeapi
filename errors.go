@@ -399,8 +399,8 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	Pool string
 	// Remaining is the remaining figure of the failing answer's own budget
 	// signal, read as [BudgetState.Remaining] is, on every error carrying a
-	// Status: [BudgetRemainingUnknown] where the answer carries none, as an OAuth
-	// endpoint's never does. The governor's deferral carries the held pool's. On
+	// Status, an OAuth endpoint's included: [BudgetRemainingUnknown] where the
+	// answer carries none. The governor's deferral carries the held pool's. On
 	// any other error it is zero and states nothing.
 	Remaining int
 	// Reset is when the budget window the failing answer reports renews, read

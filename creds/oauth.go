@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/githublimit"
+	"github.com/cplieger/forgeapi/v3/internal/gitlablimit"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
@@ -69,10 +71,11 @@ type answer struct {
 	Interval              int64  `json:"interval"`
 }
 
-// reply is what an endpoint answered beside its body: the status, zero where none
-// answered, and the headers.
+// reply is what an endpoint answered: the status, zero where none answered, the
+// headers and the body as it arrived.
 type reply struct {
 	header http.Header
+	body   []byte
 	status int
 }
 
@@ -85,7 +88,7 @@ func post(ctx context.Context, ep *transport.Conn, op, path string, form url.Val
 	if resp == nil {
 		return answer{}, reply{}, err
 	}
-	r := reply{header: resp.Header, status: resp.Status}
+	r := reply{header: resp.Header, body: resp.Body, status: resp.Status}
 	if err != nil {
 		return answer{}, r, err
 	}
@@ -98,9 +101,9 @@ func post(ctx context.Context, ep *transport.Conn, op, path string, form url.Val
 
 // endpointFailure is every failure of family's OAuth endpoints this package
 // builds, r being the reply it was reached on: it carries that reply's status,
-// [forgeapi.BudgetRemainingUnknown], since an endpoint's answers state no budget
-// figure, and on a throttle the wait its Retry-After asks for. On the zero reply
-// it carries no status and no figure.
+// the figures it states as the family's client reads them, and on a limit the
+// wait its Retry-After asks for, which on GitHub is a secondary limit's. On the
+// zero reply it carries no status and no figure.
 func endpointFailure(family forgeapi.Family, r reply, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
 	fe := &forgeapi.Error{
 		Code: code, Family: family, Status: r.status, Kind: kind,
@@ -109,11 +112,28 @@ func endpointFailure(family forgeapi.Family, r reply, code string, kind forgeapi
 	if r.status == 0 {
 		return fe
 	}
-	transport.AnswerFigures(fe, r.header, nil, nil)
+	switch family {
+	case forgeapi.FamilyGitHub:
+		transport.AnswerFigures(fe, r.header, githublimit.Signal, githublimit.Pool)
+		fe.Secondary = kind == forgeapi.KindRateLimited && githublimit.Read(r.status, r.header, r.body).Secondary
+	case forgeapi.FamilyGitLab:
+		transport.AnswerFigures(fe, r.header, gitlablimit.Signal, gitlablimit.Pool)
+	default:
+		transport.AnswerFigures(fe, r.header, nil, nil)
+	}
 	if kind == forgeapi.KindRateLimited {
 		fe.RetryAfter = transport.RetryAfter(r.header)
 	}
 	return fe
+}
+
+// limited reports whether a reply is family's rate limit: a 429, or on GitHub
+// whatever its API's answers are read a limit by.
+func limited(family forgeapi.Family, r reply) bool {
+	if r.status == http.StatusTooManyRequests {
+		return true
+	}
+	return family == forgeapi.FamilyGitHub && githublimit.Read(r.status, r.header, r.body).Limited
 }
 
 // granted reports whether an answer is a token.
@@ -206,8 +226,8 @@ var documentedErrors = map[string]bool{
 // an operator reads what it said.
 func unanswered(family forgeapi.Family, r reply, a *answer) *forgeapi.Error {
 	switch {
-	case r.status == http.StatusTooManyRequests:
-		return endpointFailure(family, r, "", forgeapi.KindRateLimited, "the OAuth endpoint answered too many requests")
+	case limited(family, r):
+		return endpointFailure(family, r, "", forgeapi.KindRateLimited, "the OAuth endpoint answered a rate limit")
 	case transport.Retryable(forgeapi.KindUnknown, r.status):
 		return endpointFailure(family, r, "", forgeapi.KindTransient, "the OAuth endpoint answered a timeout or a server failure")
 	}

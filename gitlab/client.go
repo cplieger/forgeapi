@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/forgeapi/v3/internal/gitlablimit"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
 )
 
@@ -84,8 +85,8 @@ func open(conn *forgeapi.Connection, clock func() time.Time, opts ...forgeapi.Op
 	settings := forgeapi.Resolve(opts...)
 	core, err := transport.Open(conn, &settings, &transport.Options{
 		Mapper:        mapper,
-		Signal:        signal,
-		Pool:          pool,
+		Signal:        gitlablimit.Signal,
+		Pool:          gitlablimit.Pool,
 		PoolParent:    parentPool,
 		DeriveAPIBase: deriveAPIBase,
 		Clock:         clock,
