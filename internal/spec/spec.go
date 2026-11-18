@@ -2041,8 +2041,8 @@ var Table = []Entry{
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, whose empty answer is CheckNone: the route refuses a credential that may not read commit statuses rather than answering it empty (lib/api/commit_statuses.rb)",
-		Requests:  Requests{Min: 1, Max: 3},
+		Exercises: "GET /api/v4/projects/{id}/repository/commits/{ref}, sent only where the ref is not a full commit id, whose id addresses GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, because that route matches pipelines on their sha and answers a branch, a tag or a short sha no row; its empty answer is CheckNone: the route refuses a credential that may not read commit statuses rather than answering it empty (lib/api/commit_statuses.rb)",
+		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 		Departures: []Departure{
 			{

@@ -1161,7 +1161,12 @@ func (c *Client) foldStatus(ctx context.Context, op string, repo forgeapi.RepoRe
 		out.Partial = c.partial(forgeapi.PartialPaginationCap, 0)
 		return out, nil
 	}
-	path := projectRoute(repo, "/repository/commits/"+url.PathEscape(ref)+"/statuses")
+	sha, err := c.commitOf(ctx, op, repo, ref)
+	if err != nil {
+		return forgeapi.CommitChecks{}, err
+	}
+	out.Ref = sha
+	path := projectRoute(repo, "/repository/commits/"+sha+"/statuses")
 	var rows []restStatus
 	truncated := false
 	for page := 1; page <= maxPages; page++ {
@@ -1187,13 +1192,6 @@ func (c *Client) foldStatus(ctx context.Context, op string, repo forgeapi.RepoRe
 			TargetURL:   row.TargetURL,
 			State:       c.checkState("commit status state (rest)", row.Status),
 		})
-		// The commit a fold read is the one the rows name, which resolves a branch
-		// the caller asked for onto its head. The FIRST row settles it, because a
-		// later one carrying a different commit would be a row for another commit
-		// entirely and overwriting from it would rename this answer.
-		if out.Ref == ref && row.SHA != "" {
-			out.Ref = row.SHA
-		}
 	}
 	count(&out)
 	if truncated {
@@ -1201,6 +1199,40 @@ func (c *Client) foldStatus(ctx context.Context, op string, repo forgeapi.RepoRe
 		out.Partial = c.partial(forgeapi.PartialPaginationCap, len(out.Contexts))
 	}
 	return out, nil
+}
+
+// commitOf is the full commit id ref names. The statuses route matches pipelines on
+// their sha column, so any other spelling of a commit (a branch, a tag, a short or
+// upper-case sha) answers no row there whatever ran on it
+// (https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/api/commit_statuses.rb).
+func (c *Client) commitOf(ctx context.Context, op string, repo forgeapi.RepoRef, ref string) (string, error) {
+	if commitID(ref) {
+		return ref, nil
+	}
+	var commit restCommitID
+	resp, err := c.readJSON(ctx, op, projectRoute(repo, "/repository/commits/"+url.PathEscape(ref)), nil, &commit)
+	if err != nil {
+		return "", err
+	}
+	if !commitID(commit.ID) {
+		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, "", forgeapi.KindUpstream,
+			"the commit read for "+strconv.Quote(ref)+" answered id "+strconv.Quote(resp.Quote(commit.ID))+", which is no full commit id")
+	}
+	return commit.ID, nil
+}
+
+// commitID reports whether ref is a full commit id as the pipelines record it: lower
+// hex, 40 digits under SHA-1 and 64 under SHA-256.
+func commitID(ref string) bool {
+	if len(ref) != 40 && len(ref) != 64 {
+		return false
+	}
+	for _, r := range ref {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // latestPerContext keeps one row per context, the one with the greatest identifier,

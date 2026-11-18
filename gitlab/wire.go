@@ -318,12 +318,15 @@ type (
 		Description string `json:"description"`
 		TargetURL   string `json:"target_url"`
 		Status      string `json:"status"`
-		SHA         string `json:"sha"`
 		// ID is the discriminator the de-duplication keeps the latest row by. This
 		// route answers the HISTORY of a context rather than its current state, and
 		// this identifier is monotonic per instance and present on every row, where
 		// the finish time is null on a row that is still running.
 		ID int64 `json:"id"`
+	}
+
+	restCommitID struct {
+		ID string `json:"id"`
 	}
 
 	restMetadata struct {

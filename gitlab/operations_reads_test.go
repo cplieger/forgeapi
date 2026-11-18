@@ -1,7 +1,9 @@
 package gitlab
 
 import (
+	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -82,19 +84,94 @@ func TestAStatusServedTwiceUnderOneIdentifierCountsOnceAsTheLaterRead(t *testing
 	}
 }
 
-func TestACommitStatusOnABranchNamesTheCommitItFolded(t *testing.T) {
-	const other = "0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293"
-	h := newHarness(t, map[string]string{
-		"GET /api/v4/projects/" + testEncoded + "/repository/commits/main/statuses": `[` +
-			statusRow(1, "build", "success") + `,` +
-			`{"id": 2, "name": "test", "status": "success", "sha": "` + other + `"}]`,
-	})
-	checks, err := h.client.CommitStatus(t.Context(), testRef(), "main")
-	if err != nil {
-		t.Fatalf("CommitStatus(main) = %v, want the fold", err)
+// The statuses route matches pipelines on their sha column, so a ref that is not a
+// full commit id answers [] there whatever ran on it; the read resolves it first.
+func TestACommitStatusAtAnythingButAFullCommitIDFoldsTheCommitItResolvesTo(t *testing.T) {
+	const commitsRoute = "GET /api/v4/projects/" + testEncoded + "/repository/commits/"
+	for name, ref := range map[string]string{
+		"a_branch":        "main",
+		"a_nested_branch": "feature/x",
+		"a_short_sha":     testHeadSHA[:8],
+		"an_upper_sha":    strings.ToUpper(testHeadSHA),
+	} {
+		t.Run(name, func(t *testing.T) {
+			escaped := strings.ReplaceAll(ref, "/", "%2F")
+			h := newHarness(t, map[string]string{
+				commitsRoute + escaped:               `{"id": "` + testHeadSHA + `", "short_id": "` + testHeadSHA[:8] + `"}`,
+				commitsRoute + escaped + "/statuses": `[]`,
+				statusesRoute:                        "[" + statusRow(1, "build", "failed") + "]",
+			})
+			checks, err := h.client.CommitStatus(t.Context(), testRef(), ref)
+			if err != nil {
+				t.Fatalf("CommitStatus(%s) = %v, want the fold", ref, err)
+			}
+			if checks.State != forgeapi.CheckFailing || checks.Failing != 1 || checks.Total != 1 {
+				t.Errorf("CommitStatus(%s) = %v with %d failing of %d, want %v with 1 failing of 1, the head's own row",
+					ref, checks.State, checks.Failing, checks.Total, forgeapi.CheckFailing)
+			}
+			if checks.Ref != testHeadSHA {
+				t.Errorf("CommitStatus(%s) = ref %q, want %q, the commit the ref resolved to", ref, checks.Ref, testHeadSHA)
+			}
+			want := []string{commitsRoute + escaped, statusesRoute}
+			if got := h.instance.arrived(); !slices.Equal(got, want) {
+				t.Errorf("CommitStatus(%s) sent %v, want %v", ref, got, want)
+			}
+		})
 	}
-	if checks.Ref != testHeadSHA {
-		t.Errorf("CommitStatus(main) = ref %q, want %q, the commit the first row names", checks.Ref, testHeadSHA)
+}
+
+func TestACommitStatusAtAFullCommitIDSendsNoCommitRead(t *testing.T) {
+	h := newHarness(t, map[string]string{statusesRoute: "[" + statusRow(1, "build", "success") + "]"})
+	checks, err := h.client.CommitStatus(t.Context(), testRef(), testHeadSHA)
+	if err != nil {
+		t.Fatalf("CommitStatus = %v, want the fold", err)
+	}
+	if checks.Ref != testHeadSHA || checks.State != forgeapi.CheckPassing {
+		t.Errorf("CommitStatus = ref %q state %v, want %q %v", checks.Ref, checks.State, testHeadSHA, forgeapi.CheckPassing)
+	}
+	if got, want := h.instance.arrived(), []string{statusesRoute}; !slices.Equal(got, want) {
+		t.Errorf("CommitStatus sent %v, want %v", got, want)
+	}
+}
+
+func TestACommitStatusWhoseCommitReadNamesNoFullIDFoldsNothing(t *testing.T) {
+	const commitRoute = "GET /api/v4/projects/" + testEncoded + "/repository/commits/main"
+	for name, body := range map[string]string{
+		"no_id":    `{"short_id": "1f0e7b3c"}`,
+		"short_id": `{"id": "1f0e7b3c"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, map[string]string{commitRoute: body})
+			_, err := h.client.CommitStatus(t.Context(), testRef(), "main")
+			var fe *forgeapi.Error
+			if !asForgeError(err, &fe) || fe.Kind != forgeapi.KindUpstream {
+				t.Errorf("CommitStatus(main) over %s = %v, want a %v error", body, err, forgeapi.KindUpstream)
+			}
+			if got, want := h.instance.arrived(), []string{commitRoute}; !slices.Equal(got, want) {
+				t.Errorf("CommitStatus(main) over %s sent %v, want %v", body, got, want)
+			}
+		})
+	}
+}
+
+func TestACommitStatusAtAMissingBranchFailsAsAMissingCommitDoes(t *testing.T) {
+	const missing = `{"message": "404 Commit Not Found"}`
+	failure := func(route, ref string) *forgeapi.Error {
+		t.Helper()
+		h := newHarness(t, map[string]string{route: missing})
+		h.instance.status(route, http.StatusNotFound)
+		_, err := h.client.CommitStatus(t.Context(), testRef(), ref)
+		var fe *forgeapi.Error
+		if !asForgeError(err, &fe) {
+			t.Fatalf("CommitStatus(%s) = %v, want a forge error", ref, err)
+		}
+		return fe
+	}
+	bySHA := failure(statusesRoute, testHeadSHA)
+	byBranch := failure("GET /api/v4/projects/"+testEncoded+"/repository/commits/gone", "gone")
+	if byBranch.Kind != bySHA.Kind || byBranch.Code != bySHA.Code || byBranch.Status != bySHA.Status {
+		t.Errorf("CommitStatus(gone) = kind %v code %q status %d, want the missing commit's kind %v code %q status %d",
+			byBranch.Kind, byBranch.Code, byBranch.Status, bySHA.Kind, bySHA.Code, bySHA.Status)
 	}
 }
 
