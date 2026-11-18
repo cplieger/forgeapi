@@ -9,9 +9,12 @@ This page covers how a client reaches an instance, with the connection settings,
 - `WebBaseURL` is required. It is the origin of the web pages the instance serves, which is also the origin a git remote carries. A URL with a username, a query or a fragment is refused with `CodeConnectionInvalid`.
 - `APIBaseURL` is optional. When it is empty, each family derives it from `WebBaseURL`.
 - `CABytes` is an optional PEM bundle for an instance with a private certificate authority. It replaces the system trust store for that connection rather than adding to it.
-- `ClientCert` and `ClientKey` are an optional pair for mutual TLS. A pair with only one half is refused.
-- `Proxy` is the proxy this connection's traffic leaves through, as an `http`, `https`, `socks5` or `socks5h` URL. Any other scheme is refused with `CodeConnectionInvalid`. The library never reads `HTTPS_PROXY`, `HTTP_PROXY` or `NO_PROXY`.
-- `Headers` are extra request headers sent on every request to this connection, for a gateway in front of a self-hosted instance. A redirect that changes the scheme, host or port drops them. The names `forgeapi.ReservedHeaders` returns are refused rather than overridden.
+- `ClientCert` and `ClientKey` are an optional pair for mutual TLS. `ClientKey` is the PEM private key as a `masked.Secret`, built with `masked.NewSecret(pem)`. A pair with only one half is refused.
+- `Proxy` is the proxy this connection's traffic leaves through, as an `http`, `https`, `socks5` or `socks5h` URL. Any other scheme is refused with `CodeConnectionInvalid`, and so is a URL with a username or password in it. The library never reads `HTTPS_PROXY`, `HTTP_PROXY` or `NO_PROXY`.
+- `ProxyUsername` and `ProxyPassword` are the proxy's credentials, with the password as a `masked.Secret`. They are sent as Basic `Proxy-Authorization` to an `http` or `https` proxy and as a username and password to a SOCKS5 one. A password without a username, or either without a `Proxy`, is refused with `CodeConnectionInvalid`. So is a pair the proxy's protocol cannot carry. For an `http` or `https` proxy, that is a username with a colon, or a control character in either. For a `socks5` or `socks5h` proxy, it is either over 255 bytes. An `http`, `socks5` or `socks5h` proxy receives them unencrypted. An `https` proxy receives them over TLS.
+- `Headers` are extra request headers sent on every request to this connection, for a gateway in front of a self-hosted instance. Each `Header` value is a `masked.Secret`, because a gateway's client secret is the common case. A redirect that changes the scheme, host or port drops them. The names `forgeapi.ReservedHeaders` returns are refused rather than overridden.
+
+The key, the proxy password and the header values print as `[redacted]` under every `fmt` verb, slog and JSON, so a `Connection`, or a credential source holding one, can be logged whole.
 
 The credential is the `WithCredentialSource` option. A family's constructor refuses a connection without one rather than sending anonymous requests.
 

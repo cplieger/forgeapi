@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/go/masked"
 )
 
 // The two origins a containment case needs. They share one PORT and differ in host,
@@ -484,7 +485,7 @@ func hostOnly(hostport string) string {
 func connWithHeaders(base string) forgeapi.Connection {
 	return forgeapi.Connection{
 		WebBaseURL: base,
-		Headers:    []forgeapi.Header{{Name: "X-Gateway-Secret", Value: "gateway-literal"}},
+		Headers:    []forgeapi.Header{{Name: "X-Gateway-Secret", Value: masked.NewSecret("gateway-literal")}},
 	}
 }
 

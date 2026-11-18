@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/go/masked"
 )
 
 // Both products spend the old pair the moment they issue the new one, so a rotation
@@ -80,7 +81,7 @@ func TestStoredSource_hands_over_a_record_saved_while_its_refresh_failed(t *test
 			}()
 			<-arrived
 			reconnected := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, 8*time.Hour)
-			reconnected.Token, reconnected.RefreshToken = "token-reconnected", "refresh-reconnected"
+			reconnected.Token, reconnected.RefreshToken = masked.NewSecret("token-reconnected"), masked.NewSecret("refresh-reconnected")
 			save(t, store, "conn", reconnected)
 			close(release)
 
@@ -113,8 +114,8 @@ func TestStoredSource_refuses_a_refresh_answer_whose_lifetime_reads_as_neither_k
 			if code := codeOf(err); code != forgeapi.CodeValidation || token != "" {
 				t.Errorf("Token() over %s = (%q, %v), want no token and code %q", body, token, err, forgeapi.CodeValidation)
 			}
-			if rec := load(t, store, "conn"); rec.Kind != forgeapi.CredKindRotatingOAuth || rec.Token != "token-old" {
-				t.Errorf("stored record = (%v, %q), want the rotating record untouched", rec.Kind, rec.Token)
+			if rec := load(t, store, "conn"); rec.Kind != forgeapi.CredKindRotatingOAuth || rec.Token.Reveal() != "token-old" {
+				t.Errorf("stored record = (%v, %q), want the rotating record untouched", rec.Kind, rec.Token.Reveal())
 			}
 		})
 	}

@@ -131,7 +131,7 @@ func (h *Helper) get(ctx context.Context, attrs attributes, out, diag io.Writer)
 			"family", rec.Family.String(), "instance", instance, "reason", reason)
 		return h.decline(reason, instance, diag)
 	}
-	if _, err := fmt.Fprintf(out, "username=%s\npassword=%s\n", username, rec.Token); err != nil {
+	if _, err := fmt.Fprintf(out, "username=%s\npassword=%s\n", username, rec.Token.Reveal()); err != nil {
 		return errAnswerUnwritten
 	}
 	return nil
@@ -230,7 +230,7 @@ func answer(rec *creds.Record, now time.Time) (username, reason string) {
 	default:
 		return "", reasonReconnectRequired
 	}
-	if !carriable(username) || !carriable(rec.Token) {
+	if !carriable(username) || !carriable(rec.Token.Reveal()) {
 		return "", reasonReconnectRequired
 	}
 	return username, ""
@@ -265,7 +265,7 @@ func standing(rec *creds.Record, now time.Time) string {
 // record holds no refresh token, so it never is.
 func renewable(rec *creds.Record, now time.Time) bool {
 	refreshes := rec.Family == forgeapi.FamilyGitHub || rec.Family == forgeapi.FamilyGitLab
-	return refreshes && rec.RefreshToken != "" &&
+	return refreshes && !rec.RefreshToken.IsZero() &&
 		(rec.RefreshExpiry.IsZero() || now.Before(rec.RefreshExpiry))
 }
 

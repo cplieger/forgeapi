@@ -191,11 +191,11 @@ func TestANotModifiedAnswerToAnUnconditionalReadIsSentOnceMore(t *testing.T) {
 		ctx  func(context.Context) context.Context
 		name string
 		opts []forgeapi.Option
-		hdrs []forgeapi.Header
+		hdrs http.Header
 		kept bool
 	}{
 		{name: "a_cacheable_read", kept: true},
-		{name: "a_read_forbidding_storage", hdrs: []forgeapi.Header{{Name: "Cache-Control", Value: "no-store"}}},
+		{name: "a_read_forbidding_storage", hdrs: http.Header{"Cache-Control": {"no-store"}}},
 		{name: "the_cache_switched_off", opts: []forgeapi.Option{forgeapi.WithReadCache(0)}},
 		{name: "a_read_inside_a_write", ctx: func(ctx context.Context) context.Context { return CallWrite(ctx, "MergePR") }},
 	} {
@@ -393,7 +393,7 @@ func TestTheKeyFoldsTheCredentialAndEveryHeaderThatVariesTheAnswer(t *testing.T)
 			o := newOrigin(`{"login":"octo"}`, `"v1"`)
 			c := openTestConn(t, forgeapi.Connection{WebBaseURL: serveOrigin(t, o).URL})
 			req := func(value string) *Request {
-				return &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user", Headers: []forgeapi.Header{{Name: header, Value: value}}}
+				return &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user", Headers: http.Header{header: {value}}}
 			}
 			if _, _, err := read(t, c, req("one")); err != nil {
 				t.Fatalf("Setup: %v", err)

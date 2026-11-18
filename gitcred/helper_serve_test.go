@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/gitcred"
+	"github.com/cplieger/go/masked"
 )
 
 // Two connections may share an origin, and git must get the same one on every
@@ -21,7 +22,7 @@ func TestGet_answers_the_first_connection_by_key_where_several_share_the_origin(
 	store, _ := openStore(t)
 	for _, key := range []string{"conn-b", "conn-c", "conn-a"} {
 		rec := record(forgeapi.FamilyGitHub, forge)
-		rec.Token = "token-of-" + key
+		rec.Token = masked.NewSecret("token-of-" + key)
 		save(t, store, key, rec)
 	}
 	c := &tally{}
@@ -121,7 +122,7 @@ func TestNewFor_AnswersOnlyTheKeysItIsGiven(t *testing.T) {
 	store, _ := openStore(t)
 	for _, key := range []string{"conn-a", "conn-b"} {
 		rec := record(forgeapi.FamilyGitHub, forge)
-		rec.Token = "token-of-" + key
+		rec.Token = masked.NewSecret("token-of-" + key)
 		save(t, store, key, rec)
 	}
 	var mu sync.Mutex

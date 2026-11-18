@@ -150,8 +150,10 @@ type Connection struct {
 	APIBaseURL string
 	CABytes []byte
 	ClientCert []byte
-	ClientKey []byte
+	ClientKey masked.Secret
 	Proxy string
+	ProxyUsername string
+	ProxyPassword masked.Secret
 	Headers []Header
 }
 type ConnectionCaps struct {
@@ -279,7 +281,7 @@ type GrantCaps struct {
 }
 type Header struct {
 	Name string
-	Value string
+	Value masked.Secret
 }
 type Identity interface {
 	Whoami(ctx context.Context) (Account, error)
@@ -739,7 +741,7 @@ func InstallationOfOrg(login string) Installation
 func InstallationOfRepo(fullName string) Installation
 func InstallationOfUser(login string) Installation
 type InstallationToken struct {
-	Token Secret
+	Token masked.Secret
 	Expiry time.Time
 }
 func NewAppKey(issuer string, signer crypto.Signer) (*AppKey, error)
@@ -753,10 +755,10 @@ type Record struct {
 	Family forgeapi.Family
 	WebBaseURL string
 	Kind forgeapi.CredKind
-	Token string
+	Token masked.Secret
 	Issued time.Time
 	Expiry time.Time
-	RefreshToken string
+	RefreshToken masked.Secret
 	RefreshExpiry time.Time
 	ClientID string
 	Scopes []string
@@ -764,15 +766,6 @@ type Record struct {
 	Usability Usability
 }
 func (r *Record) Equal(o *Record) bool
-type Secret struct {
-	// contains unexported members
-}
-func (s Secret) Format(f fmt.State, _ rune)
-func (s Secret) IsZero() bool
-func (s Secret) LogValue() slog.Value
-func (s Secret) MarshalJSON() ([]byte, error)
-func (s Secret) Reveal() string
-func (s Secret) String() string
 func StartDeviceGrant(ctx context.Context, conn forgeapi.Connection, family forgeapi.Family, req GrantRequest, opts ...forgeapi.Option) (*DeviceGrant, error)
 type Store interface {
 	Load(key string) (Record, bool, error)
@@ -786,7 +779,7 @@ type StoredSource struct {
 }
 func (s *StoredSource) Kind() forgeapi.CredKind
 func (s *StoredSource) State() forgeapi.CredState
-func (s *StoredSource) StoredToken() (token string, state forgeapi.CredState, err error)
+func (s *StoredSource) StoredToken() (token masked.Secret, state forgeapi.CredState, err error)
 func (s *StoredSource) Token(ctx context.Context) (string, error)
 type Usability int
 func (u Usability) String() string

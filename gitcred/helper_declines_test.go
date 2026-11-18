@@ -7,6 +7,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/go/masked"
 )
 
 // An expired token is "expired" only while the server can still renew it. A static
@@ -20,10 +21,10 @@ func TestGet_declines_an_expired_token_nothing_can_renew_as_reconnect_required(t
 		name string
 	}{
 		{name: "static", edit: func(r *creds.Record) {
-			r.Kind, r.RefreshToken, r.RefreshExpiry = forgeapi.CredKindStaticPAT, "", time.Time{}
+			r.Kind, r.RefreshToken, r.RefreshExpiry = forgeapi.CredKindStaticPAT, masked.Secret{}, time.Time{}
 		}},
 		{name: "rotating_without_a_refresh_token", edit: func(r *creds.Record) {
-			r.RefreshToken, r.RefreshExpiry = "", time.Time{}
+			r.RefreshToken, r.RefreshExpiry = masked.Secret{}, time.Time{}
 		}},
 		{name: "refresh_token_lapsed", edit: func(r *creds.Record) { r.RefreshExpiry = past }},
 		{name: "family_without_a_token_endpoint", edit: func(r *creds.Record) { r.Family = forgeapi.FamilyGitea }},
@@ -79,7 +80,7 @@ func TestGet_declines_a_value_the_protocol_cannot_carry(t *testing.T) {
 		name   string
 		family forgeapi.Family
 	}{
-		{name: "token", family: forgeapi.FamilyGitHub, edit: func(r *creds.Record) { r.Token += injected }},
+		{name: "token", family: forgeapi.FamilyGitHub, edit: func(r *creds.Record) { r.Token = masked.NewSecret(r.Token.Reveal() + injected) }},
 		{name: "account", family: forgeapi.FamilyGitea, edit: func(r *creds.Record) { r.Account += injected }},
 	}
 	for _, tc := range tests {

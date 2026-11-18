@@ -17,6 +17,8 @@ For a static personal access token, a type of your own that implements `forgeapi
 
 The `Example` in the `creds` package shows the whole flow. It renders the user code, polls at the interval the grant states, saves the record and builds a client on a source over that record.
 
+A record's `Token` and `RefreshToken` are a `masked.Secret` from [`github.com/cplieger/go/masked`](https://pkg.go.dev/github.com/cplieger/go/masked). They print as `[redacted]` under every `fmt` verb, slog and JSON, and only `Reveal` answers the text. Build a record for a personal access token with `masked.NewSecret(token)`, and compare two tokens with `Equal`.
+
 ## Keeping the token fresh
 
 `creds.StoredSource` is a `CredentialSource` over one stored record. It refreshes a rotating token once the token's expiry is inside the refresh lead, which `WithRefreshLead` sets. One caller refreshes at a time while the others wait. A record it cannot refresh answers `CodeReconnectRequired`.
@@ -30,7 +32,7 @@ Every reader of the store honours the mark, so a marked record is never handed o
 
 A rotation whose write to the store fails keeps the new pair in memory. That call fails and `State` answers `CredRefreshDue`. The next `Token` call in the same process stores the pair before it does anything else.
 
-`StoredToken` reads the stored token and its `State` in one read of the store, and never refreshes, writes or waits on a refresh in flight. Use it when another part of your program owns refreshing, so a request only reads what is stored. It hands over a token that is valid, refresh-due or refreshing and not yet expired. It fails with `CodeReconnectRequired` where `State` answers `CredReconnectRequired`. A token whose refresh is due or in flight fails with a retryable transient error once it has expired, until a `Token` call renews it. Where a rotated pair waits in memory to replace the stored token, `StoredToken` hands over the pair's token, which the forge issued and the next `Token` call stores. It fails the same retryable way once the pair's token has expired or its refresh token has lapsed.
+`StoredToken` reads the stored token, as a `masked.Secret`, and its `State` in one read of the store, and never refreshes, writes or waits on a refresh in flight. Use it when another part of your program owns refreshing, so a request only reads what is stored. It hands over a token that is valid, refresh-due or refreshing and not yet expired. It fails with `CodeReconnectRequired` where `State` answers `CredReconnectRequired`. A token whose refresh is due or in flight fails with a retryable transient error once it has expired, until a `Token` call renews it. Where a rotated pair waits in memory to replace the stored token, `StoredToken` hands over the pair's token, which the forge issued and the next `Token` call stores. It fails the same retryable way once the pair's token has expired or its refresh token has lapsed.
 
 ## The store
 
@@ -40,6 +42,8 @@ To keep the records in storage of your own, such as an encrypted database, imple
 
 - `Load`, `Keys`, `Put` and `Delete` read and write records by key.
 - `Swap` stores the new record only where the stored one still equals the old, compared with `Record.Equal`, and reports whether it did. A rotation commits through it, so a record you saved during a refresh is kept.
+
+A backend that encodes the `Record` struct itself does not round-trip its tokens. This holds for `encoding/json`, `encoding/gob`, `encoding/xml` and any other reflection-based encoder. `encoding/json` writes `[redacted]` for a set token and an empty string for a zero one, and reads neither back. `encoding/gob` refuses the `Record`, and `encoding/xml` writes empty elements without an error. Store `Token.Reveal()` and `RefreshToken.Reveal()` in a type of your own and rebuild each with `masked.NewSecret`.
 
 Every method must be durable before it returns, because a rotated pair has no other copy. A `Swap` that fails is tried again by the next `Token` call with the same records, so a write that landed before its error is found and kept. Build one store per backend and share it between every `StoredSource` over it: the custody lives in the store.
 
@@ -61,7 +65,7 @@ The helper never refreshes a token. Registering it with git, and the command lin
 
 `creds.AppKey` holds a GitHub App's identity: its issuer and the signer of its private key.
 
-- `creds.ParseAppKeyPEM` reads the private key file GitHub issued, one PEM block holding a PKCS #1 or PKCS #8 RSA key.
+- `creds.ParseAppKeyPEM` reads the private key file GitHub issued, one PEM block holding a PKCS #1 or PKCS #8 RSA key. The key it holds is a `masked.Secret`, so no printer of the `AppKey` shows any part of it.
 - `creds.NewAppKey` takes any `crypto.Signer`, so a key held in a KMS or an HSM never enters your process.
 - The issuer is the App's client ID or its numeric App ID. GitHub accepts both and recommends the client ID.
 - Both constructors refuse, with `CodeAppKeyInvalid`, a key that is not RSA or is under 2048 bits, malformed PEM, and an issuer that is empty or holds whitespace. No refusal quotes the key or the issuer.
@@ -92,7 +96,7 @@ A plain `http` base is refused with `CodePlaintextRefused`, even under `WithPlai
 - `Mint` always mints a new token and answers it as an `InstallationToken` with its `Expiry`, for a process that reads its token once. It leaves the source's own token in place.
 - `Resolve` answers the installation's ID, looking it up once, so you can build a client that needs the ID before any token exists.
 - A mint changes no forge object, so the source mints under `WithMutations(false)`, and mints for a client's write whatever its own mutation setting.
-- `InstallationToken.Token` is a `creds.Secret`. It prints as `[redacted]` under every `fmt` verb, slog and JSON, and only `Reveal` answers the token.
+- `InstallationToken.Token` is a `masked.Secret`. It prints as `[redacted]` under every `fmt` verb, slog and JSON, and only `Reveal` answers the token.
 
 Treat a token as opaque. GitHub's newer installation tokens are long, and their length and format can change.
 

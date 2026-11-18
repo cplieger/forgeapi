@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/go/masked"
 )
 
 var errCut = errors.New("connection cut")
@@ -115,7 +116,7 @@ func TestARequestForbiddingStorageIsNeverKept(t *testing.T) {
 	o := newOrigin(`{"login":"octo"}`, `"v1"`)
 	c := openTestConn(t, forgeapi.Connection{
 		WebBaseURL: serveOrigin(t, o).URL,
-		Headers:    []forgeapi.Header{{Name: "Cache-Control", Value: "max-age=0, no-store"}},
+		Headers:    []forgeapi.Header{{Name: "Cache-Control", Value: masked.NewSecret("max-age=0, no-store")}},
 	})
 	for range 2 {
 		if _, _, err := read(t, c, nil); err != nil {

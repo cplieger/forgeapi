@@ -548,14 +548,14 @@ func (c *Client) accountKind(raw string) forgeapi.AccountKind {
 // unmapped is what every one of this family's totality tables does with a value it
 // does not carry: count it by family and field, and log the value, which is what
 // tells a maintainer the upstream enumeration grew rather than leaving an unknown
-// with no cause. The value is the instance's own text, so it is bounded and
-// rune-sanitized before it reaches a handler this library cannot see.
+// with no cause. The value is the instance's own text, so it is quoted
+// ([transport.Conn.Quote]) before it reaches a handler this library cannot see.
 func (c *Client) unmapped(field, value string) {
 	if counters := c.core.Counters(); counters.UnknownEnumValue != nil {
 		counters.UnknownEnumValue(forgeapi.FamilyGitea, field)
 	}
 	c.core.Logger().Warn("forgeapi unmapped enumeration value",
-		"family", forgeapi.FamilyGitea.String(), "field", field, "value", transport.Sanitize(value))
+		"family", forgeapi.FamilyGitea.String(), "field", field, "value", c.core.Quote(value))
 }
 
 // normalizeAction is the per-item action state. Four of its fields are what this

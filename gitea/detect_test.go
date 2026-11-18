@@ -353,3 +353,35 @@ func TestRepoAffordancesRefusesWhatItCannotAnswerFor(t *testing.T) {
 		}
 	})
 }
+
+// TestTheCapabilityEvidenceCarriesNoPartOfTheCredential holds the instance's text
+// that evidence names, the version body's release and an API document's path, to
+// the quoting the rest of its answer gets: an instance echoing the credential in
+// either reaches no detail with it.
+func TestTheCapabilityEvidenceCarriesNoPartOfTheCredential(t *testing.T) {
+	const route = "/repos/{owner}/{repo}/actions/runs/{run}/jobs/" + testToken + "/" + rerunFailedJobs
+	h := newHarness(t, map[string]string{
+		"GET /api/v1/version":  `{"version":"1.27.0+` + testToken + `"}`,
+		"GET /swagger.v1.json": `{"info":{"title":"Gitea API"},"paths":{"` + route + `":{"post":{}}}}`,
+		repoRoute:              `{"full_name":"example/example","default_branch":"trunk","permissions":{"push":true}}`,
+	})
+	caps, err := h.client.ConnectionCaps(t.Context())
+	if err != nil {
+		t.Fatalf("ConnectionCaps = %v, want the capabilities", err)
+	}
+	affordances, err := h.client.RepoAffordances(t.Context(), testRef())
+	if err != nil {
+		t.Fatalf("RepoAffordances = %v, want the affordances", err)
+	}
+	for name, test := range map[string]struct{ detail, kept string }{
+		"ConnectionCaps rerun_checks": {caps.Ev[forgeapi.CapRerunChecks].Detail, "swagger declares /repos/"},
+		"RepoAffordances merge_train": {affordances.Ev[forgeapi.CapMergeTrain].Detail, "version 1.27.0+"},
+	} {
+		if strings.Contains(test.detail, testToken) {
+			t.Errorf("%s = detail %q, want no %q: the text is the instance's", name, test.detail, testToken)
+		}
+		if !strings.Contains(test.detail, test.kept) {
+			t.Errorf("%s = detail %q, want %q", name, test.detail, test.kept)
+		}
+	}
+}

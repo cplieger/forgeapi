@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/forgeapi/v3"
@@ -37,6 +38,13 @@ func TestAfterRemovalsNamesWhatARefusalLeftRemoved(t *testing.T) {
 		fe := &forgeapi.Error{Kind: forgeapi.KindForbidden, Message: "Forbidden"}
 		if err := AfterRemovals(fe, nil); err != error(fe) || fe.Message != "Forbidden" {
 			t.Errorf("AfterRemovals with nothing removed = %v with message %q, want it unchanged", err, fe.Message)
+		}
+	})
+	t.Run("a_name_holding_a_line_break", func(t *testing.T) {
+		fe := &forgeapi.Error{Kind: forgeapi.KindForbidden, Message: "Forbidden"}
+		if err := AfterRemovals(fe, []string{"bug\nfix"}); err != error(fe) || strings.ContainsAny(fe.Message, "\r\n") ||
+			!strings.Contains(fe.Message, "bug") || !strings.Contains(fe.Message, "fix") {
+			t.Errorf("AfterRemovals = %v with message %q, want one line still naming the label", err, fe.Message)
 		}
 	})
 	t.Run("a_context_sentinel", func(t *testing.T) {

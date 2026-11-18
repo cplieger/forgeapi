@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
 	"github.com/cplieger/forgeapi/v3/gitcred"
+	"github.com/cplieger/go/masked"
 )
 
 // tally records what the helper's two counters report.
@@ -76,10 +77,10 @@ func record(family forgeapi.Family, base string) creds.Record {
 		Family:        family,
 		WebBaseURL:    base,
 		Kind:          forgeapi.CredKindRotatingOAuth,
-		Token:         "token-current",
+		Token:         masked.NewSecret("token-current"),
 		Issued:        now,
 		Expiry:        now.Add(8 * time.Hour),
-		RefreshToken:  "refresh-current",
+		RefreshToken:  masked.NewSecret("refresh-current"),
 		RefreshExpiry: now.Add(30 * 24 * time.Hour),
 		ClientID:      "example-client-id",
 		Account:       "example-user",
@@ -257,8 +258,8 @@ func TestGet_declines_an_expired_token_without_refreshing_it(t *testing.T) {
 	checkDeclined(t, got, c, "expired")
 	checkOneLine(t, got.diag)
 	after, ok, err := store.Load("conn")
-	if err != nil || !ok || after.Token != rec.Token || after.RefreshToken != rec.RefreshToken {
-		t.Errorf("the stored pair after the decline = (%q, %q, %v, %v), want it unchanged", after.Token, after.RefreshToken, ok, err)
+	if err != nil || !ok || !after.Token.Equal(rec.Token) || !after.RefreshToken.Equal(rec.RefreshToken) {
+		t.Errorf("the stored pair after the decline = (%q, %q, %v, %v), want it unchanged", after.Token.Reveal(), after.RefreshToken.Reveal(), ok, err)
 	}
 }
 
@@ -332,8 +333,8 @@ func TestStore_is_ignored(t *testing.T) {
 		t.Errorf("store wrote %v back, want nothing", got.attrs)
 	}
 	after, ok, err := store.Load("conn")
-	if err != nil || !ok || after.Token != rec.Token {
-		t.Errorf("the stored token after store = (%q, %v, %v), want %q unchanged", after.Token, ok, err, rec.Token)
+	if err != nil || !ok || !after.Token.Equal(rec.Token) {
+		t.Errorf("the stored token after store = (%q, %v, %v), want %q unchanged", after.Token.Reveal(), ok, err, rec.Token.Reveal())
 	}
 	keys, err := store.Keys()
 	if err != nil || !slices.Equal(keys, []string{"conn"}) {
@@ -352,8 +353,8 @@ func TestErase_keeps_the_connection_and_is_counted(t *testing.T) {
 	serve(t, helper(store, c), "erase",
 		attributes("https", "forge.example", "username=oauth2", "password=token-current"))
 	after, ok, err := store.Load("conn")
-	if err != nil || !ok || after.Token != rec.Token || after.RefreshToken != rec.RefreshToken {
-		t.Errorf("the stored pair after erase = (%q, %q, %v, %v), want it kept", after.Token, after.RefreshToken, ok, err)
+	if err != nil || !ok || !after.Token.Equal(rec.Token) || !after.RefreshToken.Equal(rec.RefreshToken) {
+		t.Errorf("the stored pair after erase = (%q, %q, %v, %v), want it kept", after.Token.Reveal(), after.RefreshToken.Reveal(), ok, err)
 	}
 	if e := c.erased(); !slices.Equal(e, []string{forgeapi.FamilyGitLab.String()}) {
 		t.Errorf("HelperErase reported %v, want [%s]", e, forgeapi.FamilyGitLab)

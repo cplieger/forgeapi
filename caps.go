@@ -102,7 +102,8 @@ type Evidence struct {
 	// seven Evidence* constants, one per step, or [EvidenceUnknown] where none
 	// did.
 	Source EvidenceSource
-	// Detail is the version, the endpoint, or why the answer is unknown.
+	// Detail is the version, the endpoint, or why the answer is unknown. Text it
+	// quotes from an answer has the exchange's secrets redacted.
 	Detail string
 }
 

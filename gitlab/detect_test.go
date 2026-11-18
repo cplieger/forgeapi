@@ -263,3 +263,26 @@ func TestTheGovernorPublishesTheSignalThisProductSends(t *testing.T) {
 			got.RotationCursor)
 	}
 }
+
+// TestTheCapabilityEvidenceCarriesNoPartOfTheCredential holds the re-run evidence,
+// which spells the version the metadata endpoint answered, free of the token the
+// read carried while it keeps the version's other words.
+func TestTheCapabilityEvidenceCarriesNoPartOfTheCredential(t *testing.T) {
+	h := newHarness(t, map[string]string{metadataRoute: `{"version":"18.4.0 ` + testToken + `"}`})
+	h.instance.answerHeader(headerMeta, `{"correlation_id":"example","version":"1"}`)
+	caps, err := h.client.ConnectionCaps(t.Context())
+	if err != nil {
+		t.Fatalf("ConnectionCaps = %v, want the capabilities", err)
+	}
+	for name, detail := range map[string]string{
+		"re-run":       caps.Ev[forgeapi.CapRerunChecks].Detail,
+		"re-run scope": caps.RerunScopeEv.Detail,
+	} {
+		if strings.Contains(detail, testToken) {
+			t.Errorf("ConnectionCaps = %s evidence %q, want no %q: the version is the instance's text", name, detail, testToken)
+		}
+		if !strings.Contains(detail, "gitlab 18.4.0 ") {
+			t.Errorf("ConnectionCaps = %s evidence %q, want the version the instance answered", name, detail)
+		}
+	}
+}

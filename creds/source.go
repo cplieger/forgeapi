@@ -9,6 +9,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
+	"github.com/cplieger/go/masked"
 )
 
 // standing is where a stored record sits, read from the record and its key's
@@ -97,17 +98,22 @@ func NewStoredSource(store Store, key string, conn forgeapi.Connection, opts ...
 // [forgeapi.CodeReconnectRequired] naming why; a waiter fails with its context's
 // error. A mark the store refused is written by the next call that can write.
 func (s *StoredSource) Token(ctx context.Context) (string, error) {
+	token, err := s.token(ctx)
+	return token.Reveal(), err
+}
+
+func (s *StoredSource) token(ctx context.Context) (masked.Secret, error) {
 	rot := s.store.acquire(s.key)
 	gone := false
 	defer func() { s.store.release(rot, gone) }()
 	rot.settle()
 	if err := s.storeHeld(ctx, rot); err != nil {
-		return "", err
+		return masked.Secret{}, err
 	}
 	for range maxTurns {
 		rec, ok, err := s.store.Load(s.key)
 		if err != nil {
-			return "", err
+			return masked.Secret{}, err
 		}
 		gone = !ok
 		switch st := s.standing(rot, &rec, ok, time.Now()); st {
@@ -115,16 +121,16 @@ func (s *StoredSource) Token(ctx context.Context) (string, error) {
 			return rec.Token, nil
 		case standLapsed:
 			s.lapse(rot, &rec)
-			return "", ended(&rec, st)
+			return masked.Secret{}, ended(&rec, st)
 		case standSpent, standRefused, standGone:
-			return "", ended(&rec, st)
+			return masked.Secret{}, ended(&rec, st)
 		}
 		token, replaced, err := s.refresh(ctx, rot)
 		if !replaced {
 			return token, err
 		}
 	}
-	return "", &forgeapi.Error{
+	return masked.Secret{}, &forgeapi.Error{
 		Kind: forgeapi.KindTransient, Retryable: transport.Retryable(forgeapi.KindTransient, 0),
 		Message: "the credential was replaced during each refresh of it",
 	}
@@ -161,26 +167,26 @@ func (s *StoredSource) State() forgeapi.CredState {
 // flight, or a held pair whose token expired or whose refresh token lapsed,
 // fails as transient and retryable. A store that cannot be read fails with the
 // store's error and [forgeapi.CredUnknown].
-func (s *StoredSource) StoredToken() (token string, state forgeapi.CredState, err error) {
+func (s *StoredSource) StoredToken() (token masked.Secret, state forgeapi.CredState, err error) {
 	rec, ok, err := s.store.Load(s.key)
 	if err != nil {
-		return "", forgeapi.CredUnknown, err
+		return masked.Secret{}, forgeapi.CredUnknown, err
 	}
 	rot := s.store.peek(s.key)
 	now := time.Now()
 	st := s.standing(rot, &rec, ok, now)
 	state = st.phase().state(rot.owner)
 	if state == forgeapi.CredReconnectRequired {
-		return "", state, ended(&rec, st)
+		return masked.Secret{}, state, ended(&rec, st)
 	}
 	if base, pair, held := rot.held(); held && base.Equal(&rec) {
 		if pst := s.standing(rot, &pair, true, now); (pst == standValid || pst == standDue) && !expired(&pair, now) {
 			return pair.Token, state, nil
 		}
-		return "", state, renewable(&rec, "a rotated pair that replaces the stored token waits to be stored")
+		return masked.Secret{}, state, renewable(&rec, "a rotated pair that replaces the stored token waits to be stored")
 	}
 	if expired(&rec, now) {
-		return "", state, renewable(&rec, "the stored token has expired and its refresh is due")
+		return masked.Secret{}, state, renewable(&rec, "the stored token has expired and its refresh is due")
 	}
 	return rec.Token, state, nil
 }
@@ -234,7 +240,7 @@ func (s *StoredSource) standing(rot *rotation, rec *Record, ok bool, now time.Ti
 	case s.renew.fresh(rec.Issued, rec.Expiry, now):
 		return standValid
 	}
-	if _, refreshable := endpointsOf(rec.Family); !refreshable || rec.RefreshToken == "" {
+	if _, refreshable := endpointsOf(rec.Family); !refreshable || rec.RefreshToken.IsZero() {
 		if expired(rec, now) {
 			return standGone
 		}
@@ -251,9 +257,9 @@ func (s *StoredSource) standing(rot *rotation, rec *Record, ok bool, now time.Ti
 // already. replaced reports a rotation that lost its compare-and-swap to a record
 // saved while it was in flight, or a held pair stored in place of a refresh, either
 // of which the caller reads afresh.
-func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string, replaced bool, err error) {
+func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token masked.Secret, replaced bool, err error) {
 	if waitErr := rot.owner.take(ctx); waitErr != nil {
-		return "", false, waitErr
+		return masked.Secret{}, false, waitErr
 	}
 	defer rot.owner.give()
 	// A call this one waited behind may have held a pair it could not store, which
@@ -261,22 +267,22 @@ func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string
 	// refresh sent with a spent token.
 	if held, heldErr := s.storeHeldOwned(rot); held {
 		if heldErr != nil {
-			return "", false, heldErr
+			return masked.Secret{}, false, heldErr
 		}
-		return "", true, nil
+		return masked.Secret{}, true, nil
 	}
 	cur, ok, err := s.store.Load(s.key)
 	if err != nil {
-		return "", false, err
+		return masked.Secret{}, false, err
 	}
 	switch st := s.standing(rot, &cur, ok, time.Now()); st {
 	case standValid:
 		return cur.Token, false, nil
 	case standLapsed:
 		s.lapse(rot, &cur)
-		return "", false, ended(&cur, st)
+		return masked.Secret{}, false, ended(&cur, st)
 	case standSpent, standRefused, standGone:
-		return "", false, ended(&cur, st)
+		return masked.Secret{}, false, ended(&cur, st)
 	}
 
 	rot.owner.setBusy(true)
@@ -284,12 +290,12 @@ func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string
 	status := r.status
 	rot.owner.setBusy(false)
 	if v != rotated && s.replaced(&cur) {
-		return "", true, nil
+		return masked.Secret{}, true, nil
 	}
 	switch v {
 	case refused:
 		s.mark(rot, &cur, UsabilityReconnectRequired, status, "the refresh was answered terminally")
-		return "", false, reconnect(&cur, r, "the product refused the refresh token")
+		return masked.Secret{}, false, reconnect(&cur, r, "the product refused the refresh token")
 	case unspent:
 		if !transport.IsRefused(err) {
 			s.outcome(&cur, forgeapi.CredRefreshDue, status, "the refresh failed")
@@ -297,10 +303,10 @@ func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string
 		return keep(&cur, err)
 	case spent:
 		s.mark(rot, &cur, UsabilitySpent, status, "the refresh answered a token that could not be read")
-		return "", false, err
+		return masked.Secret{}, false, err
 	case misaddressed:
 		s.mark(rot, &cur, UsabilityReconnectRequired, 0, "the record's web base URL is not an origin and a path")
-		return "", false, reconnect(&cur, reply{}, "the record's web base URL is not an origin and a path")
+		return masked.Secret{}, false, reconnect(&cur, reply{}, "the record's web base URL is not an origin and a path")
 	}
 	return s.storeRotated(rot, &cur, &next, status)
 }
@@ -311,20 +317,20 @@ func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string
 // since the pair is live upstream and in this process's hands; one that reached the
 // file unproved fails the call too, with the pair at the name. A record saved while
 // the rotation was in flight keeps its place, and the caller reads it afresh.
-func (s *StoredSource) storeRotated(rot *rotation, cur, next *Record, status int) (token string, replaced bool, err error) {
+func (s *StoredSource) storeRotated(rot *rotation, cur, next *Record, status int) (token masked.Secret, replaced bool, err error) {
 	swapped, err := rot.swap(cur, next)
 	switch {
 	case errors.Is(err, errNotDurable):
 		s.outcome(cur, forgeapi.CredRefreshDue, status, "the rotated credential was not proved durable")
-		return "", false, err
+		return masked.Secret{}, false, err
 	case err != nil:
 		rot.hold(cur, next)
 		s.outcome(cur, forgeapi.CredRefreshDue, status, "the rotated credential could not be stored")
-		return "", false, err
+		return masked.Secret{}, false, err
 	}
 	s.outcome(cur, forgeapi.CredValid, status, "")
 	if !swapped {
-		return "", true, nil
+		return masked.Secret{}, true, nil
 	}
 	return next.Token, false, nil
 }
@@ -423,8 +429,8 @@ func (s *StoredSource) exchange(ctx context.Context, cur *Record) (next Record, 
 		return Record{}, reply{}, unspent, err
 	}
 	defer ep.Close()
-	form := url.Values{formClientID: {cur.ClientID}, "grant_type": {refreshGrantType}, "refresh_token": {cur.RefreshToken}}
-	a, r, err := post(context.WithoutCancel(ctx), ep, "Token", ends.grant, form)
+	form := url.Values{formClientID: {cur.ClientID}, "grant_type": {refreshGrantType}, "refresh_token": {cur.RefreshToken.Reveal()}}
+	a, r, err := post(context.WithoutCancel(ctx), ep, "Token", ends.grant, form, cur.RefreshToken)
 	switch {
 	case err != nil && r.status != 0 && a.succeeded(r.status):
 		// A success whose body did not arrive: the instance issued a pair, which
@@ -446,11 +452,11 @@ func (s *StoredSource) exchange(ctx context.Context, cur *Record) (next Record, 
 
 // keep is what a refresh that failed before the instance issued anything hands
 // over: the stored token while it has not expired, and the failure once it has.
-func keep(cur *Record, err error) (token string, replaced bool, failure error) {
+func keep(cur *Record, err error) (token masked.Secret, replaced bool, failure error) {
 	if time.Now().Before(cur.Expiry) {
 		return cur.Token, false, nil
 	}
-	return "", false, err
+	return masked.Secret{}, false, err
 }
 
 // lapse records a refresh token found past its own expiry, counting the outcome

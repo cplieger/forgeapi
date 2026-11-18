@@ -49,32 +49,15 @@ type Client struct {
 	mu      sync.Mutex
 }
 
-// New builds a client for one connection.
-//
-// It performs no I/O. Which of the two products this instance runs, and every
-// capability that version decides, is resolved by the accessor that needs it, so
-// an instance that is down fails at the operation rather than at construction.
-//
-// What it does refuse at entry is a client it cannot run honestly, and every
-// refusal carries a code of its own, because a consumer names the remedy for the
-// refusal it got rather than showing a generic warning: no credential source,
-// which is [forgeapi.CodeAnonymousRefused] rather than a client that sends
-// anonymous requests; no web base URL, a half-present certificate pair, a
-// [forgeapi.Connection.Proxy] URL net/url refuses or carrying no scheme this
-// library proxies over, or a malformed [forgeapi.Header] entry, which is
-// [forgeapi.CodeConnectionInvalid]; an
-// extra header whose name this library or the HTTP stack writes itself, which is
-// [forgeapi.CodeHeaderReserved] naming it; a plaintext URL without
-// [forgeapi.WithPlaintextHTTP], which is [forgeapi.CodePlaintextRefused]; a
-// private-range or single-label host without [forgeapi.WithPrivateAddresses],
-// which is [forgeapi.CodePrivateAddressRefused]; a negative value passed to any
-// budget option, [forgeapi.WithRetries] and [forgeapi.WithMutationReserve]
-// included, which is [forgeapi.CodeBudgetInvalid]; and a
-// [forgeapi.RotationCursor] that is not well formed, which is
-// [forgeapi.CodeCursorInvalid].
-//
-//nolint:gocritic // hugeParam: the connection record is the published signature's own parameter
-func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error) {
+// New builds a client for one connection. It performs no I/O: which product the
+// instance runs, and every capability its version decides, is resolved by the
+// accessor that needs it. It refuses a missing credential source ([forgeapi.CodeAnonymousRefused]),
+// a malformed connection ([forgeapi.CodeConnectionInvalid]), a reserved extra
+// header ([forgeapi.CodeHeaderReserved]), plaintext without [forgeapi.WithPlaintextHTTP]
+// ([forgeapi.CodePlaintextRefused]), a private host without [forgeapi.WithPrivateAddresses]
+// ([forgeapi.CodePrivateAddressRefused]), a negative budget value
+// ([forgeapi.CodeBudgetInvalid]) and a malformed cursor ([forgeapi.CodeCursorInvalid]).
+func New(conn forgeapi.Connection, opts ...forgeapi.Option) (*Client, error) { //nolint:gocritic // hugeParam: the connection record is the published signature's own parameter
 	return open(&conn, time.Now, opts...)
 }
 

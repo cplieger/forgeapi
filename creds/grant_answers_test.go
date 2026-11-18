@@ -39,8 +39,8 @@ func TestDeviceGrant_answers_an_approved_grant_again_without_a_request(t *testin
 		t.Fatalf("first Poll() = (_, %v, %v), want the record and true", done, err)
 	}
 	rec, done, err := g.Poll(t.Context())
-	if err != nil || !done || rec.Token != "token-granted" {
-		t.Errorf("second Poll() = (token %q, %v, %v), want the same record and true", rec.Token, done, err)
+	if err != nil || !done || rec.Token.Reveal() != "token-granted" {
+		t.Errorf("second Poll() = (token %q, %v, %v), want the same record and true", rec.Token.Reveal(), done, err)
 	}
 	if n := len(ep.requests()); n != 2 {
 		t.Errorf("the grant sent %d request(s), want the device-code request and one poll: a used device code is not sent again", n)
@@ -66,8 +66,8 @@ func TestDeviceGrant_ends_on_a_token_whose_lifetime_reads_as_neither_kind(t *tes
 			g := startGrant(t, ep, forgeapi.FamilyGitHub)
 
 			rec, done, err := g.Poll(t.Context())
-			if code := codeOf(err); code != forgeapi.CodeValidation || done || rec.Token != "" {
-				t.Errorf("Poll() over %s = (token %q, %v, %v), want no record and code %q", body, rec.Token, done, err, forgeapi.CodeValidation)
+			if code := codeOf(err); code != forgeapi.CodeValidation || done || !rec.Token.IsZero() {
+				t.Errorf("Poll() over %s = (token %q, %v, %v), want no record and code %q", body, rec.Token.Reveal(), done, err, forgeapi.CodeValidation)
 			}
 			if _, _, again := g.Poll(t.Context()); codeOf(again) != forgeapi.CodeValidation {
 				t.Errorf("a second Poll() = %v, want the same refusal: the instance spent the device code", again)

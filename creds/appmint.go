@@ -137,16 +137,19 @@ func (s *AppSource) mintOnce(ctx context.Context, ep *transport.Conn, op string)
 		return issued{}, 0, f
 	}
 	answered := time.Now()
-	var a struct {
-		Token     string `json:"token"`
-		ExpiresAt string `json:"expires_at"`
-	}
-	if transport.Decode(resp.Body, &a) == nil && a.Token != "" {
+	var a mintAnswer
+	if transport.Decode(resp.Body, &a) == nil && !a.Token.IsZero() {
 		if expiry, err := time.Parse(time.RFC3339, a.ExpiresAt); err == nil && expiry.After(answered) {
-			return issued{sent: sent, answered: answered, expiry: expiry, token: newSecret(a.Token)}, resp.Status, nil
+			return issued{sent: sent, answered: answered, expiry: expiry, token: a.Token.Secret}, resp.Status, nil
 		}
 	}
 	return issued{}, 0, malformed(ctx, ep, req, resp, "GitHub answered the token request with no token or no future expiry")
+}
+
+// mintAnswer is GitHub's answer to a token request.
+type mintAnswer struct {
+	Token     decodedSecret `json:"token"`
+	ExpiresAt string        `json:"expires_at"`
 }
 
 // installation answers the installation ID, remembered or looked up.
@@ -208,7 +211,7 @@ func (s *AppSource) ask(ctx context.Context, ep *transport.Conn, req *transport.
 		f := &failure{err: err}
 		if fe, ok := errors.AsType[*forgeapi.Error](err); ok {
 			if fe.Status != 0 && resp != nil {
-				transport.AnswerFigures(fe, resp.Header, githublimit.Signal, githublimit.Pool)
+				transport.AnswerFigures(fe, resp, githublimit.Signal, githublimit.Pool)
 			}
 			f.status = fe.Status
 			if fe.Status >= http.StatusMultipleChoices && !fe.Retryable {
@@ -233,7 +236,7 @@ func (s *AppSource) refused(ctx context.Context, ep *transport.Conn, req *transp
 		if s.set.Counters.RateLimited != nil {
 			s.set.Counters.RateLimited(forgeapi.FamilyGitHub)
 		}
-		fe := answered(ctx, ep, req, resp, "", forgeapi.KindRateLimited, resp.Quote(joined("GitHub rate-limited the App's request", said)))
+		fe := answered(ctx, ep, req, resp, "", forgeapi.KindRateLimited, joined("GitHub rate-limited the App's request", said))
 		fe.Secondary = limit.Secondary
 		return &failure{err: fe, wait: limitWait(&limit, time.Now()), status: resp.Status, class: failLimited}
 	}
@@ -251,7 +254,7 @@ func (s *AppSource) refused(ctx context.Context, ep *transport.Conn, req *transp
 
 // terminal is a refusal only a human can repair, on GitHub or on the host.
 func terminal(ctx context.Context, ep *transport.Conn, req *transport.Request, resp *transport.Response, kind forgeapi.ErrorKind, message string) *failure {
-	fe := answered(ctx, ep, req, resp, forgeapi.CodeReconnectRequired, kind, resp.Quote(message))
+	fe := answered(ctx, ep, req, resp, forgeapi.CodeReconnectRequired, kind, message)
 	return &failure{err: fe, status: resp.Status, class: failEnded}
 }
 
@@ -268,7 +271,7 @@ func malformed(ctx context.Context, ep *transport.Conn, req *transport.Request, 
 // reads the same figures onto a failure the connection mapped.
 func answered(ctx context.Context, ep *transport.Conn, req *transport.Request, resp *transport.Response, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
 	fe := ep.Fail(ctx, req.Op, transport.REST(req.Method), resp, code, kind, message)
-	transport.AnswerFigures(fe, resp.Header, githublimit.Signal, githublimit.Pool)
+	transport.AnswerFigures(fe, resp, githublimit.Signal, githublimit.Pool)
 	return fe
 }
 

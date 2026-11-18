@@ -76,8 +76,8 @@ func TestStoredSource_keeps_a_rotation_whose_caller_cancelled_mid_flight(t *test
 	close(cancelled)
 	<-done
 
-	if rec := load(t, store, "conn"); rec.Token != "token-new" || rec.RefreshToken != "refresh-new" {
-		t.Errorf("stored pair = (%q, %q), want the rotated pair the instance issued after the caller cancelled", rec.Token, rec.RefreshToken)
+	if rec := load(t, store, "conn"); rec.Token.Reveal() != "token-new" || rec.RefreshToken.Reveal() != "refresh-new" {
+		t.Errorf("stored pair = (%q, %q), want the rotated pair the instance issued after the caller cancelled", rec.Token.Reveal(), rec.RefreshToken.Reveal())
 	}
 }
 

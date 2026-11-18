@@ -18,6 +18,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
+	"github.com/cplieger/go/masked"
 )
 
 // GitHub refuses an App JWT whose exp lies more than 10 minutes ahead and
@@ -44,7 +45,10 @@ var jwtHeader = base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ
 // [NewAppKey] or [ParseAppKeyPEM].
 type AppKey struct {
 	signer crypto.Signer
-	issuer string
+	// private is a parsed key's PKCS #1 DER where signer is nil, parsed again
+	// for each signature so no field holds the key's numbers in clear.
+	private masked.Secret
+	issuer  string
 }
 
 // NewAppKey builds the key of the App GitHub names issuer, its client ID or
@@ -56,17 +60,25 @@ func NewAppKey(issuer string, signer crypto.Signer) (*AppKey, error) {
 	if err := validIssuer(issuer); err != nil {
 		return nil, err
 	}
+	if err := validSigner(signer); err != nil {
+		return nil, err
+	}
+	return &AppKey{signer: signer, issuer: issuer}, nil
+}
+
+// validSigner refuses a signer [NewAppKey] does not accept.
+func validSigner(signer crypto.Signer) error {
 	if nilSigner(signer) {
-		return nil, appKeyInvalid("the App key has no signer")
+		return appKeyInvalid("the App key has no signer")
 	}
 	pub, ok := signer.Public().(*rsa.PublicKey)
 	if !ok || pub == nil || pub.N == nil {
-		return nil, appKeyInvalid("the App key is not an RSA key")
+		return appKeyInvalid("the App key is not an RSA key")
 	}
 	if pub.N.BitLen() < minAppKeyBits {
-		return nil, appKeyInvalid("the App key's RSA modulus is under 2048 bits")
+		return appKeyInvalid("the App key's RSA modulus is under 2048 bits")
 	}
-	return &AppKey{signer: signer, issuer: issuer}, nil
+	return nil
 }
 
 // ParseAppKeyPEM builds the key of the App GitHub names issuer from the
@@ -106,7 +118,10 @@ func ParseAppKeyPEM(issuer string, pemBytes []byte) (*AppKey, error) {
 	default:
 		return nil, appKeyInvalid("the App key's PEM block is not an RSA private key")
 	}
-	return NewAppKey(issuer, key)
+	if err := validSigner(key); err != nil {
+		return nil, err
+	}
+	return &AppKey{private: masked.NewSecret(string(x509.MarshalPKCS1PrivateKey(key))), issuer: issuer}, nil
 }
 
 // JWT answers a fresh RS256 App JWT: iss the issuer, iat 60 seconds in the
@@ -120,18 +135,26 @@ func (k *AppKey) JWT(ctx context.Context) (string, error) {
 	}
 	now := time.Now()
 	// A struct of two integers and a validated string always marshals.
-	claims, _ := json.Marshal(struct {
-		Issuer    string `json:"iss"`
-		IssuedAt  int64  `json:"iat"`
-		ExpiresAt int64  `json:"exp"`
-	}{k.issuer, now.Add(-jwtBackdate).Unix(), now.Add(jwtLifetime).Unix()})
+	claims, _ := json.Marshal(jwtClaims{k.issuer, now.Add(-jwtBackdate).Unix(), now.Add(jwtLifetime).Unix()})
 	signing := jwtHeader + "." + base64.RawURLEncoding.EncodeToString(claims)
 	digest := sha256.Sum256([]byte(signing))
-	sig, err := k.signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	signer := k.signer
+	if signer == nil {
+		// The DER is this package's own encoding of a key it parsed, so it parses.
+		signer, _ = x509.ParsePKCS1PrivateKey([]byte(k.private.Reveal()))
+	}
+	sig, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 	if err != nil {
 		return "", signFailed()
 	}
 	return signing + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
+// jwtClaims are an App JWT's claims.
+type jwtClaims struct {
+	Issuer    string `json:"iss"`
+	IssuedAt  int64  `json:"iat"`
+	ExpiresAt int64  `json:"exp"`
 }
 
 // validIssuer refuses an issuer GitHub could not read as a client ID or an

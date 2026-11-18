@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/go/masked"
 )
 
 // counterSpy records every counter this library fires, by name, so an assertion names
@@ -292,6 +294,8 @@ func TestAMalformedProxyIsRefusedRatherThanDialledDirect(t *testing.T) {
 		{name: "unparseable", proxy: "http://[::1", code: forgeapi.CodeConnectionInvalid},
 		{name: "a_scheme_this_library_does_not_proxy_over", proxy: "ftp://proxy.example.com", code: forgeapi.CodeConnectionInvalid},
 		{name: "a_private_address_with_no_opt_in", proxy: "http://127.0.0.1:3128", code: forgeapi.CodePrivateAddressRefused},
+		{name: "a_username_and_password_in_the_url", proxy: "http://user:proxy-secret@proxy.example.com:3128", code: forgeapi.CodeConnectionInvalid},
+		{name: "a_username_alone_in_the_url", proxy: "http://user@proxy.example.com:3128", code: forgeapi.CodeConnectionInvalid},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			conn := forgeapi.Connection{WebBaseURL: "https://forge.example.com", Proxy: test.proxy}
@@ -306,6 +310,138 @@ func TestAMalformedProxyIsRefusedRatherThanDialledDirect(t *testing.T) {
 			if fe.Code != test.code {
 				t.Errorf("Open with proxy %q = code %q, want %q", test.proxy, fe.Code, test.code)
 			}
+			if strings.Contains(fe.Error(), "proxy-secret") {
+				t.Errorf("Open with proxy %q = %q, want a refusal that quotes no part of the URL's password", test.proxy, fe.Error())
+			}
+		})
+	}
+}
+
+// RFC 7617 section 2: Basic credentials are the base64 of the user-id, a colon
+// and the password.
+func TestAConnectionsProxyCredentialsReachTheProxyAsBasicAuthorization(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		username string
+		password masked.Secret
+		want     string
+	}{
+		{
+			name: "a_username_and_password", username: "forge-client", password: masked.NewSecret("proxy-secret"),
+			want: "Basic " + base64.StdEncoding.EncodeToString([]byte("forge-client:proxy-secret")),
+		},
+		{
+			name: "a_username_alone", username: "forge-client",
+			want: "Basic " + base64.StdEncoding.EncodeToString([]byte("forge-client:")),
+		},
+		{name: "no_credentials"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var got atomic.Pointer[string]
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				auth := r.Header.Get("Proxy-Authorization")
+				got.Store(&auth)
+				w.Header().Set("Content-Type", "application/json")
+				if _, err := io.WriteString(w, `{}`); err != nil {
+					t.Errorf("Setup: writing the proxy's answer: %v", err)
+				}
+			}))
+			defer proxy.Close()
+			conn := forgeapi.Connection{
+				WebBaseURL: "http://forge.example.com", Proxy: proxy.URL,
+				ProxyUsername: test.username, ProxyPassword: test.password,
+			}
+			c, err := Open(&conn, settingsFor(
+				forgeapi.WithCredentialSource(stubCredential{}),
+				forgeapi.WithPlaintextHTTP(true),
+				forgeapi.WithPrivateAddresses(true),
+				forgeapi.WithLogger(discardLogger()),
+			), testOptions())
+			if err != nil {
+				t.Fatalf("Setup: Open with proxy credentials: %v", err)
+			}
+			t.Cleanup(c.Close)
+			if _, err := c.Do(t.Context(), &Request{Op: "Whoami", Method: http.MethodGet, Path: "/user"}); err != nil {
+				t.Fatalf("a read over a proxy with credentials = %v, want nil", err)
+			}
+			seen := got.Load()
+			if seen == nil {
+				t.Fatal("the proxy saw no request")
+			}
+			if *seen != test.want {
+				t.Errorf("Proxy-Authorization arriving at the proxy = %q, want %q", *seen, test.want)
+			}
+		})
+	}
+}
+
+// Proxy credentials with no proxy to send them to, a password with no username,
+// or credentials the proxy's protocol cannot carry would be ignored, misread or
+// refused at every dial, so they are refused at entry. Basic credentials to an
+// http or https proxy hold no colon in the user-id and no control character
+// (RFC 7617 section 2); a SOCKS5 username or password is at most 255 octets
+// (RFC 1929).
+func TestProxyCredentialsNoProxyCanReadAreRefused(t *testing.T) {
+	const httpProxy, httpsProxy = "http://proxy.example.com:3128", "https://proxy.example.com:3128"
+	const socks5Proxy, socks5hProxy = "socks5://proxy.example.com:1080", "socks5h://proxy.example.com:1080"
+	for _, test := range []struct {
+		name string
+		conn forgeapi.Connection
+	}{
+		{name: "a_username_with_no_proxy", conn: forgeapi.Connection{ProxyUsername: "forge-client"}},
+		{name: "a_password_with_no_proxy", conn: forgeapi.Connection{ProxyUsername: "forge-client", ProxyPassword: masked.NewSecret("proxy-secret")}},
+		{name: "a_password_with_no_username", conn: forgeapi.Connection{Proxy: httpProxy, ProxyPassword: masked.NewSecret("proxy-secret")}},
+		{name: "a_colon_in_the_username", conn: forgeapi.Connection{Proxy: httpProxy, ProxyUsername: "forge:client", ProxyPassword: masked.NewSecret("proxy-secret")}},
+		{name: "a_colon_in_the_username_to_an_https_proxy", conn: forgeapi.Connection{Proxy: httpsProxy, ProxyUsername: "forge:client"}},
+		{name: "a_tab_in_the_username", conn: forgeapi.Connection{Proxy: httpProxy, ProxyUsername: "forge\tclient"}},
+		{name: "a_line_feed_in_the_password", conn: forgeapi.Connection{Proxy: httpProxy, ProxyUsername: "forge-client", ProxyPassword: masked.NewSecret("proxy\nsecret")}},
+		{name: "a_delete_in_the_password_to_an_https_proxy", conn: forgeapi.Connection{Proxy: httpsProxy, ProxyUsername: "forge-client", ProxyPassword: masked.NewSecret("proxy\x7fsecret")}},
+		{name: "a_socks5_username_over_255_octets", conn: forgeapi.Connection{Proxy: socks5Proxy, ProxyUsername: strings.Repeat("u", 256)}},
+		{name: "a_socks5h_password_over_255_octets", conn: forgeapi.Connection{Proxy: socks5hProxy, ProxyUsername: "forge-client", ProxyPassword: masked.NewSecret(strings.Repeat("p", 256))}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.conn.WebBaseURL = "https://forge.example.com"
+			_, err := Open(&test.conn, settingsFor(
+				forgeapi.WithCredentialSource(stubCredential{}),
+				forgeapi.WithLogger(discardLogger()),
+			), testOptions())
+			var fe *forgeapi.Error
+			if !asError(err, &fe) || fe.Code != forgeapi.CodeConnectionInvalid {
+				t.Fatalf("Open with %s = %v, want code %q", test.name, err, forgeapi.CodeConnectionInvalid)
+			}
+			if password := test.conn.ProxyPassword.Reveal(); password != "" && strings.Contains(fe.Error(), password) {
+				t.Errorf("Open with %s = %q, want a refusal that quotes no part of the password", test.name, fe.Error())
+			}
+		})
+	}
+}
+
+// The rules a proxy's protocol sets are its own: RFC 1929 allows any octet in a
+// SOCKS5 username or password up to 255 of them, and RFC 7617 allows a colon in
+// a Basic password.
+func TestProxyCredentialsTheProxysProtocolCarriesAreAccepted(t *testing.T) {
+	const socks5Proxy = "socks5://proxy.example.com:1080"
+	for _, test := range []struct {
+		name string
+		conn forgeapi.Connection
+	}{
+		{name: "a_colon_in_a_socks5_username", conn: forgeapi.Connection{Proxy: socks5Proxy, ProxyUsername: "forge:client", ProxyPassword: masked.NewSecret("proxy-secret")}},
+		{name: "a_control_character_in_a_socks5_password", conn: forgeapi.Connection{Proxy: socks5Proxy, ProxyUsername: "forge-client", ProxyPassword: masked.NewSecret("proxy\nsecret")}},
+		{name: "a_socks5h_username_and_password_of_255_octets", conn: forgeapi.Connection{
+			Proxy: "socks5h://proxy.example.com:1080", ProxyUsername: strings.Repeat("u", 255), ProxyPassword: masked.NewSecret(strings.Repeat("p", 255)),
+		}},
+		{name: "a_colon_in_a_basic_password", conn: forgeapi.Connection{Proxy: "http://proxy.example.com:3128", ProxyUsername: "forge-client", ProxyPassword: masked.NewSecret("proxy:secret")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.conn.WebBaseURL = "https://forge.example.com"
+			c, err := Open(&test.conn, settingsFor(
+				forgeapi.WithCredentialSource(stubCredential{}),
+				forgeapi.WithLogger(discardLogger()),
+			), testOptions())
+			if err != nil {
+				t.Fatalf("Open with %s = %v, want nil", test.name, err)
+			}
+			c.Close()
 		})
 	}
 }
@@ -327,7 +463,6 @@ func TestAProxyWithNoPortIsDialableOnItsSchemesDefault(t *testing.T) {
 		want  uint16
 	}{
 		{name: "http", proxy: "http://proxy.example.com", want: 80},
-		{name: "http_with_credentials", proxy: "http://user:pass@proxy.example.com/", want: 80},
 		{name: "https", proxy: "https://proxy.example.com", want: 443},
 		{name: "socks5", proxy: "socks5://proxy.example.com", want: 1080},
 		{name: "socks5h", proxy: "socks5h://proxy.example.com", want: 1080},
@@ -591,7 +726,7 @@ func TestTheHeaderDenylistIsRefusedAtConnectTime(t *testing.T) {
 		for _, spelling := range []string{name, mixedCase(name)} {
 			conn := forgeapi.Connection{
 				WebBaseURL: "https://forge.example.com",
-				Headers:    []forgeapi.Header{{Name: spelling, Value: "v"}},
+				Headers:    []forgeapi.Header{{Name: spelling, Value: masked.NewSecret("v")}},
 			}
 			_, err := Open(&conn, settingsFor(
 				forgeapi.WithCredentialSource(stubCredential{}),
@@ -606,6 +741,26 @@ func TestTheHeaderDenylistIsRefusedAtConnectTime(t *testing.T) {
 				t.Errorf("Open with header %q = code %q, want %q", spelling, fe.Code, forgeapi.CodeHeaderReserved)
 			}
 		}
+	}
+}
+
+// TestAProxyCredentialHeaderIsRefusedBesideTheProxyCredentials holds the proxy's
+// credential header to the connection's proxy credentials: net/http writes it from
+// them, so a consumer's own would reach the proxy as a second line, or ride an
+// https tunnel to the instance.
+func TestAProxyCredentialHeaderIsRefusedBesideTheProxyCredentials(t *testing.T) {
+	conn := forgeapi.Connection{
+		WebBaseURL: "https://forge.example.com", Proxy: "http://proxy.example.com:3128",
+		ProxyUsername: "forge-client", ProxyPassword: masked.NewSecret("proxy-secret"),
+		Headers: []forgeapi.Header{{Name: "proxy-authorization", Value: masked.NewSecret("Basic other")}},
+	}
+	_, err := Open(&conn, settingsFor(
+		forgeapi.WithCredentialSource(stubCredential{}),
+		forgeapi.WithLogger(discardLogger()),
+	), testOptions())
+	var fe *forgeapi.Error
+	if !asError(err, &fe) || fe.Code != forgeapi.CodeHeaderReserved {
+		t.Errorf("Open with a Proxy-Authorization header = %v, want a %q refusal", err, forgeapi.CodeHeaderReserved)
 	}
 }
 
@@ -629,7 +784,7 @@ func TestAHeaderValueIsRefusedOnlyForAControlByte(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			conn := forgeapi.Connection{
 				WebBaseURL: "https://forge.example.com",
-				Headers:    []forgeapi.Header{{Name: "X-Gateway-Secret", Value: test.value}},
+				Headers:    []forgeapi.Header{{Name: "X-Gateway-Secret", Value: masked.NewSecret(test.value)}},
 			}
 			_, err := Open(&conn, settingsFor(
 				forgeapi.WithCredentialSource(stubCredential{}),

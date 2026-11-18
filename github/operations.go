@@ -50,14 +50,15 @@ const (
 func (c *Client) Whoami(ctx context.Context) (forgeapi.Account, error) {
 	const op = "Whoami"
 	ctx = transport.Call(ctx, op)
-	user, scopes, err := c.readUser(ctx, op)
+	user, resp, err := c.readUser(ctx, op)
 	if err != nil {
 		return forgeapi.Account{}, err
 	}
+	scopes := scopesOf(resp.Header)
 	// The scope header this read already carried is what the grant capability
 	// answers from, so recording it here is what prices that accessor at nothing
 	// on a connection whose identity has been read.
-	c.heldGrant(scopes)
+	c.heldGrant(resp, scopes)
 	return forgeapi.Account{
 		Login:  user.Login,
 		Name:   user.Name,

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/go/masked"
 )
 
 // Usability is what a refresh learned about a record's stored pair that the
@@ -66,13 +67,13 @@ type Record struct { //nolint:govet // fieldalignment: the field order is a reco
 	Family        forgeapi.Family
 	WebBaseURL    string
 	Kind          forgeapi.CredKind
-	Token         string
-	Issued        time.Time // when the grant or the last rotation answered
-	Expiry        time.Time // zero where the response stated none
-	RefreshToken  string    // empty where the response carried none
-	RefreshExpiry time.Time // zero where the response stated none
-	ClientID      string    // the OAuth application that minted the grant
-	Scopes        []string  // as the response stated them, where it did
+	Token         masked.Secret
+	Issued        time.Time     // when the grant or the last rotation answered
+	Expiry        time.Time     // zero where the response stated none
+	RefreshToken  masked.Secret // zero where the response carried none
+	RefreshExpiry time.Time     // zero where the response stated none
+	ClientID      string        // the OAuth application that minted the grant
+	Scopes        []string      // as the response stated them, where it did
 	Account       string
 	// Usability is the mark a refresh writes when it learns the stored pair can
 	// no longer be used, which the kind and the expiry cannot say.
@@ -80,12 +81,12 @@ type Record struct { //nolint:govet // fieldalignment: the field order is a reco
 }
 
 // Equal reports whether r and o are the same record: every field equal, the times
-// as instants with [time.Time.Equal] and the scopes in order. It is the comparison
-// [Backend.Swap] commits a rotation by.
+// as instants with [time.Time.Equal], the tokens with [masked.Secret.Equal] and
+// the scopes in order. It is the comparison [Backend.Swap] commits a rotation by.
 func (r *Record) Equal(o *Record) bool {
 	return r.Family == o.Family && r.WebBaseURL == o.WebBaseURL && r.Kind == o.Kind &&
-		r.Token == o.Token && r.Issued.Equal(o.Issued) && r.Expiry.Equal(o.Expiry) &&
-		r.RefreshToken == o.RefreshToken && r.RefreshExpiry.Equal(o.RefreshExpiry) &&
+		r.Token.Equal(o.Token) && r.Issued.Equal(o.Issued) && r.Expiry.Equal(o.Expiry) &&
+		r.RefreshToken.Equal(o.RefreshToken) && r.RefreshExpiry.Equal(o.RefreshExpiry) &&
 		r.ClientID == o.ClientID && slices.Equal(r.Scopes, o.Scopes) && r.Account == o.Account &&
 		r.Usability == o.Usability
 }
@@ -120,8 +121,8 @@ type fileRecord struct {
 func toFile(rec *Record) fileRecord {
 	f := fileRecord{
 		Family: rec.Family.String(), WebBaseURL: rec.WebBaseURL, Kind: rec.Kind.String(),
-		Token: rec.Token, Issued: rec.Issued, Expiry: rec.Expiry,
-		RefreshToken: rec.RefreshToken, RefreshExpiry: rec.RefreshExpiry,
+		Token: rec.Token.Reveal(), Issued: rec.Issued, Expiry: rec.Expiry,
+		RefreshToken: rec.RefreshToken.Reveal(), RefreshExpiry: rec.RefreshExpiry,
 		ClientID: rec.ClientID, Scopes: rec.Scopes, Account: rec.Account,
 	}
 	if rec.Usability != UsabilityUnmarked {
@@ -136,8 +137,8 @@ func fromFile(f *fileRecord) Record {
 	return Record{
 		Family: member(f.Family, forgeapi.FamilyUnknown, forgeapi.FamilyGitea), WebBaseURL: f.WebBaseURL,
 		Kind:  member(f.Kind, forgeapi.CredKindUnknown, forgeapi.CredKindRotatingOAuth),
-		Token: f.Token, Issued: f.Issued, Expiry: f.Expiry,
-		RefreshToken: f.RefreshToken, RefreshExpiry: f.RefreshExpiry,
+		Token: masked.NewSecret(f.Token), Issued: f.Issued, Expiry: f.Expiry,
+		RefreshToken: masked.NewSecret(f.RefreshToken), RefreshExpiry: f.RefreshExpiry,
 		ClientID: f.ClientID, Scopes: f.Scopes, Account: f.Account,
 		Usability: usabilityOf(f.Usability),
 	}

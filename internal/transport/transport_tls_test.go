@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/go/masked"
 )
 
 func clientPair(t *testing.T) (certPEM, keyPEM []byte) {
@@ -62,7 +63,7 @@ func TestAConnectionsClientCertificateIsPresentedToAnInstanceThatAsksForOne(t *t
 		WebBaseURL: srv.URL,
 		CABytes:    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}),
 		ClientCert: certPEM,
-		ClientKey:  keyPEM,
+		ClientKey:  masked.NewSecret(string(keyPEM)),
 	}, settingsFor(
 		forgeapi.WithCredentialSource(stubCredential{}),
 		forgeapi.WithPrivateAddresses(true),
@@ -87,7 +88,7 @@ func TestAHalfPresentClientCertificatePairIsRefusedAsHalfPresent(t *testing.T) {
 		conn forgeapi.Connection
 	}{
 		{name: "a_certificate_alone", conn: forgeapi.Connection{WebBaseURL: "https://forge.example.com", ClientCert: certPEM}},
-		{name: "a_key_alone", conn: forgeapi.Connection{WebBaseURL: "https://forge.example.com", ClientKey: keyPEM}},
+		{name: "a_key_alone", conn: forgeapi.Connection{WebBaseURL: "https://forge.example.com", ClientKey: masked.NewSecret(string(keyPEM))}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := Open(&test.conn, settingsFor(

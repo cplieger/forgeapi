@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/go/masked"
 )
 
 // The source is the forgeapi.CredentialSource a client runs behind.
@@ -45,7 +46,7 @@ func TestStoredSource_hands_over_a_static_token_without_a_request(t *testing.T) 
 		Family:     forgeapi.FamilyGitea,
 		WebBaseURL: ep.srv.URL,
 		Kind:       forgeapi.CredKindStaticPAT,
-		Token:      "token-static",
+		Token:      masked.NewSecret("token-static"),
 		Account:    "example-user",
 	})
 	src := source(t, store, "conn", ep)
@@ -69,7 +70,7 @@ func TestStoredSource_requires_a_reconnect_for_a_static_token_past_its_expiry(t 
 		Family:     forgeapi.FamilyGitLab,
 		WebBaseURL: ep.srv.URL,
 		Kind:       forgeapi.CredKindStaticPAT,
-		Token:      "token-static",
+		Token:      masked.NewSecret("token-static"),
 		Expiry:     time.Now().Add(-time.Minute).Truncate(time.Second),
 	})
 	src := source(t, store, "conn", ep)
@@ -186,7 +187,7 @@ func TestStoredSource_rotates_the_whole_record_when_due(t *testing.T) {
 				t.Errorf("State() after the rotation = %v, want %v", s, forgeapi.CredValid)
 			}
 			rec := load(t, store, "conn")
-			if rec.Token != "token-new" || rec.RefreshToken != "refresh-new" {
+			if rec.Token.Reveal() != "token-new" || rec.RefreshToken.Reveal() != "refresh-new" {
 				t.Errorf("stored pair = (%q, %q), want (%q, %q): the old pair is dead upstream once the new one is issued",
 					rec.Token, rec.RefreshToken, "token-new", "refresh-new")
 			}
@@ -370,7 +371,7 @@ func TestStoredSource_hands_over_a_rotating_token_with_no_refresh_token_until_it
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	rec := rotating(forgeapi.FamilyGitLab, ep.srv.URL, 2*time.Hour, 2*time.Hour)
-	rec.RefreshToken, rec.RefreshExpiry = "", time.Time{}
+	rec.RefreshToken, rec.RefreshExpiry = masked.NewSecret(""), time.Time{}
 	save(t, store, "conn", rec)
 	src := source(t, store, "conn", ep)
 
@@ -383,7 +384,7 @@ func TestStoredSource_requires_a_reconnect_for_an_expired_token_with_no_refresh_
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
 	rec := rotating(forgeapi.FamilyGitLab, ep.srv.URL, 2*time.Hour, -time.Minute)
-	rec.RefreshToken, rec.RefreshExpiry = "", time.Time{}
+	rec.RefreshToken, rec.RefreshExpiry = masked.NewSecret(""), time.Time{}
 	save(t, store, "conn", rec)
 	src := source(t, store, "conn", ep)
 
@@ -413,7 +414,7 @@ func TestStoredSource_requires_a_reconnect_for_a_key_with_no_record(t *testing.T
 func TestStoredSource_requires_a_reconnect_for_a_record_of_unknown_kind(t *testing.T) {
 	ep := newEndpoint(t, unreachable(t))
 	store, _ := openStore(t)
-	save(t, store, "conn", creds.Record{Family: forgeapi.FamilyGitHub, WebBaseURL: ep.srv.URL, Token: "token-old"})
+	save(t, store, "conn", creds.Record{Family: forgeapi.FamilyGitHub, WebBaseURL: ep.srv.URL, Token: masked.NewSecret("token-old")})
 	src := source(t, store, "conn", ep)
 
 	if _, err := src.Token(t.Context()); codeOf(err) != forgeapi.CodeReconnectRequired {
@@ -583,7 +584,7 @@ func TestStoredSource_does_not_overwrite_a_record_saved_during_the_refresh(t *te
 	var ep *endpoint
 	ep = newEndpoint(t, func(int, exchange) (int, string) {
 		fresh := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, 8*time.Hour)
-		fresh.Token, fresh.RefreshToken = "token-reconnected", "refresh-reconnected"
+		fresh.Token, fresh.RefreshToken = masked.NewSecret("token-reconnected"), masked.NewSecret("refresh-reconnected")
 		go func() {
 			saved <- store.Save("conn", fresh)
 			close(landed)
@@ -610,7 +611,7 @@ func TestStoredSource_does_not_overwrite_a_record_saved_during_the_refresh(t *te
 	case <-time.After(5 * time.Second):
 		t.Fatal("the reconnect's Save had not returned five seconds after the refresh did")
 	}
-	if rec := load(t, store, "conn"); rec.Token != "token-reconnected" || rec.RefreshToken != "refresh-reconnected" {
+	if rec := load(t, store, "conn"); rec.Token.Reveal() != "token-reconnected" || rec.RefreshToken.Reveal() != "refresh-reconnected" {
 		t.Errorf("stored pair = (%q, %q), want the reconnected pair: the rotation started from a record that was replaced",
 			rec.Token, rec.RefreshToken)
 	}
@@ -629,8 +630,8 @@ func TestStoredSource_persists_a_rotation_for_the_next_store_opened_on_the_direc
 	if err != nil {
 		t.Fatalf("OpenFileStore(%q) again = error %v", dir, err)
 	}
-	if rec := load(t, reopened, "conn"); rec.Token != "token-new" || rec.RefreshToken != "refresh-new" {
-		t.Errorf("the reopened store holds (%q, %q), want the rotated pair", rec.Token, rec.RefreshToken)
+	if rec := load(t, reopened, "conn"); rec.Token.Reveal() != "token-new" || rec.RefreshToken.Reveal() != "refresh-new" {
+		t.Errorf("the reopened store holds (%q, %q), want the rotated pair", rec.Token.Reveal(), rec.RefreshToken.Reveal())
 	}
 }
 
@@ -645,7 +646,7 @@ func TestStoredSource_reads_a_rotating_record_without_an_expiry_as_reconnect_req
 			ep := newEndpoint(t, unreachable(t))
 			store, _ := openStore(t)
 			rec := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, 8*time.Hour)
-			rec.Expiry, rec.RefreshToken = time.Time{}, refresh
+			rec.Expiry, rec.RefreshToken = time.Time{}, masked.NewSecret(refresh)
 			save(t, store, "conn", rec)
 			src := source(t, store, "conn", ep)
 

@@ -62,7 +62,10 @@ const (
 // read bounded.
 type swaggerDoc struct {
 	Paths map[string]map[string]struct{} `json:"paths"`
-	Info  struct {
+	// rerunPath is the first declared path, sorted, of the failed-jobs re-run
+	// route, quoted by the answer the document came on; empty where none is.
+	rerunPath string
+	Info      struct {
 		Title string `json:"title"`
 	} `json:"info"`
 }
@@ -136,13 +139,11 @@ func rerunCapability(doc *swaggerDoc) (forgeapi.Support, forgeapi.Evidence, stri
 			Detail: "no swagger document on this instance",
 		}, ""
 	}
-	for _, path := range slices.Sorted(maps.Keys(doc.Paths)) {
-		if strings.HasSuffix(path, "/"+rerunFailedJobs) {
-			return forgeapi.SupportYes, forgeapi.Evidence{
-				Source: forgeapi.EvidenceSwagger,
-				Detail: "swagger declares " + path,
-			}, rerunFailedJobs
-		}
+	if doc.rerunPath != "" {
+		return forgeapi.SupportYes, forgeapi.Evidence{
+			Source: forgeapi.EvidenceSwagger,
+			Detail: "swagger declares " + doc.rerunPath,
+		}, rerunFailedJobs
 	}
 	if _, ok := doc.Paths[forgejoWholeRun]; ok {
 		return forgeapi.SupportYes, forgeapi.Evidence{
@@ -344,6 +345,12 @@ func (c *Client) resolveSwagger(ctx context.Context) (*swaggerDoc, error) {
 	if err := transport.Decode(resp.Body, &doc); err != nil {
 		return nil, nil
 	}
+	for _, path := range slices.Sorted(maps.Keys(doc.Paths)) {
+		if strings.HasSuffix(path, "/"+rerunFailedJobs) {
+			doc.rerunPath = resp.Quote(path).String()
+			break
+		}
+	}
 	c.mu.Lock()
 	c.swagger = &doc
 	c.mu.Unlock()
@@ -460,7 +467,7 @@ func (c *Client) productDetail() string {
 	if c.version == "" {
 		return "version body not yet read"
 	}
-	return "version " + c.version
+	return "version " + c.versionAnswer.Quote(c.version).String()
 }
 
 // GrantCaps implements [forgeapi.Capabilities].

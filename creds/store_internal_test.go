@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/forgeapi/v3"
+	"github.com/cplieger/go/masked"
 )
 
 const custodyRotated = `{"access_token":"token-new","token_type":"bearer","scope":"repo","expires_in":28800,"refresh_token":"refresh-new","refresh_token_expires_in":15897600}`
@@ -108,14 +109,14 @@ func (f *custodyFixture) due() Record {
 	now := time.Now().Truncate(time.Second)
 	return Record{
 		Family: forgeapi.FamilyGitHub, WebBaseURL: f.srv.URL, Kind: forgeapi.CredKindRotatingOAuth,
-		Token: "token-old", Issued: now.Add(-8 * time.Hour), Expiry: now.Add(time.Minute),
-		RefreshToken: "refresh-old", RefreshExpiry: now.Add(30 * 24 * time.Hour), ClientID: "example-client-id",
+		Token: masked.NewSecret("token-old"), Issued: now.Add(-8 * time.Hour), Expiry: now.Add(time.Minute),
+		RefreshToken: masked.NewSecret("refresh-old"), RefreshExpiry: now.Add(30 * 24 * time.Hour), ClientID: "example-client-id",
 	}
 }
 
 // live is a static token, which a token call hands over without a refresh.
 func (f *custodyFixture) live() Record {
-	return Record{Family: forgeapi.FamilyGitHub, WebBaseURL: f.srv.URL, Kind: forgeapi.CredKindStaticPAT, Token: "token-static"}
+	return Record{Family: forgeapi.FamilyGitHub, WebBaseURL: f.srv.URL, Kind: forgeapi.CredKindStaticPAT, Token: masked.NewSecret("token-static")}
 }
 
 func (f *custodyFixture) save(t *testing.T, rec Record) {
@@ -350,7 +351,7 @@ func TestNewStore_FreesAKeysCustodyWithItsRecord(t *testing.T) {
 		defer c.mu.Unlock()
 		return len(c.custody)
 	}
-	rec := Record{Family: forgeapi.FamilyGitHub, WebBaseURL: "https://github.example", Kind: forgeapi.CredKindStaticPAT, Token: "token-static"}
+	rec := Record{Family: forgeapi.FamilyGitHub, WebBaseURL: "https://github.example", Kind: forgeapi.CredKindStaticPAT, Token: masked.NewSecret("token-static")}
 	if err := store.Save("conn", rec); err != nil {
 		t.Fatalf("Setup: Save: %v", err)
 	}

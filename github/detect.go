@@ -70,7 +70,7 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 	if askErr := c.askVersions(ctx, op); askErr != nil {
 		return forgeapi.ConnectionCaps{}, askErr
 	}
-	source, detail := forgeapi.EvidenceMetadata, "the metadata endpoint answered for "+productName(meta.InstalledVersion)
+	source, detail := forgeapi.EvidenceMetadata, "the metadata endpoint answered for "+productName(resp, meta.InstalledVersion)
 	if err != nil {
 		var fe *forgeapi.Error
 		source, detail = forgeapi.EvidenceResponseHeader, "the metadata endpoint refused this credential, and "+headerRequestID+" established the family"
@@ -125,12 +125,13 @@ func (c *Client) holdCaps(source forgeapi.EvidenceSource, detail string) forgeap
 
 // productName is which product of this family answered, which the metadata endpoint's
 // version member is what says: an appliance reports its installed version and the
-// hosted instance carries no such key.
-func productName(version string) string {
+// hosted instance carries no such key. The version is the instance's text, so it is
+// quoted as resp's.
+func productName(resp *transport.Response, version string) string {
 	if version == "" {
 		return "the hosted instance, which reports no installed version"
 	}
-	return "an appliance at " + version
+	return "an appliance at " + resp.Quote(version).String()
 }
 
 // undetected is the refusal a connection whose family cannot be established answers.
@@ -174,16 +175,17 @@ func (c *Client) GrantCaps(ctx context.Context) (forgeapi.GrantCaps, error) {
 	if grant := c.cachedGrant(); grant != nil {
 		return *grant, nil
 	}
-	_, scopes, err := c.readUser(ctx, op)
+	_, resp, err := c.readUser(ctx, op)
 	if err != nil {
 		return forgeapi.GrantCaps{}, err
 	}
-	return c.heldGrant(scopes), nil
+	return c.heldGrant(resp, scopesOf(resp.Header)), nil
 }
 
-// heldGrant records the grant verdict and its evidence and returns it.
-func (c *Client) heldGrant(scopes []string) forgeapi.GrantCaps {
-	detail := "the identity read's scope header carries " + scopeList(scopes) +
+// heldGrant records the grant verdict and its evidence, scopes being what the
+// identity read resp carried, and returns it.
+func (c *Client) heldGrant(resp *transport.Response, scopes []string) forgeapi.GrantCaps {
+	detail := "the identity read's scope header carries " + scopeList(resp, scopes) +
 		", and the merge state this capability names is readable on this product whatever the grant"
 	grant := forgeapi.GrantCaps{
 		Caps: map[forgeapi.Capability]forgeapi.Support{forgeapi.CapReadMergeState: forgeapi.SupportYes},
@@ -199,12 +201,13 @@ func (c *Client) heldGrant(scopes []string) forgeapi.GrantCaps {
 
 // scopeList is the scope set as the evidence detail spells it, naming the empty case
 // rather than rendering nothing: a fine-grained token is documented to report no
-// scopes at all, so an empty list is a fact about the credential kind.
-func scopeList(scopes []string) string {
+// scopes at all, so an empty list is a fact about the credential kind. The scopes
+// are the instance's text, so they are quoted as resp's.
+func scopeList(resp *transport.Response, scopes []string) string {
 	if len(scopes) == 0 {
 		return "no scopes, which is what a fine-grained credential reports"
 	}
-	return strings.Join(scopes, ", ")
+	return resp.Quote(strings.Join(scopes, ", ")).String()
 }
 
 func (c *Client) cachedGrant() *forgeapi.GrantCaps {
@@ -214,11 +217,12 @@ func (c *Client) cachedGrant() *forgeapi.GrantCaps {
 }
 
 // readUser is the identity read two operations share: the account body, whose email
-// is the PUBLIC profile one and null where the profile carries none, and the scopes,
-// which this product sends in a response HEADER (measured on a classic credential).
+// is the PUBLIC profile one and null where the profile carries none, and the answer,
+// whose HEADER carries the scopes on this product ([scopesOf], measured on a classic
+// credential).
 // It names no [transport.Request.Into], so it is never revalidated: this product's
 // 304 omits that header (measured), and the cache holds no scopes to serve.
-func (c *Client) readUser(ctx context.Context, op string) (restUser, []string, error) {
+func (c *Client) readUser(ctx context.Context, op string) (restUser, *transport.Response, error) {
 	resp, err := c.core.Do(ctx, &transport.Request{
 		Op: op, Method: http.MethodGet, Path: "/user", Page: 1, Headers: c.restHeaders(),
 	})
@@ -230,7 +234,7 @@ func (c *Client) readUser(ctx context.Context, op string) (restUser, []string, e
 	if err := transport.Decode(resp.Body, &user); err != nil {
 		return restUser{}, nil, c.core.FailDecode(ctx, op, transport.REST(http.MethodGet), resp, err)
 	}
-	return user, scopesOf(resp.Header), nil
+	return user, resp, nil
 }
 
 // scopesOf reads the comma-separated scope list from an authenticated identity

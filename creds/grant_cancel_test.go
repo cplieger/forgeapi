@@ -87,8 +87,8 @@ func TestDeviceGrant_ends_on_a_success_its_context_cut_off(t *testing.T) {
 
 			rec, done, err := g.Poll(ctx)
 			_, folded := errors.AsType[*forgeapi.Error](err)
-			if done || rec.Token != "" || !errors.Is(err, context.Canceled) || folded {
-				t.Errorf("Poll() cancelled inside a success = (token %q, %v, %v), want no record and context.Canceled unchanged", rec.Token, done, err)
+			if done || !rec.Token.IsZero() || !errors.Is(err, context.Canceled) || folded {
+				t.Errorf("Poll() cancelled inside a success = (token %q, %v, %v), want no record and context.Canceled unchanged", rec.Token.Reveal(), done, err)
 			}
 			sent := len(ep.requests())
 			_, _, again := g.Poll(t.Context())

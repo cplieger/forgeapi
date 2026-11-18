@@ -233,8 +233,8 @@ func TestDeviceGrant_answers_a_rotating_record_from_a_response_that_states_an_ex
 	if rec.Kind != forgeapi.CredKindRotatingOAuth {
 		t.Errorf("Kind = %v, want %v: the response states an expiry", rec.Kind, forgeapi.CredKindRotatingOAuth)
 	}
-	if rec.Token != "token-granted" || rec.RefreshToken != "refresh-granted" {
-		t.Errorf("pair = (%q, %q), want the granted pair", rec.Token, rec.RefreshToken)
+	if rec.Token.Reveal() != "token-granted" || rec.RefreshToken.Reveal() != "refresh-granted" {
+		t.Errorf("pair = (%q, %q), want the granted pair", rec.Token.Reveal(), rec.RefreshToken.Reveal())
 	}
 	if rec.Family != forgeapi.FamilyGitHub || rec.WebBaseURL != ep.srv.URL || rec.ClientID != clientID {
 		t.Errorf("record names (%v, %q, %q), want the family, the web base and the client id the grant ran under",
@@ -268,8 +268,8 @@ func TestDeviceGrant_answers_a_static_record_from_a_response_that_states_no_expi
 	if rec.Kind != forgeapi.CredKindStaticPAT {
 		t.Errorf("Kind = %v, want %v: the response states no expiry and no refresh token", rec.Kind, forgeapi.CredKindStaticPAT)
 	}
-	if !rec.Expiry.IsZero() || rec.RefreshToken != "" || !rec.RefreshExpiry.IsZero() {
-		t.Errorf("record = (Expiry %v, RefreshToken %q, RefreshExpiry %v), want all three empty", rec.Expiry, rec.RefreshToken, rec.RefreshExpiry)
+	if !rec.Expiry.IsZero() || !rec.RefreshToken.IsZero() || !rec.RefreshExpiry.IsZero() {
+		t.Errorf("record = (Expiry %v, RefreshToken %q, RefreshExpiry %v), want all three empty", rec.Expiry, rec.RefreshToken.Reveal(), rec.RefreshExpiry)
 	}
 }
 
@@ -285,8 +285,8 @@ func TestDeviceGrant_answers_a_rotating_record_with_no_refresh_token_where_none_
 	if err != nil || !done {
 		t.Fatalf("Poll() = (_, %v, %v), want the record and true", done, err)
 	}
-	if rec.Kind != forgeapi.CredKindRotatingOAuth || rec.RefreshToken != "" {
-		t.Errorf("record = (Kind %v, RefreshToken %q), want a rotating record with no refresh token", rec.Kind, rec.RefreshToken)
+	if rec.Kind != forgeapi.CredKindRotatingOAuth || !rec.RefreshToken.IsZero() {
+		t.Errorf("record = (Kind %v, RefreshToken %q), want a rotating record with no refresh token", rec.Kind, rec.RefreshToken.Reveal())
 	}
 	if want := before.Add(7200 * time.Second); !near(rec.Expiry, want, time.Minute) {
 		t.Errorf("Expiry = %v, want about %v, from expires_in", rec.Expiry, want)

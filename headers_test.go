@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/gitea"
+	"github.com/cplieger/go/masked"
 )
 
 // The three writer sets whose UNION is [forgeapi.ReservedHeaders], split by who
@@ -67,6 +68,11 @@ var (
 	stackHeadersThatNeverStick = []string{"Connection", "Host", "Transfer-Encoding"}
 )
 
+// stackHeadersOnAProxiedRequest is what the stack adds to a plaintext request it
+// sends through a proxy: the Basic credentials it builds from the proxy URL's
+// userinfo, which [forgeapi.Connection.ProxyUsername] and ProxyPassword fill.
+var stackHeadersOnAProxiedRequest = []string{"Proxy-Authorization"}
+
 // headersBothHalvesWrite is the OVERLAP between the library's names and the stack's,
 // because one name is written by both: net/http supplies a default User-Agent on a
 // request that carries none, and this library writes its own. So the slices are
@@ -116,6 +122,7 @@ func TestReservedHeadersHoldTheHeadersThatArrive(t *testing.T) {
 		libraryHeadersOnARevalidatingRead,
 		stackHeadersThatArrive,
 		stackHeadersThatNeverStick,
+		stackHeadersOnAProxiedRequest,
 	))
 	if !slices.Equal(reserved, union) {
 		t.Errorf("ReservedHeaders() = %v, want %v: the reserved list is the UNION of the writer sets this file names, every entry written by this library or by Go's HTTP stack or by both", reserved, union)
@@ -128,7 +135,10 @@ func TestReservedHeadersHoldTheHeadersThatArrive(t *testing.T) {
 		name string
 		// validator is what the server answers with, so a second read revalidates.
 		validator string
-		call      func(context.Context, *gitea.Client) error
+		// proxied sends the request through the server as a plaintext proxy,
+		// with proxy credentials.
+		proxied bool
+		call    func(context.Context, *gitea.Client) error
 		// wantArriving is the canonical header set the server must see, in
 		// full: an extra name is a header nothing on the reserved list
 		// accounts for, and a missing one is a name the builder stopped
@@ -162,6 +172,18 @@ func TestReservedHeadersHoldTheHeadersThatArrive(t *testing.T) {
 			wantArriving: slices.Concat(
 				libraryHeadersOnEveryRequest,
 				[]string{"If-Modified-Since"},
+				headersWithout(stackHeadersThatArrive, "Content-Length"),
+			),
+		},
+		{
+			name: "a_read_through_a_proxy_with_credentials", proxied: true,
+			call: func(ctx context.Context, c *gitea.Client) error {
+				_, err := c.Whoami(ctx)
+				return err
+			},
+			wantArriving: slices.Concat(
+				libraryHeadersOnEveryRequest,
+				stackHeadersOnAProxiedRequest,
 				headersWithout(stackHeadersThatArrive, "Content-Length"),
 			),
 		},
@@ -205,13 +227,22 @@ func TestReservedHeadersHoldTheHeadersThatArrive(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			client, err := gitea.New(forgeapi.Connection{WebBaseURL: srv.URL},
+			conn := forgeapi.Connection{WebBaseURL: srv.URL}
+			opts := []forgeapi.Option{
 				forgeapi.WithWireTransport(srv.Client().Transport),
 				forgeapi.WithCredentialSource(probeCredential{}),
 				forgeapi.WithPlaintextHTTP(true),
 				forgeapi.WithPrivateAddresses(true),
 				forgeapi.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
-			)
+			}
+			if test.proxied {
+				conn = forgeapi.Connection{
+					WebBaseURL: "http://forge.example.com", Proxy: srv.URL,
+					ProxyUsername: "forge-client", ProxyPassword: masked.NewSecret("observation-placeholder"),
+				}
+				opts = opts[1:]
+			}
+			client, err := gitea.New(conn, opts...)
 			if err != nil {
 				t.Fatalf("Setup: gitea.New(%q): %v", srv.URL, err)
 			}
@@ -259,7 +290,7 @@ func TestAConsumerHeaderArrivesBesideTheLibrarysOwn(t *testing.T) {
 
 	conn := forgeapi.Connection{
 		WebBaseURL: srv.URL,
-		Headers:    []forgeapi.Header{{Name: "X-Gateway-Secret", Value: "gateway-literal"}},
+		Headers:    []forgeapi.Header{{Name: "X-Gateway-Secret", Value: masked.NewSecret("gateway-literal")}},
 	}
 	client, err := gitea.New(conn,
 		forgeapi.WithWireTransport(srv.Client().Transport),
@@ -298,7 +329,7 @@ func TestAConnectionMutatedAfterConstructionDoesNotChangeWhatIsSent(t *testing.T
 	}))
 	defer srv.Close()
 
-	headers := []forgeapi.Header{{Name: "X-Allowed", Value: "allowed"}}
+	headers := []forgeapi.Header{{Name: "X-Allowed", Value: masked.NewSecret("allowed")}}
 	client, err := gitea.New(forgeapi.Connection{WebBaseURL: srv.URL, Headers: headers},
 		forgeapi.WithWireTransport(srv.Client().Transport),
 		forgeapi.WithCredentialSource(probeCredential{}),
@@ -309,7 +340,7 @@ func TestAConnectionMutatedAfterConstructionDoesNotChangeWhatIsSent(t *testing.T
 	if err != nil {
 		t.Fatalf("Setup: gitea.New(%q): %v", srv.URL, err)
 	}
-	headers[0] = forgeapi.Header{Name: "Authorization", Value: "token replacement"}
+	headers[0] = forgeapi.Header{Name: "Authorization", Value: masked.NewSecret("token replacement")}
 	if _, err := client.Whoami(t.Context()); err != nil {
 		t.Fatalf("Setup: Whoami: %v", err)
 	}
