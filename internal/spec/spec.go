@@ -1796,8 +1796,8 @@ var Table = []Entry{
 	{
 		Method:    "Merges.MergePR",
 		Product:   GitLab,
-		Exercises: "PUT /api/v4/projects/{id}/merge_requests/{iid}/merge, with the head commit required",
-		Requests:  Requests{Min: 1, Max: 1},
+		Exercises: "PUT /api/v4/projects/{id}/merge_requests/{iid}/merge, with the head commit required; a merge at IntentNoSquash first reads GET /api/v4/projects/{id} for the project's squash option, refused with strategy_not_allowed before any write where it is always, and unless it is never reads GET /api/v4/projects/{id}/merge_requests/{iid} for the merge request's squash flag, a flag set to squash cleared with PUT /api/v4/projects/{id}/merge_requests/{iid} before the merge, whose failure sends no merge",
+		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 		Departures: []Departure{
 			{
@@ -1823,7 +1823,7 @@ var Table = []Entry{
 				Where: InBody,
 				Holds: HoldsLiteral,
 				Value: "false",
-				Says:  "false unless the caller asked to squash: this product exposes no strategy selector, so a squash flag is what a merge intent reaches here, and the route applies the project's own merge method and updates the merge request's squash flag only on true (lib/api/merge_requests.rb, build_merge_params), so IntentDefault merges as the project and the merge request are configured",
+				Says:  "false unless the caller asked to squash: this product exposes no strategy selector, so a squash flag is what a merge intent reaches here, and the route applies the project's own merge method and updates the merge request's squash flag only on true (lib/api/merge_requests.rb, build_merge_params), so IntentDefault merges as the project and the merge request are configured, and IntentNoSquash clears a merge request's own squash flag first, since a false here leaves it set",
 			},
 			{
 				Field: "auto_merge",

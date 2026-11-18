@@ -23,7 +23,9 @@ const (
 	IntentDefault MergeIntent = iota
 	// IntentSquash asks for one commit.
 	IntentSquash
-	// IntentNoSquash asks for the branch's commits to survive.
+	// IntentNoSquash asks for the branch's commits to survive. On GitLab a merge
+	// request flagged to squash is updated first, and a project that always
+	// squashes is refused with [CodeStrategyNotAllowed] before any write.
 	IntentNoSquash
 )
 

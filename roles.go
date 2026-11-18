@@ -607,7 +607,7 @@ type Merges interface {
 	// Per forge:
 	//
 	//	GitHub   PUT /repos/{owner}/{repo}/pulls/{number}/merge-async, this product's asynchronous merge, whose accept carries a handle and whose outcome Merges.MergeStatus reads from the pull request, then one read against the id-addressed location to resolve the successor where it answered from another address; a merge at the default intent naming no strategy first reads GET /repos/{owner}/{repo} for the merge methods the repository allows, a merge asked to wait then reads GET /repos/{owner}/{repo}/pulls/{number}, and a pull request that cannot merge now is armed by the EnableAutoMerge document in place of the merge, 1 to 4 requests
-	//	GitLab   PUT /api/v4/projects/{id}/merge_requests/{iid}/merge, with the head commit required, 1 request
+	//	GitLab   PUT /api/v4/projects/{id}/merge_requests/{iid}/merge, with the head commit required; a merge at IntentNoSquash first reads GET /api/v4/projects/{id} for the project's squash option, refused with strategy_not_allowed before any write where it is always, and unless it is never reads GET /api/v4/projects/{id}/merge_requests/{iid} for the merge request's squash flag, a flag set to squash cleared with PUT /api/v4/projects/{id}/merge_requests/{iid} before the merge, whose failure sends no merge, 1 to 4 requests
 	//	Gitea    POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed; a merge at the default intent naming no strategy first reads GET /api/v1/repos/{owner}/{repo} for the repository's default merge style, 1 to 3 requests
 	//	Forgejo  POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed; a merge at the default intent naming no strategy first reads GET /api/v1/repos/{owner}/{repo} for the repository's default merge style, 1 to 3 requests
 	//
@@ -636,7 +636,7 @@ type Merges interface {
 	// GitLab sends this, where a wrong default would change the request silently:
 	//
 	//	sha         body  the head the caller pinned, which a group or instance setting on this product can make compulsory and which is what makes the merge refuse a branch that moved
-	//	squash      body  false unless the caller asked to squash: this product exposes no strategy selector, so a squash flag is what a merge intent reaches here, and the route applies the project's own merge method and updates the merge request's squash flag only on true (lib/api/merge_requests.rb, build_merge_params), so IntentDefault merges as the project and the merge request are configured
+	//	squash      body  false unless the caller asked to squash: this product exposes no strategy selector, so a squash flag is what a merge intent reaches here, and the route applies the project's own merge method and updates the merge request's squash flag only on true (lib/api/merge_requests.rb, build_merge_params), so IntentDefault merges as the project and the merge request are configured, and IntentNoSquash clears a merge request's own squash flag first, since a false here leaves it set
 	//	auto_merge  body  absent unless the caller asked for it: sent by default it arms a merge that completes later and unattended on a pull request the user asked to merge now
 	//
 	// Gitea sends this, where a wrong default would change the request silently:

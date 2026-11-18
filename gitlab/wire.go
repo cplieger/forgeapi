@@ -278,6 +278,7 @@ type (
 		UserNotesCount      *int            `json:"user_notes_count"`
 		References          *restReferences `json:"references"`
 		HeadPipeline        *restPipeline   `json:"head_pipeline"`
+		Squash              *bool           `json:"squash"`
 		// MergeWhenPipelineSucceeds is this product's REST answer for an armed
 		// auto-merge, on a list row, a mutation's answer and the merge's answer
 		// alike. The ANSWER keeps the name the merge's request parameter

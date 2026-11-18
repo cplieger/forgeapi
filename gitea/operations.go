@@ -814,7 +814,7 @@ func (c *Client) readRunPage(ctx context.Context, op string, addr *address, walk
 // merge style and for a pull request not yet mergeable alike.
 func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi.PRRef, req forgeapi.MergeRequest) (forgeapi.MergeOutcome, error) {
 	const op = "MergePR"
-	ctx = transport.Call(ctx, op)
+	ctx = transport.CallWrite(ctx, op)
 	if err := checkRepo(repo); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
