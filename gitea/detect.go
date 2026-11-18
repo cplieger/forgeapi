@@ -111,9 +111,11 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 	rerun, ev, verb := rerunCapability(swagger)
 	c.mu.Lock()
 	caps := forgeapi.ConnectionCaps{
-		Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
-		Ev:      map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
-		Product: c.product,
+		Caps:         map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: rerun},
+		Ev:           map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
+		Product:      c.product,
+		RerunScope:   rerunScope(verb),
+		RerunScopeEv: ev,
 	}
 	c.caps = &caps
 	c.rerunVerb = verb
@@ -152,6 +154,18 @@ func rerunCapability(doc *swaggerDoc) (forgeapi.Support, forgeapi.Evidence, stri
 		Source: forgeapi.EvidenceSwagger,
 		Detail: "swagger declares neither a " + rerunFailedJobs + " route nor " + forgejoWholeRun,
 	}, ""
+}
+
+// rerunScope is what the re-run through verb starts again, the same verb
+// [Client.rerunRoute] posts to.
+func rerunScope(verb string) forgeapi.RerunScope {
+	switch verb {
+	case rerunFailedJobs:
+		return forgeapi.RerunScopeFailedJobs
+	case wholeRun:
+		return forgeapi.RerunScopeWholeRun
+	}
+	return forgeapi.RerunScopeUnknown
 }
 
 // rerunRoute is the re-run route of one run, under the repository, as detection

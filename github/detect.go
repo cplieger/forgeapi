@@ -14,6 +14,10 @@ import (
 // serves, which is the one-time fact the version pin turns on.
 const versionsPath = "/versions"
 
+// rerunFailedJobs is the last segment of this product's re-run route, which decides
+// the jobs a re-run starts again.
+const rerunFailedJobs = "rerun-failed-jobs"
+
 // ConnectionCaps implements [forgeapi.Capabilities].
 //
 // It is connection setup, and what it costs is one request or two: the version set
@@ -49,8 +53,8 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 		if err := c.askVersions(ctx, op); err != nil {
 			return forgeapi.ConnectionCaps{}, err
 		}
-		return c.holdCaps(rerunEvidence(forgeapi.EvidenceResponseHeader,
-			"a response on this connection carried "+headerRequestID+", which this product sends on every response including a refusal")), nil
+		return c.holdCaps(forgeapi.EvidenceResponseHeader,
+			"a response on this connection carried "+headerRequestID+", which this product sends on every response including a refusal"), nil
 	}
 	var meta restMeta
 	resp, err := c.readJSON(ctx, op, "/meta", nil, &meta)
@@ -74,7 +78,7 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 			detail = "the metadata endpoint answered " + http.StatusText(fe.Status) + ", and " + headerRequestID + " established the family"
 		}
 	}
-	return c.holdCaps(rerunEvidence(source, detail)), nil
+	return c.holdCaps(source, detail), nil
 }
 
 // askVersions resolves whether this instance serves the version this family pins,
@@ -95,26 +99,28 @@ func (c *Client) askVersions(ctx context.Context, op string) error {
 	return ctx.Err()
 }
 
-// holdCaps records this connection's one-time answers and returns them.
-func (c *Client) holdCaps(ev forgeapi.Evidence) forgeapi.ConnectionCaps {
+// holdCaps records this connection's one-time answers and returns them. source and
+// detail are what established the family, which both the re-run verdict and its
+// scope rest on.
+func (c *Client) holdCaps(source forgeapi.EvidenceSource, detail string) forgeapi.ConnectionCaps {
 	caps := forgeapi.ConnectionCaps{
-		Caps:    map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: forgeapi.SupportUnknown},
-		Ev:      map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: ev},
+		Caps: map[forgeapi.Capability]forgeapi.Support{forgeapi.CapRerunChecks: forgeapi.SupportUnknown},
+		Ev: map[forgeapi.Capability]forgeapi.Evidence{forgeapi.CapRerunChecks: {
+			Source: source,
+			Detail: detail + "; the workflow runner is enabled per repository on this product, so no connection-scope read answers this capability and the per-repository read that would needs admin",
+		}},
 		Product: forgeapi.ProductGitHub,
+		// The re-run is not gated on the verdict, so it is sent on every connection.
+		RerunScope: forgeapi.RerunScopeFailedJobs,
+		RerunScopeEv: forgeapi.Evidence{
+			Source: source,
+			Detail: detail + "; this product's re-run posts to /repos/{owner}/{repo}/actions/runs/{run_id}/" + rerunFailedJobs + ", which re-runs a run's failed jobs and their dependents",
+		},
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.caps = &caps
 	return caps
-}
-
-// rerunEvidence is the evidence behind the re-run verdict: where the family was
-// established, and why the verdict itself is unknown at this scope.
-func rerunEvidence(source forgeapi.EvidenceSource, detail string) forgeapi.Evidence {
-	return forgeapi.Evidence{
-		Source: source,
-		Detail: detail + "; the workflow runner is enabled per repository on this product, so no connection-scope read answers this capability and the per-repository read that would needs admin",
-	}
 }
 
 // productName is which product of this family answered, which the metadata endpoint's

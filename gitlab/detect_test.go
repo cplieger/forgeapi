@@ -29,6 +29,7 @@ func TestTheFamilyIsEstablishedFromAMarkerRatherThanFromAVersionKey(t *testing.T
 		status   int
 		detected bool
 		support  forgeapi.Support
+		scope    forgeapi.RerunScope
 	}{
 		{
 			name:     "the_header_names_the_product",
@@ -36,6 +37,7 @@ func TestTheFamilyIsEstablishedFromAMarkerRatherThanFromAVersionKey(t *testing.T
 			header:   headerMeta,
 			detected: true,
 			support:  forgeapi.SupportYes,
+			scope:    forgeapi.RerunScopeFailedJobs,
 		},
 		{
 			name:     "the_header_rides_a_refusal_too_so_the_family_is_established_and_the_capability_is_not",
@@ -103,6 +105,14 @@ func TestTheFamilyIsEstablishedFromAMarkerRatherThanFromAVersionKey(t *testing.T
 			}
 			if caps.Ev[forgeapi.CapRerunChecks].Detail == "" {
 				t.Error("ConnectionCaps = empty evidence detail, want the version or the status: an unknown with no cause is an unexplained disabled control")
+			}
+			// The re-run is refused unless its verdict is yes, so only a yes carries
+			// the pipeline retry's scope.
+			if caps.RerunScope != test.scope {
+				t.Errorf("ConnectionCaps = re-run scope %s, want %s", caps.RerunScope, test.scope)
+			}
+			if caps.RerunScopeEv.Source != forgeapi.EvidenceMetadata || caps.RerunScopeEv.Detail == "" {
+				t.Errorf("ConnectionCaps = re-run scope evidence %+v, want the metadata endpoint's with its detail", caps.RerunScopeEv)
 			}
 		})
 	}

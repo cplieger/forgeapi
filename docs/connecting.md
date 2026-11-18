@@ -62,7 +62,9 @@ A `RepoRef` comes from what the forge answered and is never built by hand. It is
 
 `ConnectionCaps`, `GrantCaps`, `RepoAffordances` and `ActionState` are four separate scopes. A capability can be disabled for one repository, refused to one credential, or unknown because no safe probe exists, and each scope answers one of those questions.
 
-`CapRerunChecks` says whether the instance serves a route that re-runs failed CI jobs, which `RerunFailedChecks` and `RerunFailedRun` need. Forgejo 17 and later answer yes, through a route that re-runs the whole finished run, passed jobs included. So word a re-run control on Forgejo as re-running the whole run. Earlier Forgejo releases answer no.
+`CapRerunChecks` says whether the instance serves a route that re-runs failed CI jobs, which `RerunFailedChecks` and `RerunFailedRun` need. Forgejo 17 and later answer yes, through a route that re-runs the whole finished run, passed jobs included. Earlier Forgejo releases answer no.
+
+`ConnectionCaps.RerunScope` says what a re-run on the connection starts again, so word a re-run control from it rather than from the product. It is `RerunScopeFailedJobs` on GitHub, on GitLab and on Gitea, and `RerunScopeWholeRun` on a Forgejo whose API document declares only the whole-run route. It is read from the route the connection found, so a Forgejo release that adds a failed-jobs route answers `RerunScopeFailedJobs`. It is `RerunScopeUnknown` where the connection sends no re-run, and `RerunScopeEv` holds the evidence behind it.
 
 `ConnectionCaps.Product` names the product the instance runs, so a consumer can tell Gitea from Forgejo, which one family serves.
 

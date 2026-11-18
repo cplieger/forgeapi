@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ const (
 	headPipelineRerun  = "run re-run"
 	verbAbsentBefore17 = "error, verb absent, before 17"
 	capsBefore17       = "Caps[rerun_checks], before 17"
+	rerunScopeField    = "RerunScope"
 )
 
 // The swagger paths of the re-run routes the Gitea family's detection reads.
@@ -134,6 +136,9 @@ func TestAForgejoBefore17RefusesTheReRunWithNoRequest(t *testing.T) {
 	if got := caps.Ev[forgeapi.CapRerunChecks].Source; got != forgeapi.EvidenceSwagger {
 		t.Errorf("ConnectionCaps on Forgejo 16: Ev[rerun_checks].Source = %s, want %s", got, forgeapi.EvidenceSwagger)
 	}
+	if caps.RerunScope != forgeapi.RerunScopeUnknown {
+		t.Errorf("ConnectionCaps on Forgejo 16: RerunScope = %s, want unknown: no re-run is sent", caps.RerunScope)
+	}
 	for _, method := range rerunMethods {
 		t.Run(method, func(t *testing.T) {
 			before := rec.count()
@@ -180,7 +185,55 @@ func TestTheGiteaFamilyTakesTheFailedJobsRouteWhereTheDocumentDeclaresIt(t *test
 		if got := caps.Caps[forgeapi.CapRerunChecks]; got != forgeapi.SupportNo {
 			t.Errorf("ConnectionCaps on a document declaring only %s: Caps[rerun_checks] = %s, want no", giteaWholeRun, got)
 		}
+		if caps.RerunScope != forgeapi.RerunScopeUnknown {
+			t.Errorf("ConnectionCaps on a document declaring only %s: RerunScope = %s, want unknown", giteaWholeRun, caps.RerunScope)
+		}
 	})
+}
+
+// The scope a Gitea-family connection publishes is the route its own document
+// declares, so a Forgejo document declaring a failed-jobs route answers failed jobs
+// and posts there, and neither product's scope is read from the product.
+func TestTheGiteaFamilysRerunScopeIsTheRouteItsDocumentDeclares(t *testing.T) {
+	forgejoFailedJobs := "/repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs"
+	for _, test := range []struct {
+		name  string
+		p     spec.Product
+		edit  func(paths map[string]any)
+		want  forgeapi.RerunScope
+		route string
+	}{
+		{"gitea", spec.Gitea, func(map[string]any) {}, forgeapi.RerunScopeFailedJobs, "/rerun-failed-jobs"},
+		{"forgejo", spec.Forgejo, func(map[string]any) {}, forgeapi.RerunScopeWholeRun, "/rerun"},
+		{"forgejo_declaring_failed_jobs", spec.Forgejo, func(paths map[string]any) {
+			paths[forgejoFailedJobs] = map[string]any{"post": map[string]any{}}
+		}, forgeapi.RerunScopeFailedJobs, "/rerun-failed-jobs"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			post := wire{
+				Method: http.MethodPost, Path: giteaRepos + selector + "/actions/runs/1" + test.route,
+				Status: http.StatusCreated, Body: json.RawMessage(`{}`),
+			}
+			read := wire{
+				Method: http.MethodGet, Path: giteaRepos + selector + "/actions/runs/1",
+				Status: http.StatusOK, Body: json.RawMessage(`{"id":1,"status":"failure"}`),
+			}
+			client, rec, caps := rerunClient(t, test.p, append(withSwagger(t, test.p, "", test.edit), post, read))
+			if caps.RerunScope != test.want {
+				t.Errorf("ConnectionCaps on %s: RerunScope = %s, want %s", test.p, caps.RerunScope, test.want)
+			}
+			if caps.RerunScopeEv.Source != forgeapi.EvidenceSwagger {
+				t.Errorf("ConnectionCaps on %s: RerunScopeEv.Source = %s, want %s", test.p, caps.RerunScopeEv.Source, forgeapi.EvidenceSwagger)
+			}
+			before := rec.count()
+			if err := rerun(t, client, "Checks.RerunFailedRun", test.p, forgeapi.RunRef{ID: 1}); err != nil {
+				t.Fatalf("RerunFailedRun on %s = %v, want nil", test.p, err)
+			}
+			if got := paths(rec.since(before)); !slices.Contains(got, "POST "+post.Path) {
+				t.Errorf("RerunFailedRun on %s sent %v, want POST %s: the scope published is the route taken", test.p, got, post.Path)
+			}
+		})
+	}
 }
 
 // A run id that is not positive addresses no run, so every product refuses it before

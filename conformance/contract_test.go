@@ -681,6 +681,8 @@ var operations = []operation{
 				absent("Caps[rerun_checks]", g.Caps[forgeapi.CapRerunChecks],
 					forgeapi.SupportYes, forgeapi.SupportUnknown),
 				present("Ev[rerun_checks].Source", g.Ev[forgeapi.CapRerunChecks].Source, forgeapi.EvidenceUnknown),
+				absent(rerunScopeField, g.RerunScope, forgeapi.RerunScopeFailedJobs, forgeapi.RerunScopeWholeRun),
+				present("RerunScopeEv.Source", g.RerunScopeEv.Source, forgeapi.EvidenceUnknown),
 			}
 		},
 	},

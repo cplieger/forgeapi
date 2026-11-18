@@ -1043,7 +1043,8 @@ type Capabilities interface {
 	//
 	// Forgejo departs from the normalized contract:
 	//
-	//	Caps[rerun_checks], before 17  cannot supply  no: the swagger document declares no re-run verb before Forgejo 17
+	//	Caps[rerun_checks], before 17  cannot supply  no: the swagger document declares no re-run verb before Forgejo 17, so RerunScope is unknown
+	//	RerunScope                     cannot supply  RerunScopeWholeRun: the swagger document declares the whole-run re-run and no failed-jobs route
 	ConnectionCaps(ctx context.Context) (ConnectionCaps, error)
 
 	// GrantCaps reports what this credential can do on it.

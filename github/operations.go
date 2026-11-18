@@ -907,7 +907,7 @@ func (c *Client) RerunFailedChecks(ctx context.Context, repo forgeapi.RepoRef, p
 	if err != nil {
 		return err
 	}
-	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
+	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/"+rerunFailedJobs)
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 
@@ -982,7 +982,7 @@ func (c *Client) RerunFailedRun(ctx context.Context, repo forgeapi.RepoRef, run 
 	if run.ID <= 0 {
 		return errorf(forgeapi.CodeRepoRefInvalid, "run id is not positive")
 	}
-	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/rerun-failed-jobs")
+	path := repoRoute(repo, "/actions/runs/"+strconv.FormatInt(run.ID, 10)+"/"+rerunFailedJobs)
 	return c.sendJSON(ctx, op, http.MethodPost, path, nil, nil)
 }
 

@@ -157,6 +157,44 @@ func TestAMetadataReadTheCredentialCannotMakeStillEstablishesTheFamily(t *testin
 	}
 }
 
+// This product's re-run is sent whatever the per-repository runner state, and its
+// route re-runs a run's failed jobs, so the scope is failed jobs on every connection
+// while the re-run verdict itself stays unknown.
+func TestTheRerunScopeIsTheFailedJobsRouteOnEveryConnection(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		harness func(t *testing.T) *harness
+		source  forgeapi.EvidenceSource
+	}{
+		{"metadata_read", func(t *testing.T) *harness {
+			h := newHarness(t, map[string]string{metaRoute: `{"installed_version":"3.20.0"}`, versionsRoute: servedVersions})
+			withWitness(h.instance)
+			return h
+		}, forgeapi.EvidenceMetadata},
+		{"metadata_refused", func(t *testing.T) *harness {
+			header := http.Header{}
+			header.Set(headerRequestID, "EXAMPLE:REQUEST:ID")
+			return newRefusingHarness(t, http.StatusUnauthorized, header)
+		}, forgeapi.EvidenceResponseHeader},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			caps, err := test.harness(t).client.ConnectionCaps(t.Context())
+			if err != nil {
+				t.Fatalf("ConnectionCaps = %v, want the capabilities", err)
+			}
+			if caps.RerunScope != forgeapi.RerunScopeFailedJobs {
+				t.Errorf("RerunScope = %s, want %s: the re-run posts to rerun-failed-jobs", caps.RerunScope, forgeapi.RerunScopeFailedJobs)
+			}
+			if caps.RerunScopeEv.Source != test.source {
+				t.Errorf("RerunScopeEv.Source = %q, want %q: what established the family", caps.RerunScopeEv.Source, test.source)
+			}
+			if !strings.Contains(caps.RerunScopeEv.Detail, "rerun-failed-jobs") {
+				t.Errorf("RerunScopeEv.Detail = %q, want the route that decides the scope named", caps.RerunScopeEv.Detail)
+			}
+		})
+	}
+}
+
 // TestTheGrantReadAnswersFromTheScopeHeader holds the grant accessor's price and its
 // evidence. The verdict is yes whatever the grant, measured: one document answered the
 // merge state beside a viewer permission of READ, so routing it through an unknown

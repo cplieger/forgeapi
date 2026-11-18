@@ -2751,7 +2751,12 @@ var Table = []Entry{
 			{
 				Field: "Caps[rerun_checks], before 17",
 				Kind:  CannotSupply,
-				Says:  "no: the swagger document declares no re-run verb before Forgejo 17",
+				Says:  "no: the swagger document declares no re-run verb before Forgejo 17, so RerunScope is unknown",
+			},
+			{
+				Field: "RerunScope",
+				Kind:  CannotSupply,
+				Says:  "RerunScopeWholeRun: the swagger document declares the whole-run re-run and no failed-jobs route",
 			},
 		},
 	},
