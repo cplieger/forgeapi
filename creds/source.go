@@ -291,7 +291,9 @@ func (s *StoredSource) refresh(ctx context.Context, rot *rotation) (token string
 		s.mark(rot, &cur, UsabilityReconnectRequired, status, "the refresh was answered terminally")
 		return "", false, reconnect(&cur, r, "the product refused the refresh token")
 	case unspent:
-		s.outcome(&cur, forgeapi.CredRefreshDue, status, "the refresh failed")
+		if !transport.IsRefused(err) {
+			s.outcome(&cur, forgeapi.CredRefreshDue, status, "the refresh failed")
+		}
 		return keep(&cur, err)
 	case spent:
 		s.mark(rot, &cur, UsabilitySpent, status, "the refresh answered a token that could not be read")

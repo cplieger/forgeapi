@@ -40,8 +40,9 @@ type failure struct {
 
 // renewOwned mints one token under the source's owner ([AppSource.retrying]).
 // A re-probe after a terminal answer forgets the installation ID first
-// ([AppSource.forget]). A caller's own cancel moves no standing: GitHub
-// answered nothing, and the source's one re-probe is not spent on it.
+// ([AppSource.forget]). A caller's own cancel, or an attempt the attempt hook
+// refused, moves no standing: GitHub answered nothing, and the source's one
+// re-probe is not spent on it.
 func (s *AppSource) renewOwned(ctx context.Context, op string) (issued, error) {
 	s.mu.Lock()
 	if s.ended != nil {
@@ -66,7 +67,7 @@ func (s *AppSource) renewOwned(ctx context.Context, op string) (issued, error) {
 		s.renew.outcome(forgeapi.FamilyGitHub, s.instance, forgeapi.CredValid, status, "")
 		return next, nil
 	}
-	if cancelled(ctx, f) {
+	if cancelled(ctx, f) || transport.IsRefused(f.err) {
 		return issued{}, f.err
 	}
 	reached, err := s.settle(f)
