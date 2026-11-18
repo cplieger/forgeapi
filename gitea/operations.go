@@ -882,8 +882,9 @@ func (c *Client) mergeStyle(ctx context.Context, op string, repo forgeapi.RepoRe
 
 // defaultStyle is [forgeapi.IntentDefault] here: the merge route requires a style
 // (MergePullRequestOption's Do), so the one sent is the repository record's
-// default_merge_style, and a record naming none this family takes is refused before
-// any write.
+// default_merge_style where the record allows it. A record naming none this family
+// takes, or a default it has switched off (the repository edit accepts one unchecked,
+// and the merge route answers it with a causeless 405), is refused before any write.
 func (c *Client) defaultStyle(ctx context.Context, op string, repo forgeapi.RepoRef) (string, error) {
 	addr := &address{named: repo}
 	var record wireRepo
@@ -893,15 +894,22 @@ func (c *Client) defaultStyle(ctx context.Context, op string, repo forgeapi.Repo
 	if stale := c.moved(ctx, op, addr); stale != nil {
 		return "", stale
 	}
-	if slices.Contains(mergeStrategies, record.DefaultMergeStyle) {
+	allowed := exposedStrategies(&record)
+	known := slices.Contains(mergeStrategies, record.DefaultMergeStyle)
+	if known && slices.Contains(allowed, record.DefaultMergeStyle) {
 		return record.DefaultMergeStyle, nil
 	}
-	if record.DefaultMergeStyle != "" {
+	if !known && record.DefaultMergeStyle != "" {
 		c.unmapped("default merge style", record.DefaultMergeStyle)
 	}
-	message := "the repository record names no default merge style this family takes and allows no merge style"
-	if allowed := exposedStrategies(&record); len(allowed) > 0 {
-		message = "the repository record names no default merge style this family takes, and allows " + strings.Join(allowed, ", ")
+	message := "the repository record names no default merge style this family takes"
+	if known {
+		message = "the repository record names the default merge style " + record.DefaultMergeStyle + ", which it does not allow"
+	}
+	if len(allowed) > 0 {
+		message += ", and allows " + strings.Join(allowed, ", ")
+	} else {
+		message += " and allows no merge style"
 	}
 	return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), addr.answer, forgeapi.CodeStrategyRequired, forgeapi.KindNotMergeable,
 		message+", so a merge at the default intent names its strategy")

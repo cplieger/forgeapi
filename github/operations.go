@@ -1450,8 +1450,7 @@ func (c *Client) documentStatus(ctx context.Context, op string, repo forgeapi.Re
 			"the document resolved the repository and no commit at that reference")
 	}
 	if commit.OID == "" {
-		// A Commit always carries its oid, so an object without one is a tree or a
-		// blob the ... on Commit selection did not match.
+		// A Commit always carries its oid, so an object without one is one the ... on Commit selection did not match (a tree, a blob or a tag object).
 		return forgeapi.CommitChecks{}, c.core.Fail(ctx, op, transport.Document(http.MethodPost), result.Answer,
 			forgeapi.CodeRefInvalid, forgeapi.KindNotFound,
 			"the document resolved the repository and an object at that reference that is not a commit")

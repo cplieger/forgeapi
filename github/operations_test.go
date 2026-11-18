@@ -826,11 +826,12 @@ func TestAnEmptyDegradedFoldIsUnknownRatherThanGreen(t *testing.T) {
 }
 
 // A 40-hex ref passes ValidateRef whatever object it names, and the document answers
-// a tree or a blob there with its __typename alone (measured: a tree sha of git/git
-// answers {"__typename":"Tree"}), so such a ref names no commit to fold.
+// a tree, a blob or a tag object there with its __typename alone (measured on git/git:
+// a tree sha answers {"__typename":"Tree"}, a tag object sha {"__typename":"Tag"}), so
+// such a ref names no commit to fold.
 func TestACommitStatusAtAnObjectThatIsNoCommitIsRefused(t *testing.T) {
 	const tree = "bc57e2925a714c5f5696def079e395507a19424e"
-	for _, typename := range []string{"Tree", "Blob"} {
+	for _, typename := range []string{"Tree", "Blob", "Tag"} {
 		t.Run(typename, func(t *testing.T) {
 			h := newHarness(t, map[string]string{documentRoute: documentEnvelope(
 				`"repository":{"nameWithOwner":"example/example","object":{"__typename":"` + typename + `"}}`,

@@ -15,7 +15,9 @@ type MergeIntent int
 const (
 	// IntentDefault merges as the repository is configured to: on GitLab by the
 	// project's merge method and squash option; on Gitea and Forgejo by the
-	// repository's default merge style, read from its record before the merge.
+	// repository's default merge style, read from its record before the merge and
+	// refused with [CodeStrategyRequired] before any write where the record does not
+	// allow it.
 	// GitHub configures no repository-wide default method, only allowed ones, so
 	// there it is the one method the repository's record allows, and a record
 	// allowing several or none is refused with [CodeStrategyRequired] before any

@@ -79,7 +79,7 @@ func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 			name: "GitHub_allowing_one_method", product: spec.GitHub, field: "merge_method", want: `"rebase"`, reads: 1,
 			set: map[string]any{"allow_merge_commit": false, "allow_squash_merge": false, "allow_rebase_merge": true},
 		},
-		{name: "Gitea", product: spec.Gitea, field: "Do", want: `"rebase-merge"`, reads: 1, set: map[string]any{"default_merge_style": "rebase-merge"}},
+		{name: "Gitea", product: spec.Gitea, field: "Do", want: `"rebase-merge"`, reads: 1, set: map[string]any{"default_merge_style": "rebase-merge", "allow_rebase_explicit": true}},
 		{name: "Forgejo", product: spec.Forgejo, field: "Do", want: `"squash"`, reads: 1, set: map[string]any{"default_merge_style": "squash"}},
 		{name: "GitLab", product: spec.GitLab, field: "squash", want: "false"},
 	} {
@@ -110,6 +110,12 @@ var noStyleAllowed = map[string]any{
 	"allow_rebase": false, "allow_rebase_explicit": false, "allow_fast_forward_only_merge": false,
 }
 
+// defaultNotAllowed is a Gitea-family record whose default style is one it has switched
+// off, which both products' repository edit accepts unchecked.
+var defaultNotAllowed = map[string]any{
+	"default_merge_style": "merge", "allow_merge_commits": false, "allow_squash_merge": true,
+}
+
 // A repository naming no one configured merge is refused before any write, naming what
 // it allows, because a merge sent with a guessed strategy lands history the repository's
 // owner did not choose.
@@ -130,6 +136,8 @@ func TestTheDefaultIntentIsRefusedWhereTheRepositoryNamesNoOneMerge(t *testing.T
 		},
 		{name: "Gitea_record_carrying_no_default", product: spec.Gitea, names: []string{"merge", "squash"}, set: map[string]any{"default_merge_style": nil}},
 		{name: "Forgejo_record_carrying_no_default", product: spec.Forgejo, names: []string{"merge", "squash"}, set: map[string]any{"default_merge_style": nil}},
+		{name: "Gitea_default_not_allowed", product: spec.Gitea, names: []string{"squash"}, set: defaultNotAllowed},
+		{name: "Forgejo_default_not_allowed", product: spec.Forgejo, names: []string{"squash"}, set: defaultNotAllowed},
 		{name: "Gitea_record_allowing_no_style", product: spec.Gitea, set: noStyleAllowed},
 		{name: "Forgejo_record_allowing_no_style", product: spec.Forgejo, set: noStyleAllowed},
 	} {

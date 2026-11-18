@@ -178,6 +178,26 @@ func TestAMergeSendsTheStyleItsIntentNames(t *testing.T) {
 	}
 }
 
+// A default style the record has switched off is refused before any write, naming what
+// the record allows, since the merge route would refuse it with a causeless 405.
+func TestADefaultStyleTheRecordDisallowsIsRefusedBeforeAnyWrite(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		repoRoute: `{"full_name":"example/example","allow_merge_commits":false,"allow_squash_merge":true,"default_merge_style":"merge"}`,
+		"POST /api/v1/repos/example/example/pulls/1/merge": "",
+	})
+	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+	var fe *forgeapi.Error
+	if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeStrategyRequired || fe.Kind != forgeapi.KindNotMergeable {
+		t.Fatalf("MergePR at a default the record disallows = %v, want %s/%s", err, forgeapi.CodeStrategyRequired, forgeapi.KindNotMergeable)
+	}
+	if !strings.Contains(fe.Message, "allows squash") {
+		t.Errorf("MergePR at a default the record disallows = message %q, want it naming the allowed squash", fe.Message)
+	}
+	if arrived := h.instance.arrived(); !slices.Equal(arrived, []string{repoRoute}) {
+		t.Errorf("MergePR at a default the record disallows sent %v, want the record read alone", arrived)
+	}
+}
+
 func rerunRoutes(rows string) map[string]string {
 	return map[string]string{
 		"GET /api/v1/version":  `{"version":"1.27.0+dev"}`,

@@ -1862,7 +1862,7 @@ var Table = []Entry{
 				Where: InBody,
 				Holds: HoldsLiteral,
 				Value: "\"merge\"",
-				Says:  "the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes refused with strategy_required before any write",
+				Says:  "the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes, or a default it does not allow, refused with strategy_required before any write",
 			},
 			{
 				Field: "head_commit_id",
@@ -1907,7 +1907,7 @@ var Table = []Entry{
 				Where: InBody,
 				Holds: HoldsLiteral,
 				Value: "\"merge\"",
-				Says:  "the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes refused with strategy_required before any write",
+				Says:  "the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes, or a default it does not allow, refused with strategy_required before any write",
 			},
 			{
 				Field: "head_commit_id",

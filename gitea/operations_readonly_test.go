@@ -83,7 +83,7 @@ func TestALabeledCreationReadsInsideItsWrite(t *testing.T) {
 // A merge at the default intent reads the repository record inside its write, so a
 // read-only client refuses it before the record read is sent.
 func TestADefaultMergeOnAReadOnlyClientSendsNothing(t *testing.T) {
-	h := newHarness(t, map[string]string{repoRoute: `{"full_name":"example/example","default_merge_style":"merge"}`}, forgeapi.WithMutations(false))
+	h := newHarness(t, map[string]string{repoRoute: `{"full_name":"example/example","allow_merge_commits":true,"default_merge_style":"merge"}`}, forgeapi.WithMutations(false))
 	before := h.instance.count()
 	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
 	var fe *forgeapi.Error

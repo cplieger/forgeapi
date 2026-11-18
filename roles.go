@@ -641,13 +641,13 @@ type Merges interface {
 	//
 	// Gitea sends this, where a wrong default would change the request silently:
 	//
-	//	do                         body  the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes refused with strategy_required before any write
+	//	do                         body  the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes, or a default it does not allow, refused with strategy_required before any write
 	//	head_commit_id             body  the head the caller pinned
 	//	merge_when_checks_succeed  body  absent unless the caller asked for it and the flagless form answered 405: sent, the instance schedules the merge whatever the checks, so sent by default it would answer a merge nobody asked to wait for
 	//
 	// Forgejo sends this, where a wrong default would change the request silently:
 	//
-	//	Do                         body  the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes refused with strategy_required before any write
+	//	Do                         body  the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes, or a default it does not allow, refused with strategy_required before any write
 	//	head_commit_id             body  the head the caller pinned
 	//	merge_when_checks_succeed  body  absent unless the caller asked for it and the flagless form answered 405: sent, the instance schedules the merge whatever the checks, so sent by default it would answer a merge nobody asked to wait for
 	MergePR(ctx context.Context, repo RepoRef, pr PRRef, req MergeRequest) (MergeOutcome, error)
