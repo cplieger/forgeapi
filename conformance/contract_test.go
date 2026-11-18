@@ -404,8 +404,10 @@ var operations = []operation{
 			if !ok {
 				return nil, roleAbsent("Merges")
 			}
+			// The default intent reads the repository first and can refuse;
+			// TestTheDefaultIntentMergesAsTheRepositoryIsConfigured holds it.
 			return r.MergePR(ctx, s.repo, s.pr, forgeapi.MergeRequest{
-				Intent:  forgeapi.IntentDefault,
+				Intent:  forgeapi.IntentNoSquash,
 				HeadSHA: s.ref,
 			})
 		},

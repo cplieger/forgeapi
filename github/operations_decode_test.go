@@ -111,7 +111,7 @@ func TestADecodeFailureReadsTheTimeOfTheRequestItFollows(t *testing.T) {
 			})
 			var logs bytes.Buffer
 			client := wiredClient(t, wire, &logs)
-			_, err := client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true})
+			_, err := client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true})
 			if !isBodyFailure(err) {
 				t.Errorf("MergePR over a merge answer that does not decode = %v, want the validation failure of kind upstream", err)
 			}

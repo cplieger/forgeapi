@@ -158,7 +158,7 @@ func TestEveryOperationSpendsThePriceItPublishes(t *testing.T) {
 			return h.client.RerunFailedChecks(t.Context(), testRef(), testPR(), testHeadSHA)
 		}},
 		{name: "Merges.MergePR", want: 1, call: func(h *harness) error {
-			_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+			_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 			return err
 		}},
 		{name: "Merges.MergeStatus", want: 1, call: func(h *harness) error {
@@ -236,7 +236,7 @@ func TestEveryOperationSpendsThePriceItPublishes(t *testing.T) {
 func TestTheMergeSendsTheHeadPinAndNothingThatDefersIt(t *testing.T) {
 	recorded := readCaptures(t)
 	h := newHarness(t, map[string]string{mergeRoute: recorded.raw(t, "rest_merge_accepted")})
-	if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA}); err != nil {
+	if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA}); err != nil {
 		t.Fatalf("MergePR = %v, want the outcome", err)
 	}
 	body := h.instance.body(mergeRoute)
@@ -286,7 +286,7 @@ func TestAStrategyOutsideThisFamilysSetIsRefusedLocally(t *testing.T) {
 		t.Errorf("MergePR with a foreign strategy sent %d request(s), want 0", got)
 	}
 	for _, method := range mergeMethods {
-		if _, err := mergeMethod(forgeapi.MergeRequest{HeadSHA: testHeadSHA, Strategy: method}); err != nil {
+		if _, err := h.client.mergeMethod(t.Context(), testRef(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, Strategy: method}); err != nil {
 			t.Errorf("mergeMethod(%q) = %v, want nil: that member is this product's own", method, err)
 		}
 	}
@@ -299,7 +299,7 @@ func TestTheMergesAcceptIsNotReportedAsAMerge(t *testing.T) {
 	recorded := readCaptures(t)
 	h := newHarness(t, map[string]string{mergeRoute: recorded.raw(t, "rest_merge_accepted")})
 	h.instance.status(mergeRoute, http.StatusAccepted)
-	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 	if err != nil {
 		t.Fatalf("MergePR = %v, want the outcome", err)
 	}
@@ -323,7 +323,7 @@ func TestTheMergesAcceptIsNotReportedAsAMerge(t *testing.T) {
 // calls done when it is not is the worst answer available here.
 func TestAnUnreadableMergeAnswerIsNotAMerge(t *testing.T) {
 	h := newHarness(t, map[string]string{mergeRoute: `{"status":"teleported","details":{"uuid":"x"}}`})
-	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 	if err != nil {
 		t.Fatalf("MergePR = %v, want the outcome", err)
 	}
@@ -1748,7 +1748,7 @@ func TestEveryOperationRefusesAReferenceItCannotInterpolate(t *testing.T) {
 		"CreatePR": func() error { _, err := h.client.CreatePR(t.Context(), bad, forgeapi.NewPullRequest{}); return err },
 		"ClosePR":  func() error { _, err := h.client.ClosePR(t.Context(), bad, testPR()); return err },
 		"MergePR": func() error {
-			_, err := h.client.MergePR(t.Context(), bad, testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+			_, err := h.client.MergePR(t.Context(), bad, testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 			return err
 		},
 		"MergeStatus": func() error { _, err := h.client.MergeStatus(t.Context(), bad, testPR()); return err },

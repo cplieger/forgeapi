@@ -606,10 +606,10 @@ type Merges interface {
 	//
 	// Per forge:
 	//
-	//	GitHub   PUT /repos/{owner}/{repo}/pulls/{number}/merge-async, this product's asynchronous merge, whose accept carries a handle and whose outcome Merges.MergeStatus reads from the pull request, then one read against the id-addressed location to resolve the successor where it answered from another address; a merge asked to wait first reads GET /repos/{owner}/{repo}/pulls/{number}, and a pull request that cannot merge now is armed by the EnableAutoMerge document in place of the merge, 1 to 3 requests
+	//	GitHub   PUT /repos/{owner}/{repo}/pulls/{number}/merge-async, this product's asynchronous merge, whose accept carries a handle and whose outcome Merges.MergeStatus reads from the pull request, then one read against the id-addressed location to resolve the successor where it answered from another address; a merge at the default intent naming no strategy first reads GET /repos/{owner}/{repo} for the merge methods the repository allows, a merge asked to wait then reads GET /repos/{owner}/{repo}/pulls/{number}, and a pull request that cannot merge now is armed by the EnableAutoMerge document in place of the merge, 1 to 4 requests
 	//	GitLab   PUT /api/v4/projects/{id}/merge_requests/{iid}/merge, with the head commit required, 1 request
-	//	Gitea    POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed, 1 to 2 requests
-	//	Forgejo  POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed, 1 to 2 requests
+	//	Gitea    POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed; a merge at the default intent naming no strategy first reads GET /api/v1/repos/{owner}/{repo} for the repository's default merge style, 1 to 3 requests
+	//	Forgejo  POST /api/v1/repos/{owner}/{repo}/pulls/{number}/merge, and for a merge asked to wait whose form the route answers 405, the same form again carrying merge_when_checks_succeed; a merge at the default intent naming no strategy first reads GET /api/v1/repos/{owner}/{repo} for the repository's default merge style, 1 to 3 requests
 	//
 	// GitHub departs from the normalized contract:
 	//
@@ -628,7 +628,7 @@ type Merges interface {
 	//
 	// GitHub sends this, where a wrong default would change the request silently:
 	//
-	//	merge_method            body  the strategy this product's own route takes, in its own spelling, and merge where the caller named none
+	//	merge_method            body  the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault, since this product configures no default method and its route defaults to merge, the one method the repository record allows, a record allowing several or naming none refused with strategy_required before any write
 	//	sha                     body  the head the caller pinned, under the key this product's asynchronous merge route reads, so a merge cannot land on a head that moved under the row the caller was looking at: a pin naming another commit is refused before anything merges, and a push between the request and the merge cancels it, as the route documents
 	//	merge_action            body  absent: a merge this product accepts completes in the background on its own, so an action that deferred it would answer a merge nobody asked to wait for
 	//	delete_branch_on_merge  body  absent: neither this product's merge route nor its auto-merge arm takes a branch deletion, so the repository's own delete_branch_on_merge setting decides whether the head branch goes, whatever the caller asked
@@ -636,18 +636,18 @@ type Merges interface {
 	// GitLab sends this, where a wrong default would change the request silently:
 	//
 	//	sha         body  the head the caller pinned, which a group or instance setting on this product can make compulsory and which is what makes the merge refuse a branch that moved
-	//	squash      body  false unless the caller asked to squash: this product exposes no strategy selector, so a squash flag is what a merge intent reaches here
+	//	squash      body  false unless the caller asked to squash: this product exposes no strategy selector, so a squash flag is what a merge intent reaches here, and the route applies the project's own merge method and updates the merge request's squash flag only on true (lib/api/merge_requests.rb, build_merge_params), so IntentDefault merges as the project and the merge request are configured
 	//	auto_merge  body  absent unless the caller asked for it: sent by default it arms a merge that completes later and unattended on a pull request the user asked to merge now
 	//
 	// Gitea sends this, where a wrong default would change the request silently:
 	//
-	//	do                         body  the strategy this product takes, in its own spelling, and merge where the caller named none
+	//	do                         body  the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes refused with strategy_required before any write
 	//	head_commit_id             body  the head the caller pinned
 	//	merge_when_checks_succeed  body  absent unless the caller asked for it and the flagless form answered 405: sent, the instance schedules the merge whatever the checks, so sent by default it would answer a merge nobody asked to wait for
 	//
 	// Forgejo sends this, where a wrong default would change the request silently:
 	//
-	//	Do                         body  the strategy this product takes, in its own spelling, and merge where the caller named none
+	//	Do                         body  the strategy the caller named, in this product's own spelling, squash for IntentSquash and merge for IntentNoSquash; at IntentDefault the repository record's default_merge_style, since the route requires a style, a record naming none this family takes refused with strategy_required before any write
 	//	head_commit_id             body  the head the caller pinned
 	//	merge_when_checks_succeed  body  absent unless the caller asked for it and the flagless form answered 405: sent, the instance schedules the merge whatever the checks, so sent by default it would answer a merge nobody asked to wait for
 	MergePR(ctx context.Context, repo RepoRef, pr PRRef, req MergeRequest) (MergeOutcome, error)

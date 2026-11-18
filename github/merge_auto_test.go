@@ -63,7 +63,7 @@ func TestAutoMerge_arms_a_pull_request_that_cannot_merge_now(t *testing.T) {
 	for _, state := range []string{"blocked", "behind", "dirty", "draft", "unknown"} {
 		t.Run(state, func(t *testing.T) {
 			h := newHarness(t, map[string]string{pullsRoute: autoMergePull(state), documentRoute: autoMergeArmed})
-			got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true})
+			got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true})
 			if err != nil {
 				t.Fatalf("MergePR(AutoMerge) on a %s pull request = %v, want the armed outcome", state, err)
 			}
@@ -96,7 +96,7 @@ func TestAutoMerge_merges_now_a_pull_request_GitHub_will_not_arm(t *testing.T) {
 				mergeRoute: `{"status":"pending","details":{"uuid":"` + inFlightUUID + `","merge_method":"merge","expected_head_sha":"` + testHeadSHA + `"}}`,
 			})
 			h.instance.status(mergeRoute, http.StatusAccepted)
-			got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true})
+			got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true})
 			if err != nil {
 				t.Fatalf("MergePR(AutoMerge) on a %s pull request = %v, want the accepted merge", state, err)
 			}
@@ -138,6 +138,37 @@ func TestAutoMerge_arms_with_the_strategy_the_request_names(t *testing.T) {
 	}
 }
 
+// The default intent on this product, which configures no default merge method, is the
+// one method the repository's record allows, read before either merge path, and the arm
+// takes it in its own enum spelling.
+func TestTheDefaultIntentTakesTheOneMethodTheRepositoryAllows(t *testing.T) {
+	const record = `{"full_name":"example/example","allow_merge_commit":false,"allow_squash_merge":true,"allow_rebase_merge":false}`
+	t.Run("merge_now", func(t *testing.T) {
+		h := newHarness(t, map[string]string{repoRouteBase: record, mergeRoute: `{"status":"merged"}`})
+		if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA}); err != nil {
+			t.Fatalf("MergePR at the default intent = %v, want the merge", err)
+		}
+		if arrived, want := h.instance.arrived(), []string{repoRouteBase, mergeRoute}; !slices.Equal(arrived, want) {
+			t.Errorf("MergePR at the default intent sent %v, want %v", arrived, want)
+		}
+		if got := sentBody(t, h, mergeRoute)["merge_method"]; got != "squash" {
+			t.Errorf("MergePR at the default intent sent merge_method %v, want the one allowed, squash", got)
+		}
+	})
+	t.Run("armed", func(t *testing.T) {
+		h := newHarness(t, map[string]string{repoRouteBase: record, pullsRoute: autoMergePull("blocked"), documentRoute: autoMergeArmed})
+		if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true}); err != nil {
+			t.Fatalf("MergePR(AutoMerge) at the default intent = %v, want the armed outcome", err)
+		}
+		if arrived, want := h.instance.arrived(), []string{repoRouteBase, pullsRoute, documentRoute}; !slices.Equal(arrived, want) {
+			t.Errorf("MergePR(AutoMerge) at the default intent sent %v, want %v", arrived, want)
+		}
+		if got := postedArm(t, h).Variables.MergeMethod; got != "SQUASH" {
+			t.Errorf("MergePR(AutoMerge) at the default intent armed with %q, want SQUASH", got)
+		}
+	})
+}
+
 // TestAMergeNotAskedToWaitSendsTheMergeAlone holds the price of the default: without
 // AutoMerge nothing is read first, so a merge stays one request.
 func TestAMergeNotAskedToWaitSendsTheMergeAlone(t *testing.T) {
@@ -145,7 +176,7 @@ func TestAMergeNotAskedToWaitSendsTheMergeAlone(t *testing.T) {
 		mergeRoute: `{"status":"pending","details":{"uuid":"` + inFlightUUID + `","merge_method":"merge","expected_head_sha":"` + testHeadSHA + `"}}`,
 	})
 	h.instance.status(mergeRoute, http.StatusAccepted)
-	if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA}); err != nil {
+	if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA}); err != nil {
 		t.Fatalf("MergePR = %v, want the accepted merge", err)
 	}
 	if arrived := h.instance.arrived(); !slices.Equal(arrived, []string{mergeRoute}) {
@@ -159,7 +190,7 @@ func TestAMergeNotAskedToWaitSendsTheMergeAlone(t *testing.T) {
 // document's failure, so the connection keeps its documents.
 func TestAnArmGitHubRefusesIsTheForgesRefusal(t *testing.T) {
 	h := newHarness(t, map[string]string{pullsRoute: autoMergePull("unknown"), documentRoute: autoMergeRefused})
-	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true})
+	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true})
 	var fe *forgeapi.Error
 	if !asForgeError(err, &fe) {
 		t.Fatalf("MergePR(AutoMerge) with the arm refused = %v, want a *forgeapi.Error", err)
@@ -180,7 +211,7 @@ func TestAnArmGitHubRefusesIsTheForgesRefusal(t *testing.T) {
 // no arm.
 func TestAnArmOnAReadOnlyClientIsRefusedBeforeItIsSent(t *testing.T) {
 	h := newHarness(t, map[string]string{pullsRoute: autoMergePull("blocked"), documentRoute: autoMergeArmed}, forgeapi.WithMutations(false))
-	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true})
+	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true})
 	var fe *forgeapi.Error
 	if !asForgeError(err, &fe) || fe.Code != forgeapi.CodeMutationsDisabled {
 		t.Errorf("MergePR(AutoMerge) on a read-only client = %v, want code %q", err, forgeapi.CodeMutationsDisabled)
@@ -200,7 +231,7 @@ func TestAMergeAskedToWaitIsAdmittedUnderTheMutationReserve(t *testing.T) {
 	h.instance.answerHeader("X-Ratelimit-Reset", "1790000000")
 	h.instance.answerHeader("X-Ratelimit-Resource", "core")
 	for attempt := range 2 {
-		got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true})
+		got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true})
 		if err != nil {
 			t.Fatalf("MergePR(AutoMerge) #%d with the budget at the reserve = %v, want the merge armed", attempt+1, err)
 		}

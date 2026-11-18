@@ -146,22 +146,33 @@ func TestCreateReleaseSendsTheRequestedRelease(t *testing.T) {
 	}
 }
 
+// The default intent sends the style the repository record names as its default
+// (default_merge_style), read before the merge, because the route requires a style.
 func TestAMergeSendsTheStyleItsIntentNames(t *testing.T) {
+	const merge = "POST /api/v1/repos/example/example/pulls/1/merge"
 	for _, test := range []struct {
 		name   string
 		intent forgeapi.MergeIntent
 		want   string
+		sent   []string
 	}{
-		{name: "squash", intent: forgeapi.IntentSquash, want: styleSquash},
-		{name: "default", intent: forgeapi.IntentDefault, want: styleMerge},
+		{name: "squash", intent: forgeapi.IntentSquash, want: styleSquash, sent: []string{merge}},
+		{name: "no_squash", intent: forgeapi.IntentNoSquash, want: styleMerge, sent: []string{merge}},
+		{name: "default", intent: forgeapi.IntentDefault, want: "rebase-merge", sent: []string{repoRoute, merge}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			h, form := mergeAnswering(t, http.StatusOK)
+			h := newHarness(t, map[string]string{
+				repoRoute: `{"full_name":"example/example","allow_merge_commits":true,"allow_rebase_explicit":true,"default_merge_style":"rebase-merge"}`,
+				merge:     "",
+			})
 			if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: test.intent, HeadSHA: testHeadSHA}); err != nil {
 				t.Fatalf("MergePR = %v, want nil", err)
 			}
-			if got := (*form)["Do"]; got != test.want {
+			if got := sentBody(t, h, merge)["Do"]; got != test.want {
 				t.Errorf("MergePR with intent %s sent Do=%v, want %q", test.name, got, test.want)
+			}
+			if arrived := h.instance.arrived(); !slices.Equal(arrived, test.sent) {
+				t.Errorf("MergePR with intent %s sent %v, want %v", test.name, arrived, test.sent)
 			}
 		})
 	}

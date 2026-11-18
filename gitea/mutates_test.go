@@ -42,7 +42,7 @@ func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f
 func TestAnAutoMergeThatSchedulesMarksBothItsSends(t *testing.T) {
 	seen := &marked{}
 	h, forms := mergeAnsweringByForm(t, http.StatusMethodNotAllowed, http.StatusCreated, forgeapi.WithAttemptObserver(seen.observe))
-	if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true}); err != nil {
+	if _, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true}); err != nil {
 		t.Fatalf("MergePR(AutoMerge) on a pull request not mergeable now = %v, want the scheduled merge", err)
 	}
 	if len(*forms) != 2 {

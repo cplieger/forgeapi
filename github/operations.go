@@ -1134,7 +1134,7 @@ func (c *Client) MergePR(ctx context.Context, repo forgeapi.RepoRef, pr forgeapi
 	if err := forgeapi.ValidateRef(req.HeadSHA); err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
-	method, err := mergeMethod(req)
+	method, err := c.mergeMethod(ctx, repo, req)
 	if err != nil {
 		return forgeapi.MergeOutcome{}, err
 	}
@@ -1236,22 +1236,49 @@ func (c *Client) inFlight(ctx context.Context, resp *transport.Response, answer 
 	}, nil
 }
 
-// mergeMethod is the merge strategy this product's route takes, refused LOCALLY
-// against this family's closed set before any request. A strategy the REPOSITORY has
-// disabled leaves the process and comes back as the forge's own refusal mapped to the
-// same code, because it is one cause a consumer branches on once.
-func mergeMethod(req forgeapi.MergeRequest) (string, error) {
-	if req.Strategy != "" {
+// mergeMethod is the merge strategy this product's route takes. A named strategy is
+// refused LOCALLY against this family's closed set before any request; one the
+// REPOSITORY has disabled leaves the process and comes back as the forge's own refusal
+// mapped to the same code, because it is one cause a consumer branches on once. The
+// default intent is [Client.allowedMethod]'s.
+func (c *Client) mergeMethod(ctx context.Context, repo forgeapi.RepoRef, req forgeapi.MergeRequest) (string, error) {
+	switch {
+	case req.Strategy != "":
 		if !slices.Contains(mergeMethods, req.Strategy) {
 			return "", errorf(forgeapi.CodeStrategyNotAllowed,
 				"strategy %q is outside this family's own set", req.Strategy)
 		}
 		return req.Strategy, nil
-	}
-	if req.Intent == forgeapi.IntentSquash {
+	case req.Intent == forgeapi.IntentSquash:
 		return memberSquash, nil
+	case req.Intent == forgeapi.IntentNoSquash:
+		return memberMerge, nil
 	}
-	return memberMerge, nil
+	return c.allowedMethod(ctx, repo)
+}
+
+// allowedMethod is [forgeapi.IntentDefault] here. This product configures no default
+// merge method, only allowed ones, and its merge route and arm default to merge
+// whatever the repository allows
+// (https://docs.github.com/en/graphql/reference/input-objects#mergepullrequestinput),
+// so the method sent is the one the repository's record allows, and a record allowing
+// several or naming none is refused before any write.
+func (c *Client) allowedMethod(ctx context.Context, repo forgeapi.RepoRef) (string, error) {
+	var record restRepo
+	resp, err := c.readRepoJSON(ctx, opMergePR, repoRoute(repo, ""), nil, &record)
+	if err != nil {
+		return "", err
+	}
+	allowed := exposedStrategies(&record)
+	if len(allowed) == 1 {
+		return allowed[0], nil
+	}
+	message := "the repository record names no allowed merge method"
+	if len(allowed) > 0 {
+		message = "the repository allows the merge methods " + strings.Join(allowed, ", ") + " and configures no default among them"
+	}
+	return "", c.core.Fail(ctx, opMergePR, transport.REST(http.MethodGet), resp, forgeapi.CodeStrategyRequired,
+		forgeapi.KindNotMergeable, message+", so a merge at the default intent names its strategy")
 }
 
 // handleOf is the handle this product minted for a pending merge, empty where the

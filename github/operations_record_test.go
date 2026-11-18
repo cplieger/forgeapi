@@ -91,7 +91,7 @@ func TestAMergeAfterARetriedReadReadsTheMergeRequest(t *testing.T) {
 	var logs bytes.Buffer
 	h := recordedHarness(t, map[string]string{pullsRoute: autoMergePull("clean"), mergeRoute: `{}`}, pullsRoute, &logs)
 	h.instance.status(mergeRoute, http.StatusConflict)
-	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true})
+	_, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true})
 	line := lineOf(t, &logs, err)
 	if got, ok := line["retried_on"]; line["attempt"] != float64(1) || ok {
 		t.Errorf("the 409 failure after a read retried on a 502 = attempt %v, retried_on %v, want 1 and none: the merge PUT is the last request",

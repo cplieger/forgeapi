@@ -62,7 +62,7 @@ func mergeAnsweringByForm(t *testing.T, bare, flagged int, opts ...forgeapi.Opti
 // Gitea 28.0.0, Forgejo 16.0.5 and Forgejo 15.0.9 alike, which reads as enqueued.
 func TestAutoMergeAsksTheInstanceToMergeWhenChecksSucceed(t *testing.T) {
 	h, forms := mergeAnsweringByForm(t, http.StatusMethodNotAllowed, http.StatusCreated)
-	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true})
+	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true})
 	if err != nil {
 		t.Fatalf("MergePR(AutoMerge) on a pull request not mergeable now = %v, want the scheduled merge", err)
 	}
@@ -81,7 +81,7 @@ func TestAutoMergeAsksTheInstanceToMergeWhenChecksSucceed(t *testing.T) {
 // commit status, never waits on one.
 func TestAnAutoMergeOnAPullRequestMergeableNowMergesIt(t *testing.T) {
 	h, forms := mergeAnsweringByForm(t, http.StatusOK, http.StatusCreated)
-	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA, AutoMerge: true})
+	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA, AutoMerge: true})
 	if err != nil {
 		t.Fatalf("MergePR(AutoMerge) on a pull request mergeable now = %v, want the merge", err)
 	}
@@ -97,7 +97,7 @@ func TestAnAutoMergeOnAPullRequestMergeableNowMergesIt(t *testing.T) {
 // merge_when_checks_succeed key at all, and the instance's 200 is the merge done.
 func TestAMergeNotAskedToWaitCarriesNoSchedulingFlag(t *testing.T) {
 	h, form := mergeAnswering(t, http.StatusOK)
-	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{HeadSHA: testHeadSHA})
+	got, err := h.client.MergePR(t.Context(), testRef(), testPR(), forgeapi.MergeRequest{Intent: forgeapi.IntentNoSquash, HeadSHA: testHeadSHA})
 	if err != nil {
 		t.Fatalf("MergePR answered 200 = %v, want the merge", err)
 	}
