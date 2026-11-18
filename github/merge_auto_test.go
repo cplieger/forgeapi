@@ -198,8 +198,8 @@ func TestTheDefaultIntentIsRefusedWhereTheRepositoryAllowsOtherThanOneMethod(t *
 	}
 }
 
-// TestAMergeNotAskedToWaitSendsTheMergeAlone holds the price of the default: without
-// AutoMerge nothing is read first, so a merge stays one request.
+// TestAMergeNotAskedToWaitSendsTheMergeAlone holds the price of a merge naming its
+// intent: without AutoMerge nothing is read first, so a merge stays one request.
 func TestAMergeNotAskedToWaitSendsTheMergeAlone(t *testing.T) {
 	h := newHarness(t, map[string]string{
 		mergeRoute: `{"status":"pending","details":{"uuid":"` + inFlightUUID + `","merge_method":"merge","expected_head_sha":"` + testHeadSHA + `"}}`,

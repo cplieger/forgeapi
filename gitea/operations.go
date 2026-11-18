@@ -800,9 +800,9 @@ func (c *Client) readRunPage(ctx context.Context, op string, addr *address, walk
 // [forgeapi.MergeOutcomeEnqueued]: measured, every product of the family schedules a
 // flagged merge whatever the checks, and Forgejo then waits for the next commit status
 // on its head, so the flag goes only where the merge cannot complete now. Such a merge
-// costs one or two requests. Two of its refusals are this
-// family's own: a conflict is [forgeapi.CodeNotMergeable], because the route
-// answers it for a head that moved, for a merge that conflicts and for a merge
+// costs one or two requests, plus the record read at the default intent. Two of its
+// refusals are this family's own: a conflict is [forgeapi.CodeNotMergeable], because
+// the route answers it for a head that moved, for a merge that conflicts and for a merge
 // asked to wait while one is already scheduled, which stands, and names the
 // cause in human text alone, and an archived repository is
 // [forgeapi.CodeRepoArchived]. That is a permanent refusal whose remedy is an

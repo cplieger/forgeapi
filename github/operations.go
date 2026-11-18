@@ -1097,7 +1097,7 @@ func (c *Client) refuseRun(ctx context.Context, op string, answer *transport.Res
 // completes in the background on its own, so a deferral nobody asked for would answer
 // a merge nobody asked to wait for, which is the defect that started this library.
 //
-// A merge asked to wait reads the pull request's REST record first, because this
+// A merge asked to wait reads the pull request's REST record before the merge, because this
 // product arms an auto-merge only on a pull request that cannot merge now and refuses
 // to arm one that can: a state that is mergeable now merges as above, and any other is
 // armed through the enableAutoMerge document with the pin as its expected head, which

@@ -14,15 +14,12 @@ type MergeIntent int
 // [MergeRequest.Strategy].
 const (
 	// IntentDefault merges as the repository is configured to: on GitLab by the
-	// project's merge method and squash option; on Gitea and Forgejo by the
-	// repository's default merge style, read from its record before the merge and
-	// refused with [CodeStrategyRequired] before any write where the record does not
-	// allow it.
-	// GitHub configures no repository-wide default method, only allowed ones, so
-	// there it is the one method the repository's record allows, and a record
-	// allowing several or none is refused with [CodeStrategyRequired] before any
-	// write. What a branch rule or merge queue then does with that method is
-	// GitHub's own answer to the merge.
+	// project's merge method and squash option and the merge request's squash flag;
+	// on Gitea and Forgejo by the default merge style the repository record names
+	// and allows; on GitHub, which configures only allowed methods, by the one
+	// method the record allows. A record naming no such style or method is refused
+	// with [CodeStrategyRequired] before any write. What a branch rule or merge queue
+	// then does with a GitHub merge is the forge's own answer.
 	IntentDefault MergeIntent = iota
 	// IntentSquash asks for one commit.
 	IntentSquash
