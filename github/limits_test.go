@@ -60,6 +60,14 @@ func TestErrorResetFromAnswer(t *testing.T) {
 			name: "a_refusal_that_is_no_limit_carries_its_reset", status: http.StatusNotFound, want: reset,
 			header: headerPairs("X-RateLimit-Remaining", "4000", "X-RateLimit-Reset", "1790000000"),
 		},
+		{
+			name: "a_reset_with_no_remaining_figure_carries_its_reset", status: http.StatusNotFound, want: reset,
+			header: headerPairs("X-RateLimit-Reset", "1790000000"),
+		},
+		{
+			name: "a_reset_beside_an_unreadable_remaining_figure_carries_its_reset", status: http.StatusNotFound, want: reset,
+			header: headerPairs("X-RateLimit-Remaining", "many", "X-RateLimit-Reset", "1790000000"),
+		},
 		{name: "a_429_with_no_figures_has_none", status: http.StatusTooManyRequests},
 		{
 			name: "a_remaining_figure_with_no_reset_has_none", status: http.StatusForbidden,

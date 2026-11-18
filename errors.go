@@ -403,16 +403,18 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// answer carries none. The governor's deferral carries the held pool's. On
 	// any other error it is zero and states nothing.
 	Remaining int
-	// Reset is when the budget window the failing answer reports renews, read
-	// from that answer's own budget signal as [BudgetState.Reset] is: the zero
-	// time where the answer carries none, as Gitea's never does, and where no
-	// answer arrived. The governor's deferral carries the held pool's.
+	// Reset is when the budget window the failing answer reports renews, as
+	// that answer's own reset states it (GitHub's X-RateLimit-Reset, GitLab's
+	// RateLimit-Reset, Forgejo's RateLimit t), whatever Remaining reads: the
+	// zero time where the answer carries none, as Gitea's never does, and where
+	// no answer arrived. The governor's deferral carries the held pool's.
 	Reset time.Time
 	// Secondary reports a GitHub secondary rate limit: a 403 or 429 carrying
 	// Retry-After or GitHub's secondary-limit message, whatever its remaining
 	// figure reads, and a document's errors-only answer at 200 carrying either
 	// (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits).
-	// Only the GitHub family sets it, so a GitHub limit can arrive at Status 200.
+	// Only the GitHub family sets it. A GitHub limit on a document can arrive
+	// at Status 200, so branch on Kind.
 	Secondary bool
 	// DiagID is a per-failure random identifier, [DiagIDLength] characters,
 	// carried in the user-visible error and in every log line for that

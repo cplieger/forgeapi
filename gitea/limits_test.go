@@ -30,14 +30,22 @@ func answered(t *testing.T, raw string) *forgeapi.Error {
 // (https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/), and to
 // the zero time where the answer states none: Gitea sends no header at all.
 func TestErrorResetFromAnswer(t *testing.T) {
-	t.Run("forgejo_states_its_window", func(t *testing.T) {
-		before := time.Now()
-		fe := answered(t, `"baseline";r=0;t=60`)
-		after := time.Now()
-		if fe.Reset.Before(before.Add(time.Minute)) || fe.Reset.After(after.Add(time.Minute)) {
-			t.Errorf("Error.Reset = %v, want a minute after the answer, between %v and %v", fe.Reset, before.Add(time.Minute), after.Add(time.Minute))
-		}
-	})
+	for _, test := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "forgejo_states_its_window", raw: `"baseline";r=0;t=60`},
+		{name: "a_window_with_no_remaining_figure", raw: `"baseline";t=60`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			before := time.Now()
+			fe := answered(t, test.raw)
+			after := time.Now()
+			if fe.Reset.Before(before.Add(time.Minute)) || fe.Reset.After(after.Add(time.Minute)) {
+				t.Errorf("Error.Reset = %v, want a minute after the answer, between %v and %v", fe.Reset, before.Add(time.Minute), after.Add(time.Minute))
+			}
+		})
+	}
 	for _, test := range []struct {
 		name string
 		raw  string

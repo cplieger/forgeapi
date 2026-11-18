@@ -44,6 +44,11 @@ func TestErrorResetFromAnswer(t *testing.T) {
 			header: headerPairs("RateLimit-Remaining", "0", "RateLimit-Reset", "1790000000", "RateLimit-Name", "throttle_authenticated_api"),
 			want:   time.Unix(1790000000, 0).UTC(),
 		},
+		{
+			name:   "a_reset_with_no_remaining_figure_carries_its_reset",
+			header: headerPairs("RateLimit-Reset", "1790000000", "RateLimit-Name", "throttle_authenticated_api"),
+			want:   time.Unix(1790000000, 0).UTC(),
+		},
 		{name: "a_throttle_with_no_figures_has_none"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

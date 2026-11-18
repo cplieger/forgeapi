@@ -491,7 +491,7 @@ func TestSignalReadsTheStructuredRateLimitHeader(t *testing.T) {
 		{name: "a_full_header", raw: "r=4990;t=60", remaining: 4990, seconds: 60, ok: true},
 		{name: "remaining_alone", raw: "r=7", remaining: 7, ok: true},
 		{name: "no_header_at_all", raw: ""},
-		{name: "a_header_with_no_remaining", raw: "t=60"},
+		{name: "a_header_with_no_remaining", raw: "t=60", seconds: 60},
 		{name: "a_header_whose_value_is_not_a_number", raw: "r=soon"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -502,9 +502,6 @@ func TestSignalReadsTheStructuredRateLimitHeader(t *testing.T) {
 			remaining, reset, ok := signal(header)
 			if ok != test.ok {
 				t.Fatalf("signal(%q) = ok %t, want %t", test.raw, ok, test.ok)
-			}
-			if !ok {
-				return
 			}
 			if remaining != test.remaining {
 				t.Errorf("signal(%q) = remaining %d, want %d", test.raw, remaining, test.remaining)

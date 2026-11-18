@@ -13,7 +13,7 @@ import (
 // (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
 type RateLimit struct {
 	// Reset is X-RateLimit-Reset as sent, whatever Remaining reads; the zero
-	// time where the answer carries no reset or no readable remaining figure.
+	// time where absent or unreadable.
 	Reset time.Time
 	// Pool is X-RateLimit-Resource as sent, a secondary limit's included;
 	// empty where absent.

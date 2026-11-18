@@ -23,6 +23,11 @@ func TestTheBudgetSignalIsReadFromTheResponseHeaders(t *testing.T) {
 	if _, _, ok := Signal(http.Header{}); ok {
 		t.Error("Signal(no headers) reported a figure, want none: a connection that has sent nothing has no budget to report")
 	}
+	alone := http.Header{}
+	alone.Set("X-RateLimit-Reset", "1790000000")
+	if _, reset, ok := Signal(alone); ok || reset.Unix() != 1790000000 {
+		t.Errorf("Signal(a reset alone) = reset %v, ok %t, want the epoch second the header names and no remaining figure", reset, ok)
+	}
 }
 
 // TestThePoolIsTheResourceTheResponseNames holds the pool reader to the two headers

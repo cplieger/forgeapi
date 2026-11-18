@@ -106,6 +106,15 @@ func TestReadLimitReadsEveryAnswer(t *testing.T) {
 			want: github.RateLimit{Limited: true, Secondary: true, Remaining: 4999, Limit: 5000, Reset: reset, Pool: "core"},
 		},
 		{
+			name: "a_reset_with_no_remaining_figure", status: http.StatusOK, header: http.Header{"X-Ratelimit-Reset": {"1790000000"}},
+			body: `{}`, want: github.RateLimit{Remaining: forgeapi.BudgetRemainingUnknown, Reset: reset},
+		},
+		{
+			name: "a_reset_beside_an_unreadable_remaining_figure", status: http.StatusOK,
+			header: http.Header{"X-Ratelimit-Remaining": {"many"}, "X-Ratelimit-Reset": {"1790000000"}},
+			body:   `{}`, want: github.RateLimit{Remaining: forgeapi.BudgetRemainingUnknown, Reset: reset},
+		},
+		{
 			name: "an_answer_with_no_figures", status: http.StatusTooManyRequests, header: http.Header{}, body: `{}`,
 			want: github.RateLimit{Limited: true, Remaining: forgeapi.BudgetRemainingUnknown},
 		},

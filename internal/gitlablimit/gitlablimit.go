@@ -13,22 +13,15 @@ import (
 
 // Signal reads this product's budget signal, which rides every answer, a
 // refusal included: the remaining figure of the throttle the request counted
-// against and the instant its window renews, as epoch seconds; ok is false
-// where the answer carries no remaining figure.
+// against, ok false where the answer carries no readable one, and the instant
+// its window renews, as epoch seconds, whatever ok reads; the zero time where
+// the answer carries no reset.
 func Signal(header http.Header) (remaining int, reset time.Time, ok bool) {
-	raw := header.Get("RateLimit-Remaining")
-	if raw == "" {
-		return 0, time.Time{}, false
+	if seconds, err := strconv.ParseInt(strings.TrimSpace(header.Get("RateLimit-Reset")), 10, 64); err == nil {
+		reset = time.Unix(seconds, 0).UTC()
 	}
-	remaining, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil {
-		return 0, time.Time{}, false
-	}
-	seconds, err := strconv.ParseInt(strings.TrimSpace(header.Get("RateLimit-Reset")), 10, 64)
-	if err != nil {
-		return remaining, time.Time{}, true
-	}
-	return remaining, time.Unix(seconds, 0).UTC(), true
+	remaining, err := strconv.Atoi(strings.TrimSpace(header.Get("RateLimit-Remaining")))
+	return remaining, reset, err == nil
 }
 
 // Pool names the throttle an answer reports and its whole limit, the most

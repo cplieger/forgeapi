@@ -110,9 +110,9 @@ type Verdict struct {
 type limitReader func(status int, header http.Header, body []byte) (limited, secondary bool)
 
 // budgetSignal is how a family reads its product's budget signal off a response. It
-// returns the remaining units, the reset instant and whether the response carried
-// a signal at all; a family whose product sends none returns false and the
-// governor then reports the neutral value.
+// returns the remaining units, the reset instant the response states whatever ok
+// reads, and ok, whether the response carried a remaining figure; a family whose
+// product sends none returns false and the governor then reports the neutral value.
 type budgetSignal func(header http.Header) (remaining int, reset time.Time, ok bool)
 
 // budgetPool is how a family reads which of its product's rate-limit pools a
@@ -1818,8 +1818,9 @@ func (c *Conn) verdict(op string, resp *Response, answer *refusal) Verdict {
 func AnswerFigures(fe *forgeapi.Error, header http.Header, signal budgetSignal, pool budgetPool) {
 	fe.Remaining, fe.Reset = forgeapi.BudgetRemainingUnknown, time.Time{}
 	if signal != nil {
-		if remaining, reset, ok := signal(header); ok {
-			fe.Remaining, fe.Reset = remaining, reset
+		remaining, reset, ok := signal(header)
+		if fe.Reset = reset; ok {
+			fe.Remaining = remaining
 		}
 	}
 	if pool != nil {
