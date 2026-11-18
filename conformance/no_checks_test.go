@@ -109,26 +109,46 @@ func struckCase(t *testing.T, e spec.Entry, nulledBy string) (items []refusedIte
 	return refusedItems(t, got), struck, pagePartial
 }
 
-// noneUnproven is the reads whose answer cannot tell a head carrying no check from a
-// verdict the credential may not read: GitLab's documents null a pipeline the
-// credential may not view, with no error, exactly as they null one that never ran.
-var noneUnproven = map[spec.Product]map[string]bool{
-	spec.GitLab: {"PullRequests.ListPRs": true, "PullRequests.ReadPR": true},
+// The table's fields for what a check-reading operation answers on a head whose read
+// found no check, where the product's answer cannot prove that absence.
+const (
+	rowChecksOnNoCheck   = "Items[].Action.Checks, on a head carrying no check"
+	checksOnNoCheck      = "Action.Checks, on a head carrying no check"
+	commitStateOnNoCheck = "State, on a head carrying no check"
+)
+
+// noneUnprovenFields is each check-reading operation's field for a head whose read
+// found no check, departing as cannot supply where nothing read proves the absence.
+var noneUnprovenFields = map[string]string{
+	"PullRequests.ListPRs":   rowChecksOnNoCheck,
+	"PullRequests.ListMyPRs": rowChecksOnNoCheck,
+	"PullRequests.ReadPR":    checksOnNoCheck,
+	"Checks.CommitStatus":    commitStateOnNoCheck,
+}
+
+// proved reports whether e's product answers CheckNone for a head carrying no check:
+// its table entry neither marks the verdict field cannot supply nor marks the absence
+// unproven.
+func proved(e *spec.Entry) bool {
+	if d, departs := departureFor(e, noCheckFields[e.Method]); departs && d.Kind == spec.CannotSupply {
+		return false
+	}
+	d, departs := departureFor(e, noneUnprovenFields[e.Method])
+	return !departs || d.Kind != spec.CannotSupply
 }
 
 // A head whose checks were read and found absent is CheckNone with no count, on every
-// product whose answer can tell that from a verdict nobody read. A read that cannot
-// tell them apart, or whose table row says it cannot supply the verdict at all,
-// answers CheckUnknown, as it does for a head that carries checks.
+// product whose answer can tell that from a verdict nobody read. A read whose table
+// row says it cannot supply the verdict, or cannot prove the absence, answers
+// CheckUnknown.
 func TestAHeadCarryingNoCheckIsCheckNone(t *testing.T) {
 	for _, e := range spec.Table {
-		field, reads := noCheckFields[e.Method]
-		if !reads {
+		if _, reads := noCheckFields[e.Method]; !reads {
 			continue
 		}
 		t.Run(e.Method+"_"+string(e.Product), func(t *testing.T) {
 			want := forgeapi.CheckNone
-			if d, departs := departureFor(&e, field); noneUnproven[e.Product][e.Method] || departs && d.Kind == spec.CannotSupply {
+			if !proved(&e) {
 				want = forgeapi.CheckUnknown
 			}
 			items, struck, _ := struckCase(t, e, "")

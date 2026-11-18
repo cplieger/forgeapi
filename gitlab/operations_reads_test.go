@@ -52,7 +52,7 @@ func TestTheFoldIsTheWorstStatePresent(t *testing.T) {
 			rows: []string{skipped},
 			want: tally{state: forgeapi.CheckNeutral, neutral: 1, all: 1},
 		},
-		{name: "no_context_is_none", want: tally{state: forgeapi.CheckNone}},
+		{name: "no_context_is_unknown", want: tally{state: forgeapi.CheckUnknown}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := newHarness(t, map[string]string{statusesRoute: "[" + strings.Join(test.rows, ",") + "]"})

@@ -432,6 +432,11 @@ var Table = []Entry{
 				Says:  "headPipeline.status scalar, no fold; CheckUnknown where headPipeline is null, since GitLab's GraphQL nulls a pipeline the credential may not view with no error (Ci::PipelineType authorize :read_pipeline) and so cannot tell a head with no pipeline from one unread; CheckUnknown too where the documents are refused, since a REST list row carries no head_pipeline and so cannot tell no pipeline from one unread",
 			},
 			{
+				Field: "Items[].Action.Checks, on a head carrying no check",
+				Kind:  CannotSupply,
+				Says:  "CheckUnknown: a missing status or pipeline does not prove the head has none, since a hidden or jobless pipeline reads the same",
+			},
+			{
 				Field: "Items[].Action.ChecksPassing .. ChecksTotal",
 				Kind:  CannotSupply,
 				Says:  "absent: one scalar status",
@@ -928,6 +933,11 @@ var Table = []Entry{
 				Field: "Action.Checks",
 				Kind:  DiffersInShape,
 				Says:  "headPipeline.status scalar, no fold; CheckUnknown where headPipeline is null, since GitLab's GraphQL nulls a pipeline the credential may not view with no error (Ci::PipelineType authorize :read_pipeline) and so cannot tell a head with no pipeline from one unread; where the documents are refused, the REST record's stored head_pipeline.status, read only where that pipeline's sha is the head's and CheckUnknown otherwise, a null head_pipeline and a merged results one included, since the record leaves the key out for a credential that may not view pipelines and that payload carries no source_sha to match it by",
+			},
+			{
+				Field: "Action.Checks, on a head carrying no check",
+				Kind:  CannotSupply,
+				Says:  "CheckUnknown: a missing status or pipeline does not prove the head has none, since a hidden or jobless pipeline reads the same",
 			},
 			{
 				Field: "Action.ChecksPassing .. ChecksTotal",
@@ -2041,10 +2051,15 @@ var Table = []Entry{
 	{
 		Method:    "Checks.CommitStatus",
 		Product:   GitLab,
-		Exercises: "GET /api/v4/projects/{id}/repository/commits/{ref} with stats=false, since the route computes diff statistics by default (lib/api/commits.rb), sent only where the ref is not a full commit id, whose id addresses GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, because that route matches pipelines on their sha and answers a branch, a tag or a short sha no row; its empty answer is CheckNone: the route refuses a credential that may not read commit statuses rather than answering it empty (lib/api/commit_statuses.rb)",
+		Exercises: "GET /api/v4/projects/{id}/repository/commits/{ref} with stats=false, since the route computes diff statistics by default (lib/api/commits.rb), sent only where the ref is not a full commit id, whose id addresses GET /api/v4/projects/{id}/repository/commits/{sha}/statuses, because that route matches pipelines on their sha and answers a branch, a tag or a short sha no row",
 		Requests:  Requests{Min: 1, Max: 4},
 		Support:   Supported,
 		Departures: []Departure{
+			{
+				Field: "State, on a head carrying no check",
+				Kind:  CannotSupply,
+				Says:  "CheckUnknown: a missing status or pipeline does not prove the head has none, since a hidden or jobless pipeline reads the same, the statuses route listing a pipeline's jobs alone (lib/api/commit_statuses.rb)",
+			},
 			{
 				Field: "Successor",
 				Kind:  CannotSupply,
