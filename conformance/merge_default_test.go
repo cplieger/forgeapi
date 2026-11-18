@@ -114,6 +114,12 @@ func TestTheDefaultIntentMergesAsTheRepositoryIsConfigured(t *testing.T) {
 // A repository whose record names no one configured merge is refused before any
 // write, naming what it allows, because a merge sent with a guessed strategy lands
 // history the repository's owner did not choose.
+// noStyleAllowed is a Gitea-family record naming no default style and allowing none.
+var noStyleAllowed = map[string]any{
+	"default_merge_style": nil, "allow_merge_commits": false, "allow_squash_merge": false,
+	"allow_rebase": false, "allow_rebase_explicit": false, "allow_fast_forward_only_merge": false,
+}
+
 func TestTheDefaultIntentIsRefusedWhereTheRepositoryNamesNoOneMerge(t *testing.T) {
 	for _, tc := range []struct {
 		set     map[string]any
@@ -131,6 +137,8 @@ func TestTheDefaultIntentIsRefusedWhereTheRepositoryNamesNoOneMerge(t *testing.T
 		},
 		{name: "Gitea_record_carrying_no_default", product: spec.Gitea, names: []string{"merge", "squash"}, set: map[string]any{"default_merge_style": nil}},
 		{name: "Forgejo_record_carrying_no_default", product: spec.Forgejo, names: []string{"merge", "squash"}, set: map[string]any{"default_merge_style": nil}},
+		{name: "Gitea_record_allowing_no_style", product: spec.Gitea, set: noStyleAllowed},
+		{name: "Forgejo_record_allowing_no_style", product: spec.Forgejo, set: noStyleAllowed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			record := repositoryRecord(t, tc.product, tc.set)
@@ -152,6 +160,9 @@ func TestTheDefaultIntentIsRefusedWhereTheRepositoryNamesNoOneMerge(t *testing.T
 			}
 			if strings.Contains(fe.Message, "rebase") {
 				t.Errorf("MergePR at the default intent on %s = message %q, naming rebase, which the record does not allow", tc.product, fe.Message)
+			}
+			if strings.Contains(fe.Message, "allows ,") || strings.Contains(fe.Message, " , ") {
+				t.Errorf("MergePR at the default intent on %s = message %q, listing an empty allowed set", tc.product, fe.Message)
 			}
 		})
 	}

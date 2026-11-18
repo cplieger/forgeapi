@@ -899,9 +899,12 @@ func (c *Client) defaultStyle(ctx context.Context, op string, repo forgeapi.Repo
 	if record.DefaultMergeStyle != "" {
 		c.unmapped("default merge style", record.DefaultMergeStyle)
 	}
+	message := "the repository record names no default merge style this family takes and allows no merge style"
+	if allowed := exposedStrategies(&record); len(allowed) > 0 {
+		message = "the repository record names no default merge style this family takes, and allows " + strings.Join(allowed, ", ")
+	}
 	return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), addr.answer, forgeapi.CodeStrategyRequired, forgeapi.KindNotMergeable,
-		"the repository record names no default merge style this family takes, and allows "+
-			strings.Join(exposedStrategies(&record), ", ")+", so a merge at the default intent names its strategy")
+		message+", so a merge at the default intent names its strategy")
 }
 
 // MergeStatus implements [forgeapi.Merges].
