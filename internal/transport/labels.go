@@ -33,7 +33,7 @@ func AfterRemovals(err error, removed []string) error {
 	if !ok || len(removed) == 0 {
 		return err
 	}
-	note := "removed before this refusal: " + strings.Join(removed, ", ")
+	note := own("removed before this refusal: " + strings.Join(removed, ", ")).String()
 	if fe.Message == "" {
 		fe.Message = note
 	} else {

@@ -25,7 +25,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/textproto"
 	"net/url"
 	"slices"
 	"strconv"
@@ -39,8 +38,8 @@ import (
 	"github.com/cplieger/go/httpcache"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/jsonx"
+	"github.com/cplieger/go/masked"
 	"github.com/cplieger/go/ssrf"
-	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/go/urlform"
 )
 
@@ -73,6 +72,11 @@ const (
 	// schemeHTTPS and schemeHTTP are the two schemes a connection may speak.
 	schemeHTTPS = "https"
 	schemeHTTP  = "http"
+
+	// schemeSOCKS5 and schemeSOCKS5H are the SOCKS schemes a proxy may speak
+	// besides those two.
+	schemeSOCKS5  = "socks5"
+	schemeSOCKS5H = "socks5h"
 )
 
 // errorMapper is how a family states its own error mapping. Mapping is by family plus
@@ -151,6 +155,8 @@ type Conn struct { //nolint:govet // fieldalignment: the field order is this typ
 	cache      *httpcache.Cache
 	counters   forgeapi.Counters
 	headers    []forgeapi.Header
+	quotes     *quoter
+	recent     recentTokens
 	budget     forgeapi.Budget
 	readSlots  chan struct{}
 	writeSlots chan struct{}
@@ -270,6 +276,7 @@ func Open(conn *forgeapi.Connection, set *forgeapi.Settings, opts *Options) (*Co
 		// would reach the wire with a name the constructor refuses, applied after
 		// the credential and therefore able to replace it.
 		headers:    slices.Clone(conn.Headers),
+		quotes:     connectionQuoter(conn.Headers, conn.ProxyUsername, conn.ProxyPassword),
 		budget:     set.Budget,
 		readSlots:  make(chan struct{}, set.Budget.ReadConcurrency),
 		writeSlots: make(chan struct{}, set.Budget.MutationConcurrency),
@@ -308,9 +315,14 @@ func observe(client *http.Client, wrap func(http.RoundTripper) http.RoundTripper
 }
 
 func (c *Conn) onRetry(attempt int, req *http.Request, resp *http.Response, err error) {
-	c.observeDropped(req, resp)
+	var q *quoter
 	if req != nil {
-		requestSlot(req.Context()).retried(attempt, retriedOn(resp, err))
+		q = quoterOn(req.Context())
+	}
+	q = c.orAmbient(q)
+	c.observeDropped(req, resp, q)
+	if req != nil {
+		requestSlot(req.Context()).retried(attempt, retriedOn(resp, err, q))
 	}
 	if c.counters.Retried != nil {
 		c.counters.Retried(c.family, opFrom(req))
@@ -319,26 +331,28 @@ func (c *Conn) onRetry(attempt int, req *http.Request, resp *http.Response, err 
 
 // retriedOn names what an attempt the retry seam retried failed on: its status, or
 // its transport error as [causeText] spells it.
-func retriedOn(resp *http.Response, err error) string {
+func retriedOn(resp *http.Response, err error, q *quoter) Quoted {
 	if err != nil {
-		return causeText(err)
+		return causeText(err, q)
 	}
-	return strconv.Itoa(resp.StatusCode)
+	return own(strconv.Itoa(resp.StatusCode))
 }
 
 // causeText is a transport error with every *url.Error in it reduced to its cause,
-// since each carries a full URL. A wire transport that wraps a client returns one
-// of its own, which the client then wraps again.
-func causeText(err error) string {
-	return sanitize(httpclient.LogSafeError(err).Error())
+// since each carries a full URL, and quoted by q: a proxy's refusal of CONNECT
+// reaches it as its reason phrase, and net/http quotes a response head's line it
+// cannot parse. A wire transport that wraps a client returns one of its own, which
+// the client then wraps again.
+func causeText(err error, q *quoter) Quoted {
+	return q.quote(httpclient.LogSafeError(err).Error())
 }
 
 // observeDropped hands the governor the budget reported by an answer [Conn.answer]
 // never observes, a retried attempt's or a redirect hop's: each was a request the
 // instance counted, and [governor.observe] debits a parent per answer.
-func (c *Conn) observeDropped(req *http.Request, resp *http.Response) {
+func (c *Conn) observeDropped(req *http.Request, resp *http.Response, q *quoter) {
 	if resp != nil {
-		c.gov.observe(opFrom(req), resp.Header, c.signal, c.pool)
+		c.gov.observe(opFrom(req), resp.Header, c.signal, c.quotedPool(q))
 	}
 }
 
@@ -357,7 +371,7 @@ type (
 // cause of the last attempt it retried (empty where none was) and, once the
 // request is over, how long it took.
 type tally struct {
-	retriedOn string
+	retriedOn Quoted
 	elapsed   time.Duration
 	attempt   int
 }
@@ -373,7 +387,7 @@ type slot struct {
 }
 
 // retried records the retry seam's retry number attempt of the current send.
-func (s *slot) retried(attempt int, cause string) {
+func (s *slot) retried(attempt int, cause Quoted) {
 	if s == nil {
 		return
 	}
@@ -384,7 +398,7 @@ func (s *slot) retried(attempt int, cause string) {
 
 // replayed records that the request is sent once more after its last attempt
 // was answered with cause.
-func (s *slot) replayed(cause string) {
+func (s *slot) replayed(cause Quoted) {
 	if s == nil {
 		return
 	}
@@ -426,6 +440,21 @@ func (s *slot) store(t tally) {
 func requestSlot(ctx context.Context) *slot {
 	s, _ := ctx.Value(requestKey{}).(*slot)
 	return s
+}
+
+// quoterKey carries the quoter of one request's exchange ([withQuoter]).
+type quoterKey struct{}
+
+// withQuoter puts a request's quoter on its context, because the retry seam sees
+// only the request when it quotes an attempt's failure ([Conn.onRetry]).
+func withQuoter(ctx context.Context, q *quoter) context.Context {
+	return context.WithValue(ctx, quoterKey{}, q)
+}
+
+// quoterOn is the quoter [withQuoter] put on a request's context, nil for none.
+func quoterOn(ctx context.Context) *quoter {
+	q, _ := ctx.Value(quoterKey{}).(*quoter)
+	return q
 }
 
 // lastSent is the tally of the last request of the operation a context belongs to,
@@ -696,7 +725,7 @@ func resolveAPIBase(conn *forgeapi.Connection, web *url.URL, set *forgeapi.Setti
 func checkHeaders(headers []forgeapi.Header) error {
 	reserved := forgeapi.ReservedHeaders()
 	for _, h := range headers {
-		if h.Name == "" || !validFieldName(h.Name) || !validFieldValue(h.Value) {
+		if h.Name == "" || !validFieldName(h.Name) || !validFieldValue(h.Value.Reveal()) {
 			return local(forgeapi.CodeConnectionInvalid, "a header entry is not a well-formed field name and value")
 		}
 		for _, r := range reserved {
@@ -736,13 +765,13 @@ func buildTLS(conn *forgeapi.Connection) (*tls.Config, error) {
 		cfg.RootCAs = pool
 	}
 	switch {
-	case len(conn.ClientCert) > 0 && len(conn.ClientKey) > 0:
-		pair, err := tls.X509KeyPair(conn.ClientCert, conn.ClientKey)
+	case len(conn.ClientCert) > 0 && !conn.ClientKey.IsZero():
+		pair, err := tls.X509KeyPair(conn.ClientCert, []byte(conn.ClientKey.Reveal()))
 		if err != nil {
 			return nil, local(forgeapi.CodeConnectionInvalid, "client certificate and key do not form a pair")
 		}
 		cfg.Certificates = []tls.Certificate{pair}
-	case len(conn.ClientCert) > 0 || len(conn.ClientKey) > 0:
+	case len(conn.ClientCert) > 0 || !conn.ClientKey.IsZero():
 		return nil, local(forgeapi.CodeConnectionInvalid, "client certificate pair is half present")
 	}
 	return cfg, nil
@@ -752,24 +781,75 @@ func buildTLS(conn *forgeapi.Connection) (*tls.Config, error) {
 // function. The environment's proxy variables are consulted nowhere in this
 // stack, so the connection record is the whole truth about where its traffic
 // goes, and a malformed URL is refused rather than dropped to a direct dial.
+//
+// The credentials join the URL only inside the returned function, because
+// net/http reads a proxy's credentials from its URL's userinfo alone.
 func proxyFor(conn *forgeapi.Connection, set *forgeapi.Settings) (func(*http.Request) (*url.URL, error), error) {
 	if conn.Proxy == "" {
+		if conn.ProxyUsername != "" || !conn.ProxyPassword.IsZero() {
+			return nil, local(forgeapi.CodeConnectionInvalid, "proxy credentials are set with no proxy to send them to")
+		}
 		return nil, nil
 	}
 	u, err := url.Parse(conn.Proxy)
 	if err != nil || u.Host == "" {
 		return nil, local(forgeapi.CodeConnectionInvalid, "proxy URL does not parse")
 	}
+	if u.User != nil {
+		return nil, local(forgeapi.CodeConnectionInvalid, "proxy URL carries userinfo, which ProxyUsername and ProxyPassword hold instead")
+	}
 	switch u.Scheme {
-	case "http", "https", "socks5", "socks5h":
+	case schemeHTTP, schemeHTTPS, schemeSOCKS5, schemeSOCKS5H:
 	default:
 		return nil, local(forgeapi.CodeConnectionInvalid, "proxy URL carries a scheme this library does not proxy over")
 	}
 	if !set.PrivateAddresses && !publicHost(u.Hostname()) {
 		return nil, local(forgeapi.CodePrivateAddressRefused, "proxy host is private or single label and this connection did not opt in")
 	}
-	return http.ProxyURL(u), nil
+	if err := checkProxyCredentials(u.Scheme, conn.ProxyUsername, conn.ProxyPassword); err != nil {
+		return nil, err
+	}
+	if conn.ProxyUsername == "" {
+		return http.ProxyURL(u), nil
+	}
+	username, password := conn.ProxyUsername, conn.ProxyPassword
+	return func(*http.Request) (*url.URL, error) {
+		withUser := *u
+		withUser.User = url.UserPassword(username, password.Reveal())
+		return &withUser, nil
+	}, nil
 }
+
+// checkProxyCredentials refuses proxy credentials the proxy's own protocol cannot
+// carry, which would fail every dial: Basic credentials to an http or https proxy
+// hold no colon in the user-id and no control character (RFC 7617 section 2), and
+// a SOCKS5 username or password is at most 255 octets (RFC 1929).
+func checkProxyCredentials(scheme, username string, password masked.Secret) error {
+	if username == "" {
+		if !password.IsZero() {
+			return local(forgeapi.CodeConnectionInvalid, "proxy password is set with no username")
+		}
+		return nil
+	}
+	text := password.Reveal()
+	switch scheme {
+	case schemeHTTP, schemeHTTPS:
+		if strings.Contains(username, ":") {
+			return local(forgeapi.CodeConnectionInvalid, "proxy username carries a colon, which Basic credentials cannot")
+		}
+		if strings.ContainsFunc(username+text, isControl) {
+			return local(forgeapi.CodeConnectionInvalid, "proxy username or password carries a control character, which Basic credentials cannot")
+		}
+	case schemeSOCKS5, schemeSOCKS5H:
+		if len(username) > 255 || len(text) > 255 {
+			return local(forgeapi.CodeConnectionInvalid, "proxy username or password is over the 255 octets SOCKS5 carries")
+		}
+	}
+	return nil
+}
+
+// isControl is RFC 5234's CTL.
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
 // addressPolicy is this connection's address verdict, taken at the socket inside
 // the transport's own control hook, which is where containment lives.
@@ -841,11 +921,11 @@ func dialablePorts(web *url.URL, proxy string, set *forgeapi.Settings) []uint16 
 // states none, "" for a scheme proxyFor refuses.
 func proxyDefaultPort(scheme string) string {
 	switch scheme {
-	case "http":
+	case schemeHTTP:
 		return "80"
-	case "https":
+	case schemeHTTPS:
 		return "443"
-	case "socks5", "socks5h":
+	case schemeSOCKS5, schemeSOCKS5H:
 		return "1080"
 	default:
 		return ""
@@ -953,7 +1033,7 @@ type Request struct {
 	// after the credential and before the consumer's. They are per request
 	// because one family's API-version pin waits for a response proving the
 	// version; each name is on the reserved list, so no consumer entry collides.
-	Headers []forgeapi.Header
+	Headers http.Header
 	Query   url.Values
 	Op      string
 	Method  string
@@ -1051,7 +1131,7 @@ func exchange(req *Request) Exchange {
 // second witness: it resolves the successor once a hop is recorded.
 type Response struct {
 	Header http.Header
-	quote  func(string) string
+	quote  *quoter
 	Ended  string
 	// Refused is the address of a hop the redirect policy refused, with the status
 	// and headers that asked for it: a write's hop is refused, so a family reads
@@ -1067,12 +1147,13 @@ type Response struct {
 
 // Quote is text the instance answered in this exchange made safe to carry on an
 // error a family builds from it, as [Conn.Do] makes a refusal's text safe: every
-// secret the request carried redacted out of it, on one line, and bounded.
-func (r *Response) Quote(text string) string {
-	if r == nil || r.quote == nil {
-		return sanitize(text)
+// secret the exchange carried redacted out of it ([quoter]), on one line, and
+// bounded. A Response no exchange built holds no secret to redact.
+func (r *Response) Quote(text string) Quoted {
+	if r == nil {
+		return (*quoter)(nil).quote(text)
 	}
-	return r.quote(text)
+	return r.quote.quote(text)
 }
 
 // Do issues one request, maps its outcome and records what it cost. While the read
@@ -1103,11 +1184,11 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	// concurrency gate, whose select would otherwise admit the request as often
 	// as not and send it on a context that is already done.
 	if ctx.Err() != nil {
-		return nil, c.transportError(ctx, req, ctx.Err(), time.Now())
+		return nil, c.transportError(ctx, req, ctx.Err(), time.Now(), nil)
 	}
 
 	if err := c.acquire(ctx, req); err != nil {
-		return nil, c.transportError(ctx, req, err, time.Now())
+		return nil, c.transportError(ctx, req, err, time.Now(), nil)
 	}
 	defer c.release(req)
 
@@ -1118,10 +1199,11 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	resp, err := x.Send(func(prepare func(*http.Request) *http.Request) (*http.Response, error) {
 		return c.sendReplaying(ctx, req, target, prepare, &token)
 	})
-	out, err := c.answer(ctx, req, target, resp, x, token, err, started)
+	q := c.quoterFor(token)
+	out, err := c.answer(ctx, req, target, resp, x, q, err, started)
 	hit, ended := x.Finish(ctx, err == nil)
 	if err == nil && req.Into != nil && ended != nil {
-		out, err = nil, c.transportError(ctx, req, ended, started)
+		out, err = nil, c.transportError(ctx, req, ended, started, nil)
 	}
 	if hit {
 		noteCache(ctx, cacheHit)
@@ -1132,7 +1214,7 @@ func (c *Conn) Do(ctx context.Context, req *Request) (*Response, error) {
 	if err != nil {
 		return out, err
 	}
-	c.log(ctx, req, exchange(req), resp.StatusCode, "", "", forgeapi.KindUnknown, out.Header, started, "", false)
+	c.log(ctx, req, exchange(req), resp.StatusCode, "", "", forgeapi.KindUnknown, out, started, Quoted{}, false)
 	return out, nil
 }
 
@@ -1146,13 +1228,13 @@ func (e *undecodable) Error() string { return "response body did not decode: " +
 // verdict: a served one answers from the held entry, a refused one is mapped like
 // any other refusal, and a success is decoded into [Request.Into] and offered to
 // the cache, which [Conn.Do] finishes once for the whole exchange.
-func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *http.Response, x *httpcache.Read, token string, sendErr error, started time.Time) (*Response, error) {
+func (c *Conn) answer(ctx context.Context, req *Request, target string, resp *http.Response, x *httpcache.Read, q *quoter, sendErr error, started time.Time) (*Response, error) {
 	if sendErr != nil {
-		return refusedHop(resp), c.transportError(ctx, req, sendErr, started)
+		return refusedHop(resp, q), c.transportError(ctx, req, sendErr, started, q)
 	}
-	c.gov.observe(req.Op, resp.Header, c.signal, c.pool)
+	c.gov.observe(req.Op, resp.Header, c.signal, c.quotedPool(q))
 	out := &Response{
-		Header: resp.Header, Status: resp.StatusCode, quote: c.quoter(token),
+		Header: resp.Header, Status: resp.StatusCode, quote: q,
 		Redirected: followed(resp, target), Ended: ended(resp, target),
 	}
 	body, readErr := httpclient.ReadLimitedBody(resp.Body, bodyLimit(req))
@@ -1195,7 +1277,7 @@ func (c *Conn) readConfig(ctx context.Context, req *Request) httpcache.ReadConfi
 		Variant:   shapeOf(req.Into),
 		Store:     cacheable(ctx, req),
 		Resend:    req.Method == http.MethodGet && !req.Document,
-		Discarded: func(h http.Header) { c.gov.observe(req.Op, h, c.signal, c.pool) },
+		Discarded: func(h http.Header) { c.gov.observe(req.Op, h, c.signal, c.quotedPool(c.ambient())) },
 	}
 }
 
@@ -1212,7 +1294,7 @@ func followed(resp *http.Response, target string) bool {
 // refusedHop is the response a failed exchange answers beside its refusal. net/http
 // returns a response with an error only where the redirect policy refused a hop, its
 // body already closed, so it is nil on every other failure.
-func refusedHop(resp *http.Response) *Response {
+func refusedHop(resp *http.Response, q *quoter) *Response {
 	if resp == nil {
 		return nil
 	}
@@ -1220,7 +1302,7 @@ func refusedHop(resp *http.Response) *Response {
 	if err != nil {
 		return nil
 	}
-	return &Response{Header: resp.Header, Status: resp.StatusCode, Refused: location.String()}
+	return &Response{Header: resp.Header, quote: q, Status: resp.StatusCode, Refused: location.String()}
 }
 
 // ended is the address the exchange's last request went to, which is the target where
@@ -1246,7 +1328,7 @@ func (c *Conn) permit(ctx context.Context, req *Request) *forgeapi.Error {
 			return nil
 		}
 		return c.refusal(ctx, req, c.fail(req.Op, forgeapi.CodeMutationsDisabled, forgeapi.KindForbidden, 0,
-			"mutations are disabled on this client"))
+			own("mutations are disabled on this client")))
 	}
 	if held, ok := c.admitRead(ctx, req); !ok {
 		return c.refusal(ctx, req, c.deferred(req.Op, held))
@@ -1300,11 +1382,12 @@ func (c *Conn) sendReplaying(ctx context.Context, req *Request, target string, p
 		if readErr != nil || !WaitFits(ctx, wait) {
 			return resp, nil
 		}
-		c.observeDropped(resp.Request, resp)
+		q := c.quoterFor(*token)
+		c.observeDropped(resp.Request, resp, q)
 		if err := sleep(ctx, wait); err != nil {
 			return nil, err
 		}
-		requestSlot(ctx).replayed(strconv.Itoa(resp.StatusCode))
+		requestSlot(ctx).replayed(own(strconv.Itoa(resp.StatusCode)))
 		if c.counters.Retried != nil {
 			c.counters.Retried(c.family, req.Op)
 		}
@@ -1380,21 +1463,22 @@ func (c *Conn) send(ctx context.Context, req *Request, target string, prepare fu
 	r.Header.Set("User-Agent", userAgent)
 	tok, err := c.credential.Token(ctx)
 	if err != nil {
-		return nil, credentialError(err)
+		return nil, credentialError(ctx, tok, err)
 	}
 	*token = tok
+	c.recent.add(tok)
 	// Bearer is the one scheme every product reads for every kind of token it
 	// issues; gitlab.com refuses the token scheme the others also accept.
 	if tok != "" {
 		r.Header.Set("Authorization", "Bearer "+tok)
 	}
-	for _, h := range req.Headers {
-		r.Header.Set(h.Name, h.Value)
+	for name, values := range req.Headers {
+		r.Header[http.CanonicalHeaderKey(name)] = slices.Clone(values)
 	}
 	for _, h := range c.headers {
-		r.Header.Set(h.Name, h.Value)
+		r.Header.Set(h.Name, h.Value.Reveal())
 	}
-	r = prepare(r)
+	r = prepare(r.WithContext(withQuoter(marked, c.quoterFor(tok))))
 	client := c.read
 	switch {
 	case req.mutates():
@@ -1408,18 +1492,38 @@ func (c *Conn) send(ctx context.Context, req *Request, target string, prepare fu
 	return client.Do(r)
 }
 
-// credentialError keeps a credential source's own failure from reading as an
-// unreachable instance: the source is the consumer's, so its error may be any
-// type, and nothing was sent.
-func credentialError(err error) error {
-	if _, ok := errors.AsType[*forgeapi.Error](err); ok || contextSentinel(err) != nil {
+// credentialError marks a credential source's own failure as the source's
+// ([sourceError]) and keeps it from reading as an unreachable instance: the source
+// is the consumer's, so its error may be any type, and nothing was sent. A context
+// sentinel is returned as it is only where the operation's own context ended; the
+// source's own deadline on a live call is the source's failure. tok, answered
+// beside err, is kept for the quote alone. A *forgeapi.Error the source answered
+// is never written: [Conn.transportError] answers a copy of it.
+func credentialError(ctx context.Context, tok string, err error) error {
+	if ctx.Err() != nil && contextSentinel(err) != nil {
 		return err
 	}
-	return &forgeapi.Error{
-		Kind: forgeapi.KindTransient, Retryable: true,
-		Message: "the credential source failed: " + sanitize(err.Error()),
+	token := masked.NewSecret(tok)
+	if _, ok := errors.AsType[*forgeapi.Error](err); ok {
+		return &sourceError{err: err, token: token}
 	}
+	return &sourceError{token: token, err: &forgeapi.Error{
+		Kind: forgeapi.KindTransient, Retryable: true,
+		Message: "the credential source failed: " + err.Error(),
+	}}
 }
+
+// sourceError is a credential source's failure, whose text [Conn.transportError]
+// quotes with [Conn.ambient] and token, the one the source answered beside it: no
+// token was carried, and the source may name that one or one an earlier request or
+// attempt of this connection carried.
+type sourceError struct {
+	err   error
+	token masked.Secret
+}
+
+func (e *sourceError) Error() string { return e.err.Error() }
+func (e *sourceError) Unwrap() error { return e.err }
 
 func bodyReader(payload []byte) io.Reader {
 	if payload == nil {
@@ -1553,24 +1657,22 @@ func Decode(body []byte, v any) error {
 
 // fail builds this library's own refusal for one operation: it names the
 // operation and the family, so it carries a diagnostic id.
-func (c *Conn) fail(op, code string, kind forgeapi.ErrorKind, status int, message string) *forgeapi.Error {
+func (c *Conn) fail(op, code string, kind forgeapi.ErrorKind, status int, message Quoted) *forgeapi.Error {
 	return &forgeapi.Error{
 		Op: op, Code: code, Family: c.family, Status: status, Kind: kind,
-		Retryable: Retryable(kind, status), Message: message, DiagID: diagID(),
+		Retryable: Retryable(kind, status), Message: message.String(), DiagID: diagID(),
 	}
 }
 
-// Fail builds a failure the family reached after a request: it names the operation
-// and the family, so it carries a diagnostic id, and the line that id names is
-// recorded here rather than left to the caller. It carries answer's status and
-// figures ([Conn.answered]), none where answer is nil because none arrived.
-//
-// The exchange is the one the family reached this failure ON, which only the family
-// knows: the response is already in its hand and this core never saw which of the
-// two arms answered it.
+// Fail builds a failure the family reached after a request on ex, the exchange only
+// the family knows it reached it on: it carries a diagnostic id, and the line that
+// id names is recorded here. It carries answer's status and figures
+// ([Conn.answered]), none where answer is nil because none arrived. message may
+// hold the instance's words: [Conn.quoterOf] quotes it.
 func (c *Conn) Fail(ctx context.Context, op string, ex Exchange, answer *Response, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
-	fe := c.answered(op, code, kind, answer, message)
-	c.record(ctx, op, ex, fe)
+	said := c.quoterOf(answer).quote(message)
+	fe := c.answered(op, code, kind, answer, said)
+	c.record(ctx, op, ex, fe, said)
 	return fe
 }
 
@@ -1578,22 +1680,32 @@ func (c *Conn) Fail(ctx context.Context, op string, ex Exchange, answer *Respons
 // failure of the same exchange: it carries cause's status and figures, which
 // cause took from its own answer where one arrived.
 func (c *Conn) FailOn(ctx context.Context, op string, ex Exchange, cause *forgeapi.Error, code string, kind forgeapi.ErrorKind, message string) *forgeapi.Error {
-	fe := c.fail(op, code, kind, cause.Status, message)
+	said := c.Quote(message)
+	fe := c.fail(op, code, kind, cause.Status, said)
 	fe.Pool, fe.Remaining, fe.Reset, fe.Secondary = cause.Pool, cause.Remaining, cause.Reset, cause.Secondary
-	c.record(ctx, op, ex, fe)
+	c.record(ctx, op, ex, fe, said)
 	return fe
 }
 
+// quoterOf is answer's quoter, the connection's ([Conn.ambient]) where answer is
+// nil or carries none.
+func (c *Conn) quoterOf(answer *Response) *quoter {
+	if answer == nil {
+		return c.ambient()
+	}
+	return c.orAmbient(answer.quote)
+}
+
 // answered is [Conn.fail] for a failure reached on answer, the instance's answer:
-// it carries that answer's status and its own figures ([AnswerFigures]), read by
-// this connection's readers, so no failure built from an answer can carry a status
-// without them. A nil answer is a failure no answer reached, with no status.
-func (c *Conn) answered(op, code string, kind forgeapi.ErrorKind, answer *Response, message string) *forgeapi.Error {
+// it carries that answer's status and its own figures ([Conn.figures]), so no
+// failure built from an answer can carry a status without them. A nil answer is a
+// failure no answer reached, with no status.
+func (c *Conn) answered(op, code string, kind forgeapi.ErrorKind, answer *Response, message Quoted) *forgeapi.Error {
 	if answer == nil {
 		return c.fail(op, code, kind, 0, message)
 	}
 	fe := c.fail(op, code, kind, answer.Status, message)
-	AnswerFigures(fe, answer.Header, c.signal, c.pool)
+	figures(fe, answer.Header, c.signal, c.quotedPool(c.quoterOf(answer)))
 	return fe
 }
 
@@ -1602,7 +1714,7 @@ func (c *Conn) answered(op, code string, kind forgeapi.ErrorKind, answer *Respon
 // error; the returned message is [bodyFailure]'s whatever the check.
 func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, answer *Response, cause error) *forgeapi.Error {
 	fe := c.bodyFailure(op, answer)
-	c.emit(ctx, &Request{Op: op}, familyEntry(ctx, ex, fe, cause.Error()))
+	c.emit(ctx, &Request{Op: op}, familyEntry(ctx, ex, fe, c.quoterOf(answer).quote(cause.Error())))
 	return fe
 }
 
@@ -1612,8 +1724,8 @@ func (c *Conn) FailBody(ctx context.Context, op string, ex Exchange, answer *Res
 // type and length beside it, never the body.
 func (c *Conn) FailDecode(ctx context.Context, op string, ex Exchange, resp *Response, cause error) *forgeapi.Error {
 	fe := c.bodyFailure(op, resp)
-	e := familyEntry(ctx, ex, fe, decodeText(resp, cause))
-	e.header, e.answer = resp.Header, resp
+	e := familyEntry(ctx, ex, fe, decodeText(c.quoterOf(resp), cause))
+	e.answer, e.undecoded = resp, true
 	c.emit(ctx, &Request{Op: op}, e)
 	return fe
 }
@@ -1623,9 +1735,9 @@ func (c *Conn) FailDecode(ctx context.Context, op string, ex Exchange, resp *Res
 func (c *Conn) failDecode(ctx context.Context, req *Request, resp *Response, cause error, started time.Time) *forgeapi.Error {
 	fe := c.bodyFailure(req.Op, resp)
 	c.emit(ctx, req, &entry{
-		header: resp.Header, answer: resp, ex: exchange(req), code: fe.Code, diag: fe.DiagID,
-		cause: decodeText(resp, cause), sent: requestSlot(ctx).since(started),
-		status: fe.Status, kind: fe.Kind, failed: true, operation: true,
+		answer: resp, ex: exchange(req), code: fe.Code, diag: fe.DiagID,
+		cause: decodeText(c.quoterOf(resp), cause), sent: requestSlot(ctx).since(started),
+		status: fe.Status, kind: fe.Kind, failed: true, operation: true, undecoded: true,
 	})
 	return fe
 }
@@ -1638,34 +1750,34 @@ func (c *Conn) failDecode(ctx context.Context, req *Request, resp *Response, cau
 // answers 201. The code is the validation one, so a consumer branching on it is
 // handed the class a response this library will not accept already carries.
 func (c *Conn) bodyFailure(op string, answer *Response) *forgeapi.Error {
-	return c.answered(op, forgeapi.CodeValidation, forgeapi.KindUpstream, answer, "response body did not decode")
+	return c.answered(op, forgeapi.CodeValidation, forgeapi.KindUpstream, answer, own("response body did not decode"))
 }
 
-// decodeText is a decode error as a line carries it. A nil cause is a caller's bug,
-// named rather than left an empty attribute.
-func decodeText(resp *Response, cause error) string {
+// decodeText is a decode error as a line carries it, quoted by q. A nil cause is a
+// caller's bug, named rather than left an empty attribute.
+func decodeText(q *quoter, cause error) Quoted {
 	if cause == nil {
-		return "decode error missing"
+		return own("decode error missing")
 	}
-	return resp.Quote(cause.Error())
+	return q.quote(cause.Error())
 }
 
 // refusal records a failure this library produced instead of a request and returns it,
 // so the diagnostic id the caller sees names a line here too.
 func (c *Conn) refusal(ctx context.Context, req *Request, fe *forgeapi.Error) *forgeapi.Error {
-	c.log(ctx, req, exchange(req), fe.Status, fe.Code, fe.DiagID, fe.Kind, nil, time.Now(), fe.Message, true)
+	c.log(ctx, req, exchange(req), fe.Status, fe.Code, fe.DiagID, fe.Kind, nil, time.Now(), own(fe.Message), true)
 	return fe
 }
 
 // record is refusal for a failure reached with no request value in hand, which is the
-// shape a family's own post-response refusals take.
-func (c *Conn) record(ctx context.Context, op string, ex Exchange, fe *forgeapi.Error) {
-	c.emit(ctx, &Request{Op: op}, familyEntry(ctx, ex, fe, fe.Message))
+// shape a family's own post-response refusals take; said is fe's message.
+func (c *Conn) record(ctx context.Context, op string, ex Exchange, fe *forgeapi.Error, said Quoted) {
+	c.emit(ctx, &Request{Op: op}, familyEntry(ctx, ex, fe, said))
 }
 
 // familyEntry is a family's failure line, with cause as its error and, on a line
 // naming an exchange, its operation's last request ([lastSent]).
-func familyEntry(ctx context.Context, ex Exchange, fe *forgeapi.Error, cause string) *entry {
+func familyEntry(ctx context.Context, ex Exchange, fe *forgeapi.Error, cause Quoted) *entry {
 	var sent tally
 	if ex != (Exchange{}) {
 		sent = lastSent(ctx).load()
@@ -1686,19 +1798,20 @@ func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capabi
 	if support == forgeapi.SupportNo {
 		message = "this instance carries no " + string(capability) + " capability"
 	}
+	said := own(message)
 	fe := &forgeapi.Error{
 		Op:         op,
 		Code:       forgeapi.CodeCapabilityUnsupported,
 		Family:     c.family,
 		Kind:       forgeapi.KindForbidden,
-		Message:    message,
+		Message:    said.String(),
 		DiagID:     diagID(),
 		Capability: capability,
 		Evidence:   ev,
 	}
 	// No request was sent, so the record names no exchange: the zero value is
 	// what says that, and a method here would describe one that never happened.
-	c.record(ctx, op, Exchange{}, fe)
+	c.record(ctx, op, Exchange{}, fe, said)
 	return fe
 }
 
@@ -1712,7 +1825,7 @@ func (c *Conn) Refuse(ctx context.Context, op string, capability forgeapi.Capabi
 // and figures, as an answer's own would.
 func (c *Conn) deferred(op string, held heldPool) *forgeapi.Error {
 	fe := c.fail(op, "", forgeapi.KindRateLimited, 0,
-		"this read was deferred: a rate-limit pool it draws on is at or under the mutation reserve")
+		own("this read was deferred: a rate-limit pool it draws on is at or under the mutation reserve"))
 	fe.Pool, fe.Remaining, fe.Reset = held.name, held.figure.remaining, held.figure.reset
 	return fe
 }
@@ -1787,8 +1900,10 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 		verdict = c.verdict(req.Op, resp, &answer)
 	}
 	kind, code := verdict.Kind, verdict.Code
-	fe := c.answered(req.Op, code, kind, resp, resp.Quote(answer.text(code)))
-	fe.Needs = resp.Quote(verdict.Needs) // upstream text, made safe as the message is
+	q := c.quoterOf(resp)
+	said := q.quote(answer.text(code))
+	fe := c.answered(req.Op, code, kind, resp, said)
+	fe.Needs = q.quote(verdict.Needs).String()
 	fe.Secondary = kind == forgeapi.KindRateLimited && verdict.Secondary
 	if kind == forgeapi.KindRateLimited {
 		fe.RetryAfter = RetryAfter(resp.Header)
@@ -1796,7 +1911,7 @@ func (c *Conn) upstreamError(ctx context.Context, req *Request, resp *Response, 
 			c.counters.RateLimited(c.family)
 		}
 	}
-	c.log(ctx, req, exchange(req), resp.Status, code, fe.DiagID, kind, resp.Header, started, fe.Message, false)
+	c.log(ctx, req, exchange(req), resp.Status, code, fe.DiagID, kind, resp, started, said, false)
 	return fe
 }
 
@@ -1812,10 +1927,23 @@ func (c *Conn) verdict(op string, resp *Response, answer *refusal) Verdict {
 	return c.mapper(op, resp.Status, resp.Header, member)
 }
 
-// AnswerFigures sets fe's Remaining, Reset and Pool from the failing answer's
-// own budget signal and pool, as the governor reads them off every answer, raw:
-// what a limit holds is the consumer's to read from them and Secondary.
-func AnswerFigures(fe *forgeapi.Error, header http.Header, signal budgetSignal, pool budgetPool) {
+// AnswerFigures sets fe's Remaining, Reset and Pool from answer's own budget
+// signal and pool, as the governor reads them off every answer, raw, the pool's
+// name quoted by answer's quoter: what a limit holds is the consumer's to read
+// from them and Secondary.
+func AnswerFigures(fe *forgeapi.Error, answer *Response, signal budgetSignal, pool budgetPool) {
+	quoted := pool
+	if pool != nil {
+		quoted = func(header http.Header) (string, int) {
+			name, limit := pool(header)
+			return answer.Quote(name).String(), limit
+		}
+	}
+	figures(fe, answer.Header, signal, quoted)
+}
+
+// figures is [AnswerFigures] with pool's name already quoted.
+func figures(fe *forgeapi.Error, header http.Header, signal budgetSignal, pool budgetPool) {
 	fe.Remaining, fe.Reset = forgeapi.BudgetRemainingUnknown, time.Time{}
 	if signal != nil {
 		remaining, reset, ok := signal(header)
@@ -1913,42 +2041,6 @@ func (r *refusal) scoped(text string) string {
 	return strings.TrimSpace("(scope: " + r.Scope + ") " + text)
 }
 
-// sanitize bounds and rune-sanitizes untrusted upstream text at the emit site,
-// because this library cannot know its consumer's log handler.
-func sanitize(s string) string {
-	out, _ := textsafe.SanitizeSingleLineCapped(s, maxMessageBytes, "...")
-	return out
-}
-
-// quoter makes an instance's text from one exchange safe to carry on an error:
-// every secret the request carried, its credential and each value of the
-// connection's own headers, is redacted out of the text, which is made one line
-// and bounded. A secret is matched as it was given, as it was received with a
-// field value's edge whitespace trimmed (RFC 9110 section 5.5, and net/http
-// trims it on write), and as [jsonForm] spells each, since a message member that
-// is not a string is quoted as its JSON.
-func (c *Conn) quoter(token string) func(string) string {
-	given := append([]string{token}, headerValues(c.headers)...)
-	secrets := make([]string, 0, 4*len(given))
-	for _, secret := range given {
-		received := textproto.TrimString(secret)
-		secrets = append(secrets, secret, jsonForm(secret), received, jsonForm(received))
-	}
-	return func(text string) string {
-		out, _ := textsafe.RedactSingleLineCapped(text, maxMessageBytes, "...", secrets...)
-		return out
-	}
-}
-
-// headerValues is the value of every header a connection sends of its own.
-func headerValues(headers []forgeapi.Header) []string {
-	values := make([]string, 0, len(headers))
-	for _, h := range headers {
-		values = append(values, h.Value)
-	}
-	return values
-}
-
 // jsonForm is s as a JSON string's contents spell it in [canonicalJSON].
 func jsonForm(s string) string {
 	text, err := canonicalJSON(s)
@@ -1973,27 +2065,29 @@ func canonicalJSON(v any) (string, error) {
 // attempt, retry and duration of that request. cause is the line's error attribute,
 // never a raw error, whose *url.Error would carry the full URL; failed marks the line
 // a failure whatever its status.
-func (c *Conn) log(ctx context.Context, req *Request, ex Exchange, status int, code, diag string, kind forgeapi.ErrorKind, header http.Header, started time.Time, cause string, failed bool) {
+func (c *Conn) log(ctx context.Context, req *Request, ex Exchange, status int, code, diag string, kind forgeapi.ErrorKind, answer *Response, started time.Time, cause Quoted, failed bool) {
 	c.emit(ctx, req, &entry{
-		header: header, ex: ex, code: code, diag: diag, cause: cause,
+		answer: answer, ex: ex, code: code, diag: diag, cause: cause,
 		sent: requestSlot(ctx).since(started), status: status, kind: kind, failed: failed,
 	})
 }
 
-// entry is one per-request line. operation adds the operation's own elapsed time, and
-// answer the size and type of a body that did not decode.
+// entry is one per-request line. answer is the answer it records, nil for none,
+// whose headers name the request id and whose quoter quotes them. operation adds
+// the operation's own elapsed time, and undecoded the size and type of a body that
+// did not decode.
 type entry struct {
-	header    http.Header
 	answer    *Response
 	ex        Exchange
 	code      string
 	diag      string
-	cause     string
+	cause     Quoted
 	sent      tally
 	status    int
 	kind      forgeapi.ErrorKind
 	failed    bool
 	operation bool
+	undecoded bool
 }
 
 // emit writes the line. It never carries a token, a URL's userinfo, a header value
@@ -2007,8 +2101,13 @@ func (c *Conn) emit(ctx context.Context, req *Request, e *entry) {
 	switch {
 	case e.status >= 400 || e.failed:
 		level = slog.LevelWarn
-	case e.sent.retriedOn != "":
+	case e.sent.retriedOn.String() != "":
 		level = slog.LevelInfo
+	}
+	var q *quoter
+	var header http.Header
+	if e.answer != nil {
+		q, header = c.quoterOf(e.answer), e.answer.Header
 	}
 	attrs := []any{
 		"op", req.Op,
@@ -2028,19 +2127,19 @@ func (c *Conn) emit(ctx context.Context, req *Request, e *entry) {
 		"page", max(req.Page, 1),
 		"duration_ms", e.sent.elapsed.Milliseconds(),
 		"cache", cacheNoted(ctx),
-		"upstream_request_id", upstreamRequestID(e.header),
+		"upstream_request_id", q.quote(upstreamRequestID(header)),
 	)
-	if e.cause != "" {
+	if e.cause.String() != "" {
 		attrs = append(attrs, "error", e.cause)
 	}
-	if e.sent.retriedOn != "" {
+	if e.sent.retriedOn.String() != "" {
 		attrs = append(attrs, "retried_on", e.sent.retriedOn)
 	}
 	if start, ok := ctx.Value(startKey{}).(time.Time); ok && e.operation {
 		attrs = append(attrs, "op_elapsed_ms", time.Since(start).Milliseconds())
 	}
-	if e.answer != nil {
-		attrs = append(attrs, "content_type", sanitize(e.answer.Header.Get("Content-Type")), "body_bytes", len(e.answer.Body))
+	if e.undecoded && e.answer != nil {
+		attrs = append(attrs, "content_type", q.quote(header.Get("Content-Type")), "body_bytes", len(e.answer.Body))
 	}
 	// A fresh context, because most of these lines describe a context that is
 	// already done, and a handler that honours cancellation would drop them.
@@ -2052,12 +2151,12 @@ func (c *Conn) emit(ctx context.Context, req *Request, e *entry) {
 // returns none leaves the attribute empty, which is not an omission.
 var upstreamRequestIDHeaders = []string{"X-Request-Id", "X-GitHub-Request-Id", "X-Gitlab-Meta"}
 
-// upstreamRequestID is the id the instance named for this exchange, empty where it
-// named none.
+// upstreamRequestID is the id the instance named for this exchange, as it named
+// it, empty where it named none.
 func upstreamRequestID(header http.Header) string {
 	for _, name := range upstreamRequestIDHeaders {
 		if v := header.Get(name); v != "" {
-			return sanitize(v)
+			return v
 		}
 	}
 	return ""

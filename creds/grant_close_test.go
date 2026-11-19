@@ -36,7 +36,7 @@ func TestDeviceGrant_Close_ends_a_pending_grant_without_a_request(t *testing.T) 
 			if !ok {
 				t.Fatalf("Poll() after Close = %v, want a *forgeapi.Error", err)
 			}
-			if done || rec.Token != "" || fe.Code != forgeapi.CodeGrantDenied || fe.Kind != forgeapi.KindForbidden || fe.Status != 0 || fe.Family != arm.family {
+			if done || !rec.Token.IsZero() || fe.Code != forgeapi.CodeGrantDenied || fe.Kind != forgeapi.KindForbidden || fe.Status != 0 || fe.Family != arm.family {
 				t.Errorf("Poll() after Close = (token %q, %v, %v / %q at %d on %v), want no record and %v / %q at status 0 on %v",
 					rec.Token, done, fe.Kind, fe.Code, fe.Status, fe.Family, forgeapi.KindForbidden, forgeapi.CodeGrantDenied, arm.family)
 			}
@@ -82,8 +82,8 @@ func TestDeviceGrant_Close_after_a_granted_poll_keeps_the_record(t *testing.T) {
 
 			g.Close()
 			rec, done, err := g.Poll(t.Context())
-			if !done || err != nil || rec.Token != "token-granted" {
-				t.Errorf("Poll() after a granted poll and Close = (token %q, %v, %v), want the granted record", rec.Token, done, err)
+			if !done || err != nil || rec.Token.Reveal() != "token-granted" {
+				t.Errorf("Poll() after a granted poll and Close = (token %q, %v, %v), want the granted record", rec.Token.Reveal(), done, err)
 			}
 			if n := len(ep.requests()); n != sent {
 				t.Errorf("Poll() after Close sent %d request(s), want none", n-sent)
@@ -190,11 +190,11 @@ func TestDeviceGrant_Close_during_a_poll_returns_after_it(t *testing.T) {
 			close(release)
 			got := <-poll
 			<-closed
-			if !got.done || got.err != nil || got.rec.Token != "token-granted" {
-				t.Errorf("the poll Close waited for = (token %q, %v, %v), want the granted record", got.rec.Token, got.done, got.err)
+			if !got.done || got.err != nil || got.rec.Token.Reveal() != "token-granted" {
+				t.Errorf("the poll Close waited for = (token %q, %v, %v), want the granted record", got.rec.Token.Reveal(), got.done, got.err)
 			}
-			if rec, done, err := g.Poll(t.Context()); !done || err != nil || rec.Token != "token-granted" {
-				t.Errorf("Poll() after it = (token %q, %v, %v), want the granted record still", rec.Token, done, err)
+			if rec, done, err := g.Poll(t.Context()); !done || err != nil || rec.Token.Reveal() != "token-granted" {
+				t.Errorf("Poll() after it = (token %q, %v, %v), want the granted record still", rec.Token.Reveal(), done, err)
 			}
 		})
 	}

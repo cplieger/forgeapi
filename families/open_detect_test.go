@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/forgeapi/v3/gitea"
 	"github.com/cplieger/forgeapi/v3/github"
 	"github.com/cplieger/forgeapi/v3/gitlab"
+	"github.com/cplieger/go/masked"
 )
 
 // recordedAnswer is one answer a product gave, in the shape the detection fixture
@@ -384,7 +385,7 @@ func TestOpenAnswersAConstructorsRefusalBeforeAnyRequest(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
-	conn := forgeapi.Connection{WebBaseURL: srv.URL, Headers: []forgeapi.Header{{Name: reserved[0], Value: "example"}}}
+	conn := forgeapi.Connection{WebBaseURL: srv.URL, Headers: []forgeapi.Header{{Name: reserved[0], Value: masked.NewSecret("example")}}}
 
 	core, family, err := families.Open(t.Context(), conn, openOptions(srv)...)
 	if core != nil || family != forgeapi.FamilyUnknown {

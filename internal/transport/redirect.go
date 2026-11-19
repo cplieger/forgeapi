@@ -26,9 +26,9 @@ func (c *Conn) redirectPolicy(web *url.URL, set *forgeapi.Settings) func(*http.R
 	policy := ssrf.NewURLPolicy(schemesOf(set)...)
 
 	return func(req *http.Request, via []*http.Request) error {
-		c.observeDropped(req, req.Response)
-		if err := c.checkHop(req, via, set, ports, standard, policy); err != nil {
-			return err
+		c.observeDropped(req, req.Response, c.orAmbient(quoterOn(req.Context())))
+		if fe := c.checkHop(req, via, set, ports, standard, policy); fe != nil {
+			return &policyError{fe: fe}
 		}
 		if originOf(req.URL) != origin {
 			dropOnHop(req, c.headers)
@@ -37,18 +37,25 @@ func (c *Conn) redirectPolicy(web *url.URL, set *forgeapi.Settings) func(*http.R
 	}
 }
 
+// policyError is a refusal the redirect policy wrote, all of it this library's own
+// text, which [Conn.transportError] carries unquoted.
+type policyError struct{ fe *forgeapi.Error }
+
+func (r *policyError) Error() string { return r.fe.Error() }
+func (r *policyError) Unwrap() error { return r.fe }
+
 // checkHop is the per-hop verdict: the form checks, the address policy, and the two
 // refusals a mutating method earns, in that order.
-func (c *Conn) checkHop(req *http.Request, via []*http.Request, set *forgeapi.Settings, ports []uint16, standard bool, policy ssrf.URLPolicy) error {
-	if err := c.checkHopForm(req, via, set, ports); err != nil {
-		return err
+func (c *Conn) checkHop(req *http.Request, via []*http.Request, set *forgeapi.Settings, ports []uint16, standard bool, policy ssrf.URLPolicy) *forgeapi.Error {
+	if fe := c.checkHopForm(req, via, set, ports); fe != nil {
+		return fe
 	}
 	// The standard URL validation is called only where this connection's address
 	// policy IS the default public-only one, the single posture whose
 	// unconditional refusals and the connection's own stance coincide.
 	if standard {
-		if err := c.checkAddress(req, via, policy); err != nil {
-			return err
+		if fe := c.checkAddress(req, via, policy); fe != nil {
+			return fe
 		}
 	}
 	return c.checkHopMethod(req, via)
@@ -56,32 +63,32 @@ func (c *Conn) checkHop(req *http.Request, via []*http.Request, set *forgeapi.Se
 
 // checkHopForm is the half of the verdict taken on the hop's own shape: the hop cap,
 // the host, the downgrade, the scheme and the port.
-func (c *Conn) checkHopForm(req *http.Request, via []*http.Request, set *forgeapi.Settings, ports []uint16) error {
+func (c *Conn) checkHopForm(req *http.Request, via []*http.Request, set *forgeapi.Settings, ports []uint16) *forgeapi.Error {
 	if len(via) > forgeapi.MaxRedirectHops {
 		if c.counters.RedirectHopCapExceeded != nil {
 			c.counters.RedirectHopCapExceeded(c.family)
 		}
 		return c.fail(opOf(via), forgeapi.CodeRedirectHopCap, forgeapi.KindUpstream, 0,
-			"redirect chain is over this library's hop cap of "+strconv.Itoa(forgeapi.MaxRedirectHops))
+			own("redirect chain is over this library's hop cap of "+strconv.Itoa(forgeapi.MaxRedirectHops)))
 	}
 	if req.URL.Host == "" {
-		return c.fail(opOf(via), forgeapi.CodeConnectionInvalid, forgeapi.KindUpstream, 0, "redirect hop carries no host")
+		return c.fail(opOf(via), forgeapi.CodeConnectionInvalid, forgeapi.KindUpstream, 0, own("redirect hop carries no host"))
 	}
 	previous := via[len(via)-1]
 	if previous.URL.Scheme == schemeHTTPS && req.URL.Scheme == schemeHTTP {
 		return c.fail(opOf(via), forgeapi.CodePlaintextRefused, forgeapi.KindUpstream, 0,
-			"redirect hop downgrades from https to http")
+			own("redirect hop downgrades from https to http"))
 	}
 	if !allowedScheme(req.URL.Scheme, set) {
 		return c.fail(opOf(via), forgeapi.CodeConnectionInvalid, forgeapi.KindUpstream, 0,
-			"redirect hop carries a scheme this connection does not permit")
+			own("redirect hop carries a scheme this connection does not permit"))
 	}
 	if !portAllowed(req.URL, ports) {
 		if c.counters.RedirectPortRefused != nil {
 			c.counters.RedirectPortRefused(c.family)
 		}
 		return c.fail(opOf(via), forgeapi.CodeRedirectPortRefused, forgeapi.KindUpstream, 0,
-			"redirect hop carries a port outside this connection's allowlist")
+			own("redirect hop carries a port outside this connection's allowlist"))
 	}
 	return nil
 }
@@ -89,14 +96,14 @@ func (c *Conn) checkHopForm(req *http.Request, via []*http.Request, set *forgeap
 // checkHopMethod is the half a MUTATING method earns, and it is two refusals rather
 // than one because the three statuses net/http rewrites and the two that preserve the
 // body are different hazards.
-func (c *Conn) checkHopMethod(req *http.Request, via []*http.Request) error {
+func (c *Conn) checkHopMethod(req *http.Request, via []*http.Request) *forgeapi.Error {
 	previous := via[len(via)-1]
 	// A hop net/http would rewrite into a bodyless read is REFUSED rather
 	// than followed, because a merge against a renamed repository would
 	// otherwise answer 2xx from a read that merged nothing.
 	if rewritable(previous.Method, req.Response.StatusCode) {
 		return c.fail(opOf(via), forgeapi.CodeRepoRefStale, forgeapi.KindNotFound, 0,
-			"redirect answered to a mutating method would be rewritten into a bodyless read")
+			own("redirect answered to a mutating method would be rewritten into a bodyless read"))
 	}
 	// A hop that PRESERVES the method is refused off origin, which the
 	// rewrite check above cannot cover: the two statuses that carry the
@@ -107,7 +114,7 @@ func (c *Conn) checkHopMethod(req *http.Request, via []*http.Request) error {
 	// request itself is the thing that must not travel.
 	if mutating(previous.Method) && originOf(req.URL) != originOf(previous.URL) {
 		return c.fail(opOf(via), forgeapi.CodeRepoRefStale, forgeapi.KindNotFound, 0,
-			"redirect answered to a mutating method leaves this connection's origin")
+			own("redirect answered to a mutating method leaves this connection's origin"))
 	}
 	return nil
 }
@@ -116,7 +123,7 @@ func (c *Conn) checkHopMethod(req *http.Request, via []*http.Request) error {
 // verdict at the SOCKET is the same policy value inside the transport's control
 // hook, which is why nothing resolves here: resolving would judge one answer and
 // dial another.
-func (c *Conn) checkAddress(req *http.Request, via []*http.Request, policy ssrf.URLPolicy) error {
+func (c *Conn) checkAddress(req *http.Request, via []*http.Request, policy ssrf.URLPolicy) *forgeapi.Error {
 	err := policy.Validate(req.URL.String())
 	if err == nil {
 		return nil
@@ -129,7 +136,7 @@ func (c *Conn) checkAddress(req *http.Request, via []*http.Request, policy ssrf.
 		c.counters.AddressRefusal(c.family, kind)
 	}
 	return c.fail(opOf(via), forgeapi.CodePrivateAddressRefused, forgeapi.KindUpstream, 0,
-		"redirect hop does not pass this connection's address policy")
+		own("redirect hop does not pass this connection's address policy"))
 }
 
 // rewritable reports whether this hop is one of the three statuses net/http

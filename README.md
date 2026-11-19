@@ -4,7 +4,7 @@
 
 forgeapi lets your Go code read and write pull requests, issues, merges, checks, releases and labels on GitHub, GitLab, Gitea and Forgejo through one set of types.
 
-It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It reads no file contents and writes no comments or reviews, only counting them. It is at v3 and is licensed under Apache-2.0. It depends only on filesafe, httpcache, httpclient, jsonx, textsafe, ssrf and urlform, seven modules by the same author.
+It replaces four API clients and the differences in routes, field names and value shapes you would otherwise handle. It reads no file contents and writes no comments or reviews, only counting them. It is at v3 and is licensed under Apache-2.0. It depends only on filesafe, httpcache, httpclient, jsonx, masked, textsafe, ssrf and urlform, eight modules by the same author.
 
 ## Why use it
 

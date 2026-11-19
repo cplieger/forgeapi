@@ -14,6 +14,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/go/masked"
 )
 
 // credentialFile is the one file the store keeps its records in.
@@ -198,7 +199,7 @@ func TestFileStore_fails_a_save_its_file_bound_refuses_as_that_failure(t *testin
 	rec := rotating(forgeapi.FamilyGitHub, "https://forge.example", 8*time.Hour, 8*time.Hour)
 	save(t, store, "conn", rec)
 	oversized := rec
-	oversized.Token = strings.Repeat("x", 1<<20)
+	oversized.Token = masked.NewSecret(strings.Repeat("x", 1<<20))
 
 	if err := store.Save("conn", oversized); err == nil {
 		t.Error("Save(a record over the file's 1 MiB bound) = nil error, want the write refused")
@@ -206,7 +207,7 @@ func TestFileStore_fails_a_save_its_file_bound_refuses_as_that_failure(t *testin
 	if nonDurable != 0 {
 		t.Errorf("NonDurableCredentialWrite fired %d time(s), want none: the write failed, it was not merely unproved", nonDurable)
 	}
-	if got := load(t, store, "conn"); got.Token != rec.Token {
-		t.Errorf("Load after the refused save = token of %d bytes, want the stored record's", len(got.Token))
+	if got := load(t, store, "conn"); !got.Token.Equal(rec.Token) {
+		t.Errorf("Load after the refused save = token of %d bytes, want the stored record's", len(got.Token.Reveal()))
 	}
 }

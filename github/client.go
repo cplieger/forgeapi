@@ -129,11 +129,11 @@ func (c *Client) noteResponse(resp *transport.Response) {
 // where this connection's instance serves it, nothing where it does not. The pin
 // is the REST surface's alone, since documents are versioned by their schema, so
 // [Client.execute] sets no header on a document request.
-func (c *Client) restHeaders() []forgeapi.Header {
+func (c *Client) restHeaders() http.Header {
 	if !c.sendsPin() {
 		return nil
 	}
-	return []forgeapi.Header{{Name: APIVersionHeader, Value: APIVersion}}
+	return http.Header{APIVersionHeader: {APIVersion}}
 }
 
 // holdPin records whether this instance serves the version this family pins, which

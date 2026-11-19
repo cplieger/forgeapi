@@ -10,6 +10,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/go/masked"
 )
 
 // unreadablePair is a token endpoint's success answer cut short: the instance
@@ -63,7 +64,7 @@ func TestStoredSource_hands_over_nothing_from_a_marked_record(t *testing.T) {
 			return rotating(forgeapi.FamilyGitLab, base, 8*time.Hour, time.Minute)
 		},
 		"static": func(base string) creds.Record {
-			return creds.Record{Family: forgeapi.FamilyGitea, WebBaseURL: base, Kind: forgeapi.CredKindStaticPAT, Token: "token-static", Account: "example-user"}
+			return creds.Record{Family: forgeapi.FamilyGitea, WebBaseURL: base, Kind: forgeapi.CredKindStaticPAT, Token: masked.NewSecret("token-static"), Account: "example-user"}
 		},
 	}
 	for name, build := range records {
@@ -187,13 +188,13 @@ func TestStoredSource_marks_nothing_when_a_reconnect_replaced_the_record_its_ref
 			}()
 			<-arrived
 			reconnected := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, 8*time.Hour)
-			reconnected.Token, reconnected.RefreshToken = "token-reconnected", "refresh-reconnected"
+			reconnected.Token, reconnected.RefreshToken = masked.NewSecret("token-reconnected"), masked.NewSecret("refresh-reconnected")
 			save(t, store, "conn", reconnected)
 			close(release)
 			<-done
 
 			rec := load(t, reopen(t, dir), "conn")
-			if rec.Token != "token-reconnected" || rec.Usability != markUnmarked {
+			if rec.Token.Reveal() != "token-reconnected" || rec.Usability != markUnmarked {
 				t.Errorf("the stored record = (%q, %s), want (%q, unmarked): the answer was about a pair the connection no longer holds",
 					rec.Token, markNames[rec.Usability], "token-reconnected")
 			}
@@ -236,7 +237,7 @@ func TestStoredSource_keeps_a_reconnect_saved_after_a_failed_rotation_write_unma
 	}
 	restore()
 	reconnected := rotating(forgeapi.FamilyGitHub, ep.srv.URL, 8*time.Hour, 8*time.Hour)
-	reconnected.Token, reconnected.RefreshToken = "token-reconnected", "refresh-reconnected"
+	reconnected.Token, reconnected.RefreshToken = masked.NewSecret("token-reconnected"), masked.NewSecret("refresh-reconnected")
 	save(t, store, "conn", reconnected)
 
 	token, err := src.Token(t.Context())
@@ -244,8 +245,8 @@ func TestStoredSource_keeps_a_reconnect_saved_after_a_failed_rotation_write_unma
 		t.Errorf("Token() after the reconnect = (%q, %v), want (%q, nil): a reconnect saves a new, unmarked record", token, err, "token-reconnected")
 	}
 	rec := load(t, reopen(t, dir), "conn")
-	if rec.Token != "token-reconnected" || rec.Usability != markUnmarked {
-		t.Errorf("the stored record = (%q, %s), want (%q, unmarked)", rec.Token, markNames[rec.Usability], "token-reconnected")
+	if rec.Token.Reveal() != "token-reconnected" || rec.Usability != markUnmarked {
+		t.Errorf("the stored record = (%q, %s), want (%q, unmarked)", rec.Token.Reveal(), markNames[rec.Usability], "token-reconnected")
 	}
 }
 

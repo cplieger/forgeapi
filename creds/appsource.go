@@ -10,6 +10,7 @@ import (
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/internal/githubroot"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
+	"github.com/cplieger/go/masked"
 )
 
 // The waits an App source keeps between requests to GitHub.
@@ -86,13 +87,12 @@ var _ forgeapi.CredentialSource = (*AppSource)(nil)
 // issued is one minted token. Its lifetime is measured from sent, the instant
 // its request was sent, because GitHub states its expiry and no issue time; its
 // age, for a 401 that soon after the mint, from answered, the instant GitHub's
-// answer arrived. The token is held as a [Secret], so a printed source shows
-// none of it.
+// answer arrived.
 type issued struct {
 	sent     time.Time
 	answered time.Time
 	expiry   time.Time
-	token    Secret
+	token    masked.Secret
 }
 
 // hold is the instant before which the source sends nothing, and what a call
@@ -273,7 +273,7 @@ func (s *AppSource) Discard(token string) (retry bool) {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if token == "" || token != s.cached.token.Reveal() {
+	if token == "" || !masked.NewSecret(token).Equal(s.cached.token) {
 		return false
 	}
 	age := now.Sub(s.cached.answered)

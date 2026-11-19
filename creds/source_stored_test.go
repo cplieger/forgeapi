@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/go/masked"
 )
 
 // countingStore is a file store that counts its Load calls.
@@ -30,7 +31,7 @@ func (c *countingStore) Load(key string) (creds.Record, bool, error) {
 func staticRecord(base string, expiry time.Time) creds.Record {
 	return creds.Record{
 		Family: forgeapi.FamilyGitea, WebBaseURL: base, Kind: forgeapi.CredKindStaticPAT,
-		Token: "token-static", Expiry: expiry, Account: "example-user",
+		Token: masked.NewSecret("token-static"), Expiry: expiry, Account: "example-user",
 	}
 }
 
@@ -113,8 +114,8 @@ func TestStoredSource_StoredToken_hands_over_a_token_it_can_hand_over_without_a_
 			src := source(t, store, "conn", ep)
 
 			token, state, err := src.StoredToken()
-			if err != nil || token != tc.token || state != tc.state {
-				t.Errorf("StoredToken() = (%q, %v, %v), want (%q, %v, nil)", token, state, err, tc.token, tc.state)
+			if err != nil || token.Reveal() != tc.token || state != tc.state {
+				t.Errorf("StoredToken() = (%q, %v, %v), want (%q, %v, nil)", token.Reveal(), state, err, tc.token, tc.state)
 			}
 			if field := sameRecord(load(t, store, "conn"), rec); field != "" {
 				t.Errorf("the stored record's %s changed, want the record untouched: StoredToken never refreshes", field)
@@ -133,8 +134,8 @@ func TestStoredSource_StoredToken_fails_an_expired_due_token_without_refreshing_
 	src := source(t, store, "conn", ep)
 
 	token, state, err := src.StoredToken()
-	if token != "" || state != forgeapi.CredRefreshDue {
-		t.Errorf("StoredToken() = (%q, %v, _), want (\"\", %v, _)", token, state, forgeapi.CredRefreshDue)
+	if !token.IsZero() || state != forgeapi.CredRefreshDue {
+		t.Errorf("StoredToken() = (%q, %v, _), want (\"\", %v, _)", token.Reveal(), state, forgeapi.CredRefreshDue)
 	}
 	fe, ok := errors.AsType[*forgeapi.Error](err)
 	if !ok || fe.Kind != forgeapi.KindTransient || !fe.Retryable || fe.Code != "" || fe.Family != forgeapi.FamilyGitHub {
@@ -162,7 +163,7 @@ func TestStoredSource_StoredToken_answers_without_waiting_on_a_refresh_in_flight
 
 	type answer struct {
 		err   error
-		token string
+		token masked.Secret
 		state forgeapi.CredState
 	}
 	answered := make(chan answer, 1)
@@ -172,8 +173,8 @@ func TestStoredSource_StoredToken_answers_without_waiting_on_a_refresh_in_flight
 	}()
 	select {
 	case a := <-answered:
-		if a.err != nil || a.token != "token-old" || a.state != forgeapi.CredRefreshing {
-			t.Errorf("StoredToken() with a refresh in flight = (%q, %v, %v), want (%q, %v, nil)", a.token, a.state, a.err, "token-old", forgeapi.CredRefreshing)
+		if a.err != nil || a.token.Reveal() != "token-old" || a.state != forgeapi.CredRefreshing {
+			t.Errorf("StoredToken() with a refresh in flight = (%q, %v, %v), want (%q, %v, nil)", a.token.Reveal(), a.state, a.err, "token-old", forgeapi.CredRefreshing)
 		}
 	case <-time.After(5 * time.Second):
 		t.Errorf("StoredToken() with a refresh in flight had not answered after 5s, want it answered without waiting")
@@ -260,8 +261,8 @@ func TestStoredSource_StoredToken_hands_over_the_token_of_a_rotated_pair_waiting
 			if n := store.loads.Load() - before; n != 1 {
 				t.Errorf("StoredToken() read the store %d time(s), want 1", n)
 			}
-			if err != nil || token != "token-new" || state != forgeapi.CredRefreshDue {
-				t.Errorf("StoredToken() with a rotated pair pending = (%q, %v, %v), want (%q, %v, nil)", token, state, err, "token-new", forgeapi.CredRefreshDue)
+			if err != nil || token.Reveal() != "token-new" || state != forgeapi.CredRefreshDue {
+				t.Errorf("StoredToken() with a rotated pair pending = (%q, %v, %v), want (%q, %v, nil)", token.Reveal(), state, err, "token-new", forgeapi.CredRefreshDue)
 			}
 			if infoAfter, rawAfter := credentialFileState(t, dir); !os.SameFile(infoBefore, infoAfter) || !infoAfter.ModTime().Equal(infoBefore.ModTime()) || !bytes.Equal(rawAfter, rawBefore) {
 				t.Errorf("the store's file was written, want it untouched: StoredToken never writes")
@@ -285,12 +286,12 @@ func TestStoredSource_StoredToken_hands_over_the_token_of_a_rotated_pair_waiting
 func TestStoredSource_StoredToken_hands_over_a_reconnect_saved_over_a_held_pair(t *testing.T) {
 	src, store, _, base, _ := holdPair(t, githubRotated, nil)
 	reconnected := rotating(forgeapi.FamilyGitHub, base.WebBaseURL, 8*time.Hour, 8*time.Hour)
-	reconnected.Token, reconnected.RefreshToken = "token-reconnected", "refresh-reconnected"
+	reconnected.Token, reconnected.RefreshToken = masked.NewSecret("token-reconnected"), masked.NewSecret("refresh-reconnected")
 	save(t, store.FileStore, "conn", reconnected)
 
 	token, state, err := src.StoredToken()
-	if err != nil || token != "token-reconnected" || state != forgeapi.CredValid {
-		t.Errorf("StoredToken() over a reconnect = (%q, %v, %v), want (%q, %v, nil)", token, state, err, "token-reconnected", forgeapi.CredValid)
+	if err != nil || token.Reveal() != "token-reconnected" || state != forgeapi.CredValid {
+		t.Errorf("StoredToken() over a reconnect = (%q, %v, %v), want (%q, %v, nil)", token.Reveal(), state, err, "token-reconnected", forgeapi.CredValid)
 	}
 }
 
@@ -327,8 +328,8 @@ func TestStoredSource_StoredToken_fails_while_a_held_rotated_pair_is_past_its_us
 			if n := store.loads.Load() - before; n != 1 {
 				t.Errorf("StoredToken() read the store %d time(s), want 1", n)
 			}
-			if token != "" || state != forgeapi.CredRefreshDue {
-				t.Errorf("StoredToken() with a spent held pair = (%q, %v, _), want (\"\", %v, _)", token, state, forgeapi.CredRefreshDue)
+			if !token.IsZero() || state != forgeapi.CredRefreshDue {
+				t.Errorf("StoredToken() with a spent held pair = (%q, %v, _), want (\"\", %v, _)", token.Reveal(), state, forgeapi.CredRefreshDue)
 			}
 			fe, ok := errors.AsType[*forgeapi.Error](err)
 			if !ok || fe.Kind != forgeapi.KindTransient || !fe.Retryable || fe.Code != "" || fe.Family != forgeapi.FamilyGitHub {
@@ -342,8 +343,8 @@ func TestStoredSource_StoredToken_fails_while_a_held_rotated_pair_is_past_its_us
 			}
 
 			_, _ = src.Token(t.Context())
-			if got := load(t, reopen(t, dir), "conn"); got.Token != "token-new" {
-				t.Errorf("the stored token after Token() = %q, want %q: the pair stays held for Token to store", got.Token, "token-new")
+			if got := load(t, reopen(t, dir), "conn"); got.Token.Reveal() != "token-new" {
+				t.Errorf("the stored token after Token() = %q, want %q: the pair stays held for Token to store", got.Token.Reveal(), "token-new")
 			}
 		})
 	}
@@ -390,8 +391,8 @@ func TestStoredSource_StoredToken_requires_a_reconnect_where_State_does(t *testi
 			src := source(t, store, "conn", ep, forgeapi.WithCounters(counted.counters()))
 
 			token, state, err := src.StoredToken()
-			if token != "" || state != forgeapi.CredReconnectRequired || codeOf(err) != forgeapi.CodeReconnectRequired {
-				t.Errorf("StoredToken() = (%q, %v, %v), want (\"\", %v, code %q)", token, state, err, forgeapi.CredReconnectRequired, forgeapi.CodeReconnectRequired)
+			if !token.IsZero() || state != forgeapi.CredReconnectRequired || codeOf(err) != forgeapi.CodeReconnectRequired {
+				t.Errorf("StoredToken() = (%q, %v, %v), want (\"\", %v, code %q)", token.Reveal(), state, err, forgeapi.CredReconnectRequired, forgeapi.CodeReconnectRequired)
 			}
 			if names := strings.Contains(strings.ToLower(messageOf(err)), "spent"); names != tc.spent {
 				t.Errorf("StoredToken() = message %q, want it to name spent only for a spent record", messageOf(err))
@@ -430,8 +431,8 @@ func TestStoredSource_StoredToken_honours_a_mark_still_owed_to_the_store(t *test
 	}
 
 	token, state, err := src.StoredToken()
-	if token != "" || state != forgeapi.CredReconnectRequired || codeOf(err) != forgeapi.CodeReconnectRequired {
-		t.Errorf("StoredToken() with the mark owed = (%q, %v, %v), want (\"\", %v, code %q)", token, state, err, forgeapi.CredReconnectRequired, forgeapi.CodeReconnectRequired)
+	if !token.IsZero() || state != forgeapi.CredReconnectRequired || codeOf(err) != forgeapi.CodeReconnectRequired {
+		t.Errorf("StoredToken() with the mark owed = (%q, %v, %v), want (\"\", %v, code %q)", token.Reveal(), state, err, forgeapi.CredReconnectRequired, forgeapi.CodeReconnectRequired)
 	}
 	checkMarkStored(t, dir, markUnmarked)
 }
@@ -448,7 +449,7 @@ func TestStoredSource_StoredToken_fails_with_the_stores_error_where_it_cannot_be
 	}
 
 	token, state, err := src.StoredToken()
-	if token != "" || state != forgeapi.CredUnknown || err == nil || err.Error() != want.Error() {
-		t.Errorf("StoredToken() = (%q, %v, %v), want (\"\", %v, %v)", token, state, err, forgeapi.CredUnknown, want)
+	if !token.IsZero() || state != forgeapi.CredUnknown || err == nil || err.Error() != want.Error() {
+		t.Errorf("StoredToken() = (%q, %v, %v), want (\"\", %v, %v)", token.Reveal(), state, err, forgeapi.CredUnknown, want)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/go/masked"
 )
 
 // exchange is one request the token endpoint received, as the assertions read it.
@@ -39,6 +41,12 @@ type answer func(n int, x exchange) (status int, body string)
 
 func newEndpoint(t *testing.T, reply answer) *endpoint {
 	t.Helper()
+	return newEndpointWith(t, nil, reply)
+}
+
+// newEndpointWith is [newEndpoint] whose every answer also carries header.
+func newEndpointWith(t *testing.T, header http.Header, reply answer) *endpoint {
+	t.Helper()
 	ep := &endpoint{}
 	ep.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -58,6 +66,7 @@ func newEndpoint(t *testing.T, reply answer) *endpoint {
 		n := len(ep.seen)
 		ep.mu.Unlock()
 		status, body := reply(n, x)
+		maps.Copy(w.Header(), header)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		if _, err := io.WriteString(w, body); err != nil {
@@ -124,10 +133,10 @@ func rotating(family forgeapi.Family, base string, lifetime, left time.Duration)
 		Family:        family,
 		WebBaseURL:    base,
 		Kind:          forgeapi.CredKindRotatingOAuth,
-		Token:         "token-old",
+		Token:         masked.NewSecret("token-old"),
 		Issued:        now.Add(left - lifetime),
 		Expiry:        now.Add(left),
-		RefreshToken:  "refresh-old",
+		RefreshToken:  masked.NewSecret("refresh-old"),
 		RefreshExpiry: now.Add(30 * 24 * time.Hour),
 		ClientID:      clientID,
 		Scopes:        []string{"repo"},
@@ -208,13 +217,13 @@ func sameRecord(got, want creds.Record) string {
 		return "WebBaseURL"
 	case got.Kind != want.Kind:
 		return "Kind"
-	case got.Token != want.Token:
+	case !got.Token.Equal(want.Token):
 		return "Token"
 	case !got.Issued.Equal(want.Issued):
 		return "Issued"
 	case !got.Expiry.Equal(want.Expiry):
 		return "Expiry"
-	case got.RefreshToken != want.RefreshToken:
+	case !got.RefreshToken.Equal(want.RefreshToken):
 		return "RefreshToken"
 	case !got.RefreshExpiry.Equal(want.RefreshExpiry):
 		return "RefreshExpiry"

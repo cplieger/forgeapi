@@ -288,3 +288,68 @@ func TestTheAffordanceReadIsSentEveryCall(t *testing.T) {
 		t.Errorf("two affordance reads sent %d request(s), want 2: every call revalidates the record", got)
 	}
 }
+
+// TestTheGrantEvidenceCarriesNoPartOfTheCredential holds the grant evidence, which
+// spells the scope header the instance answered, free of the token the identity
+// read carried, on both reads that record it.
+func TestTheGrantEvidenceCarriesNoPartOfTheCredential(t *testing.T) {
+	for _, test := range []struct {
+		read func(t *testing.T, c *Client)
+		name string
+	}{
+		{name: "the_grant_read", read: func(t *testing.T, c *Client) {
+			if _, err := c.GrantCaps(t.Context()); err != nil {
+				t.Fatalf("GrantCaps = %v, want the capabilities", err)
+			}
+		}},
+		{name: "the_identity_read", read: func(t *testing.T, c *Client) {
+			if _, err := c.Whoami(t.Context()); err != nil {
+				t.Fatalf("Whoami = %v, want the account", err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorded := readCaptures(t)
+			h := newHarness(t, map[string]string{userRoute: recorded.raw(t, "rest_user")})
+			h.instance.answerHeaders(userRoute, http.Header{"X-Oauth-Scopes": []string{"repo, " + testToken}})
+			test.read(t, h.client)
+			grant, err := h.client.GrantCaps(t.Context())
+			if err != nil {
+				t.Fatalf("GrantCaps = %v, want the capabilities", err)
+			}
+			detail := grant.Ev[forgeapi.CapReadMergeState].Detail
+			if strings.Contains(detail, testToken) {
+				t.Errorf("GrantCaps = evidence %q, want no %q: the scope header is the instance's text", detail, testToken)
+			}
+			if !strings.Contains(detail, "repo, ") {
+				t.Errorf("GrantCaps = evidence %q, want the scopes the header carried", detail)
+			}
+		})
+	}
+}
+
+// TestTheVersionEvidenceCarriesNoPartOfTheCredential holds the metadata endpoint's
+// installed version, the instance's text, to the evidence it is quoted into: an
+// instance echoing the credential there reaches neither detail with it.
+func TestTheVersionEvidenceCarriesNoPartOfTheCredential(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		metaRoute:     `{"installed_version":"3.20.0 ` + testToken + `"}`,
+		versionsRoute: servedVersions,
+	})
+	withWitness(h.instance)
+	caps, err := h.client.ConnectionCaps(t.Context())
+	if err != nil {
+		t.Fatalf("ConnectionCaps = %v, want the capabilities", err)
+	}
+	for name, detail := range map[string]string{
+		"Ev[rerun_checks]": caps.Ev[forgeapi.CapRerunChecks].Detail,
+		"RerunScopeEv":     caps.RerunScopeEv.Detail,
+	} {
+		if strings.Contains(detail, testToken) {
+			t.Errorf("ConnectionCaps = %s detail %q, want no %q: the version is the instance's text", name, detail, testToken)
+		}
+		if !strings.Contains(detail, "an appliance at 3.20.0") {
+			t.Errorf("ConnectionCaps = %s detail %q, want the version the instance reported", name, detail)
+		}
+	}
+}

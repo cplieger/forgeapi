@@ -12,6 +12,7 @@ import (
 	"github.com/cplieger/forgeapi/v3/internal/githublimit"
 	"github.com/cplieger/forgeapi/v3/internal/gitlablimit"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
+	"github.com/cplieger/go/masked"
 )
 
 // The OAuth error members this package acts on, and the two grant types it sends.
@@ -59,36 +60,38 @@ func endpointsOf(family forgeapi.Family) (endpoints, bool) {
 // device-code endpoint. The two lifetimes are pointers because an absent count and
 // a stated zero decide different kinds.
 type answer struct {
-	ExpiresIn             *int64 `json:"expires_in"`
-	RefreshTokenExpiresIn *int64 `json:"refresh_token_expires_in"`
-	AccessToken           string `json:"access_token"`
-	Scope                 string `json:"scope"`
-	RefreshToken          string `json:"refresh_token"`
-	Error                 string `json:"error"`
-	DeviceCode            string `json:"device_code"`
-	UserCode              string `json:"user_code"`
-	VerificationURI       string `json:"verification_uri"`
-	Interval              int64  `json:"interval"`
+	ExpiresIn             *int64        `json:"expires_in"`
+	RefreshTokenExpiresIn *int64        `json:"refresh_token_expires_in"`
+	AccessToken           decodedSecret `json:"access_token"`
+	RefreshToken          decodedSecret `json:"refresh_token"`
+	DeviceCode            decodedSecret `json:"device_code"`
+	Scope                 string        `json:"scope"`
+	Error                 string        `json:"error"`
+	UserCode              string        `json:"user_code"`
+	VerificationURI       string        `json:"verification_uri"`
+	Interval              int64         `json:"interval"`
 }
 
 // reply is what an endpoint answered: the status, zero where none answered, the
 // headers and the body as it arrived.
 type reply struct {
 	header http.Header
+	answer *transport.Response
 	body   []byte
 	status int
 }
 
-// post sends one form to one endpoint of a connection and reads the answer. A body
+// post sends one form to one endpoint of a connection and reads the answer, secrets
+// being the form's credential values ([transport.Conn.PostForm]). A body
 // that does not decode answers the zero answer, which no caller reads as a token. A
 // failure answers the reply beside it where the instance answered one whose body
 // did not arrive, and the zero reply where no status answered.
-func post(ctx context.Context, ep *transport.Conn, op, path string, form url.Values) (answer, reply, error) {
-	resp, err := ep.PostForm(ctx, op, path, form)
+func post(ctx context.Context, ep *transport.Conn, op, path string, form url.Values, secrets ...masked.Secret) (answer, reply, error) {
+	resp, err := ep.PostForm(ctx, op, path, form, secrets...)
 	if resp == nil {
 		return answer{}, reply{}, err
 	}
-	r := reply{header: resp.Header, body: resp.Body, status: resp.Status}
+	r := reply{header: resp.Header, answer: resp, body: resp.Body, status: resp.Status}
 	if err != nil {
 		return answer{}, r, err
 	}
@@ -114,12 +117,12 @@ func endpointFailure(family forgeapi.Family, r reply, code string, kind forgeapi
 	}
 	switch family {
 	case forgeapi.FamilyGitHub:
-		transport.AnswerFigures(fe, r.header, githublimit.Signal, githublimit.Pool)
+		transport.AnswerFigures(fe, r.answer, githublimit.Signal, githublimit.Pool)
 		fe.Secondary = kind == forgeapi.KindRateLimited && githublimit.Read(r.status, r.header, r.body).Secondary
 	case forgeapi.FamilyGitLab:
-		transport.AnswerFigures(fe, r.header, gitlablimit.Signal, gitlablimit.Pool)
+		transport.AnswerFigures(fe, r.answer, gitlablimit.Signal, gitlablimit.Pool)
 	default:
-		transport.AnswerFigures(fe, r.header, nil, nil)
+		transport.AnswerFigures(fe, r.answer, nil, nil)
 	}
 	if kind == forgeapi.KindRateLimited {
 		fe.RetryAfter = transport.RetryAfter(r.header)
@@ -138,7 +141,7 @@ func limited(family forgeapi.Family, r reply) bool {
 
 // granted reports whether an answer is a token.
 func (a *answer) granted(status int) bool {
-	return a.succeeded(status) && a.AccessToken != ""
+	return a.succeeded(status) && !a.AccessToken.IsZero()
 }
 
 // succeeded reports whether an answer is a success carrying no error member, which
@@ -151,7 +154,7 @@ func (a *answer) succeeded(status int) bool {
 // issuedCodes reports whether an answer carries every field RFC 8628 section 3.2
 // requires of a device-code answer, the interval aside, which defaults.
 func (a *answer) issuedCodes(status int) bool {
-	return status < http.StatusMultipleChoices && a.Error == "" && a.DeviceCode != "" &&
+	return status < http.StatusMultipleChoices && a.Error == "" && !a.DeviceCode.IsZero() &&
 		a.UserCode != "" && a.VerificationURI != "" && a.ExpiresIn != nil && *a.ExpiresIn > 0
 }
 
@@ -162,7 +165,7 @@ func (a *answer) issuedCodes(status int) bool {
 // wrong in the dangerous direction.
 func (a *answer) readable() bool {
 	if a.ExpiresIn == nil {
-		return a.RefreshToken == "" && a.RefreshTokenExpiresIn == nil
+		return a.RefreshToken.IsZero() && a.RefreshTokenExpiresIn == nil
 	}
 	return *a.ExpiresIn > 0 && (a.RefreshTokenExpiresIn == nil || *a.RefreshTokenExpiresIn > 0)
 }
@@ -173,10 +176,10 @@ func (a *answer) readable() bool {
 // any, and base's otherwise, since a refresh cannot change them.
 func minted(base *Record, a *answer, now time.Time) Record {
 	rec := *base
-	rec.Token, rec.Issued = a.AccessToken, now
-	rec.Kind, rec.Expiry, rec.RefreshToken, rec.RefreshExpiry = forgeapi.CredKindStaticPAT, time.Time{}, "", time.Time{}
+	rec.Token, rec.Issued = a.AccessToken.Secret, now
+	rec.Kind, rec.Expiry, rec.RefreshToken, rec.RefreshExpiry = forgeapi.CredKindStaticPAT, time.Time{}, masked.Secret{}, time.Time{}
 	if a.ExpiresIn != nil {
-		rec.Kind, rec.Expiry, rec.RefreshToken = forgeapi.CredKindRotatingOAuth, now.Add(seconds(*a.ExpiresIn)), a.RefreshToken
+		rec.Kind, rec.Expiry, rec.RefreshToken = forgeapi.CredKindRotatingOAuth, now.Add(seconds(*a.ExpiresIn)), a.RefreshToken.Secret
 		if a.RefreshTokenExpiresIn != nil {
 			rec.RefreshExpiry = now.Add(seconds(*a.RefreshTokenExpiresIn))
 		}
@@ -234,7 +237,7 @@ func unanswered(family forgeapi.Family, r reply, a *answer) *forgeapi.Error {
 	message := "the OAuth endpoint answered no token"
 	switch {
 	case documentedErrors[a.Error]:
-		message = "the OAuth endpoint answered " + a.Error
+		message = "the OAuth endpoint answered " + r.answer.Quote(a.Error).String()
 	case a.Error != "":
 		message = "the OAuth endpoint answered an error member no OAuth document defines"
 	}

@@ -811,3 +811,26 @@ func TestADocumentRefusalCarriesNoPartOfTheCredential(t *testing.T) {
 		t.Errorf("execute(a refused document) = message %q, want the instance's own words", fe.Message)
 	}
 }
+
+// TestAnEnvelopeErrorsCodeReachesTheCounterWithoutTheCredential holds the envelope
+// counter's label, which is the instance's text, free of the token the request
+// carried while it keeps the code's other words.
+func TestAnEnvelopeErrorsCodeReachesTheCounterWithoutTheCredential(t *testing.T) {
+	h := newHarness(t, map[string]string{
+		documentRoute: `{"errors":[{"message":"refused","extensions":{"code":"refused ` + testToken + `"}}]}`,
+	})
+	var payload docPayload
+	if _, err := h.client.execute(t.Context(), "ListPRs", prList, map[string]any{}, &payload); err == nil {
+		t.Fatal("execute(a refused document) = nil error, want the upstream refusal")
+	}
+	labelled := false
+	for _, event := range h.spy.events() {
+		if strings.Contains(event, testToken) {
+			t.Errorf("a counter fired with %q, want no %q: the label is the instance's text", event, testToken)
+		}
+		labelled = labelled || strings.HasPrefix(event, "EnvelopeError:refused ")
+	}
+	if !labelled {
+		t.Errorf("the counters fired %v, want an envelope error labelled with the code's own words", h.spy.events())
+	}
+}

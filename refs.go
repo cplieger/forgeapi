@@ -4,6 +4,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/cplieger/go/masked"
 )
 
 // Family is one implementation package. There are three, because Gitea and
@@ -315,8 +317,9 @@ type Connection struct {
 	// ClientCert is an optional client certificate for mutual TLS. A
 	// half-present pair is refused at entry rather than ignored.
 	ClientCert []byte
-	// ClientKey is the matching private key, handled as key material.
-	ClientKey []byte
+	// ClientKey is the matching PEM private key, revealed only to parse the
+	// pair at connect time.
+	ClientKey masked.Secret
 	// Proxy is the proxy THIS connection's traffic leaves through, a URL, empty
 	// for a direct dial. It is one more per-connection statement rather than a
 	// process-wide one, so one connection's proxy can never silently apply to
@@ -347,6 +350,18 @@ type Connection struct {
 	// gives: an operator whose setting was ignored believes something false
 	// about their traffic.
 	Proxy string
+	// ProxyUsername is the user-id the proxy authenticates, empty for none. A
+	// Proxy URL carrying userinfo is refused with [CodeConnectionInvalid], so the
+	// proxy's credentials live here and in ProxyPassword, which is masked. It is
+	// refused the same way without a Proxy, and where the proxy's protocol cannot
+	// carry the pair: for an http or https proxy, a colon in it or a control
+	// character in it or ProxyPassword (RFC 7617 section 2); for a SOCKS5 one,
+	// either over 255 octets (RFC 1929).
+	ProxyUsername string
+	// ProxyPassword is the password sent beside ProxyUsername, as Basic
+	// Proxy-Authorization to an http or https proxy and as RFC 1929
+	// username/password to a SOCKS5 one. It is refused without a ProxyUsername.
+	ProxyPassword masked.Secret
 	// Headers are extra request headers sent on every request to this
 	// connection, for the gateway in front of a self-hosted instance whose
 	// canonical case is an identity-aware proxy taking a client id and a client

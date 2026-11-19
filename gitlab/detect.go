@@ -61,12 +61,13 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 	if headerOf(resp).Get(headerMeta) == "" {
 		return forgeapi.ConnectionCaps{}, c.undetected(ctx, op, resp, err)
 	}
-	rerun, ev := rerunCapability(&meta, err)
+	shown := resp.Quote(meta.Version).String()
+	rerun, ev := rerunCapability(&meta, shown, err)
 	scope, scopeEv := forgeapi.RerunScopeUnknown, ev
 	if rerun == forgeapi.SupportYes {
 		scope, scopeEv = forgeapi.RerunScopeFailedJobs, forgeapi.Evidence{
 			Source: ev.Source,
-			Detail: "gitlab " + meta.Version + ", whose pipeline retry re-runs a pipeline's failed and canceled jobs",
+			Detail: "gitlab " + shown + ", whose pipeline retry re-runs a pipeline's failed and canceled jobs",
 		}
 	}
 	var version string
@@ -101,7 +102,8 @@ func (c *Client) ConnectionCaps(ctx context.Context) (forgeapi.ConnectionCaps, e
 // read that succeeded answers yes with the version it read. A read the credential
 // could not make answers UNKNOWN with the status, rather than yes on the strength of a
 // header: the header establishes the family and says nothing about what the verb needs.
-func rerunCapability(meta *restMetadata, err error) (forgeapi.Support, forgeapi.Evidence) {
+// shown is meta's version as the evidence carries it, quoted as the answer's.
+func rerunCapability(meta *restMetadata, shown string, err error) (forgeapi.Support, forgeapi.Evidence) {
 	if err != nil {
 		var fe *forgeapi.Error
 		detail := "the metadata endpoint refused this credential"
@@ -118,7 +120,7 @@ func rerunCapability(meta *restMetadata, err error) (forgeapi.Support, forgeapi.
 	}
 	return forgeapi.SupportYes, forgeapi.Evidence{
 		Source: forgeapi.EvidenceMetadata,
-		Detail: "gitlab " + meta.Version + ", whose pipeline retry verb is on every version this library covers",
+		Detail: "gitlab " + shown + ", whose pipeline retry verb is on every version this library covers",
 	}
 }
 

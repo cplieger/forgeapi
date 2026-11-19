@@ -105,8 +105,8 @@ func checkGrantEnded(t *testing.T, ep *endpoint, g *creds.DeviceGrant, family fo
 	rec, done, err := g.Poll(t.Context())
 	fe, isForge := errors.AsType[*forgeapi.Error](err)
 	switch {
-	case done || rec.Token != "":
-		t.Errorf("Poll() over %s = (token %q, %v, %v), want no record", answer, rec.Token, done, err)
+	case done || !rec.Token.IsZero():
+		t.Errorf("Poll() over %s = (token %q, %v, %v), want no record", answer, rec.Token.Reveal(), done, err)
 	case !isForge || fe.Code != forgeapi.CodeValidation:
 		t.Errorf("Poll() over %s = error %v, want code %q: the instance issued a token this library cannot read", answer, err, forgeapi.CodeValidation)
 	case fe.Status != status || fe.Family != family:
@@ -180,8 +180,8 @@ func TestDeviceGrant_stays_open_after_a_poll_that_issued_nothing_whatever_reache
 				g := startGrant(t, ep, arm.family)
 
 				rec, done, err := g.Poll(t.Context())
-				if err == nil || done || rec.Token != "" {
-					t.Errorf("Poll() over a poll that issued nothing = (token %q, %v, %v), want no record and the failure", rec.Token, done, err)
+				if err == nil || done || !rec.Token.IsZero() {
+					t.Errorf("Poll() over a poll that issued nothing = (token %q, %v, %v), want no record and the failure", rec.Token.Reveal(), done, err)
 				}
 				if code := codeOf(err); code == forgeapi.CodeValidation || code == forgeapi.CodeGrantDenied || code == forgeapi.CodeGrantExpired {
 					t.Errorf("Poll() over a poll that issued nothing = code %q, want an answer that leaves the grant open", code)

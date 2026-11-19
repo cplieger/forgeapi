@@ -556,7 +556,7 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 		if !onlyNotFound {
 			return docResult{}, c.refuseDocument(ctx, op, doc, resp, env.Errors)
 		}
-		c.countEnvelope(env.Errors)
+		c.countEnvelope(resp, env.Errors)
 		return docResult{Answer: resp}, nil
 	}
 	if err := transport.Decode(env.Data, out); err != nil {
@@ -567,12 +567,12 @@ func (c *Client) execute(ctx context.Context, op string, doc document, vars map[
 		c.core.Price(result.Cost)
 	}
 	if result.Partial {
-		c.countEnvelope(env.Errors)
-		result.Refusal = resp.Quote(env.Errors[0].Message)
+		c.countEnvelope(resp, env.Errors)
+		result.Refusal = resp.Quote(env.Errors[0].Message).String()
 		result.errors = env.Errors
 	}
 	if rootFailure != nil {
-		result.RootFailure = resp.Quote(rootFailure.Message)
+		result.RootFailure = resp.Quote(rootFailure.Message).String()
 	}
 	return result, nil
 }
@@ -596,10 +596,10 @@ func responseBody(resp *transport.Response) []byte {
 // does not cover is visible as that rather than as a bare upstream failure. The
 // envelope's message is the instance's text, so it is quoted as the response's.
 func (c *Client) refuseDocument(ctx context.Context, op string, doc document, resp *transport.Response, errs []docError) *forgeapi.Error {
-	c.countEnvelope(errs)
+	c.countEnvelope(resp, errs)
 	c.markDegraded()
 	return c.core.Fail(ctx, op, transport.Document(http.MethodPost), resp, "", forgeapi.KindUpstream,
-		resp.Quote("the "+doc.name+" document was refused: "+errs[0].Message))
+		"the "+doc.name+" document was refused: "+errs[0].Message)
 }
 
 // documentLimit is the rate limit an envelope carrying errors and no data is, read
@@ -610,12 +610,12 @@ func (c *Client) documentLimit(ctx context.Context, op string, doc document, res
 	if !limited {
 		return nil
 	}
-	c.countEnvelope(errs)
+	c.countEnvelope(resp, errs)
 	if counters := c.core.Counters(); counters.RateLimited != nil {
 		counters.RateLimited(forgeapi.FamilyGitHub)
 	}
 	fe := c.core.Fail(ctx, op, transport.Document(http.MethodPost), resp, "", forgeapi.KindRateLimited,
-		resp.Quote("the "+doc.name+" document was rate-limited: "+errs[0].Message))
+		"the "+doc.name+" document was rate-limited: "+errs[0].Message)
 	fe.Secondary, fe.RetryAfter = secondary, transport.RetryAfter(resp.Header)
 	return fe
 }
@@ -639,16 +639,16 @@ func saidSecondary(errs []docError) bool {
 
 // countEnvelope records one document's envelope errors by the discriminator this
 // product sends, so a maintainer sees WHICH shape arrived rather than a count of
-// failures.
-func (c *Client) countEnvelope(errs []docError) {
+// failures. The discriminator is the instance's text, so it is quoted as resp's.
+func (c *Client) countEnvelope(resp *transport.Response, errs []docError) {
 	counters := c.core.Counters()
 	if counters.EnvelopeError == nil {
 		return
 	}
 	for _, e := range errs {
-		kind := e.Type
-		if kind == "" {
-			kind = "no-type"
+		kind := "no-type"
+		if e.Type != "" {
+			kind = resp.Quote(e.Type).String()
 		}
 		counters.EnvelopeError(forgeapi.FamilyGitHub, kind)
 	}

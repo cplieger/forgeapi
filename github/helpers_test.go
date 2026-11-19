@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -165,6 +166,14 @@ func (s *spy) times(name string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.fired[name]
+}
+
+// events is every event name the spy recorded, so a test can hold what no event
+// carries.
+func (s *spy) events() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Collect(maps.Keys(s.fired))
 }
 
 // counters is the seam this library publishes, with every field wired to the spy.

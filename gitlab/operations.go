@@ -1116,7 +1116,7 @@ func (c *Client) CancelAutoMerge(ctx context.Context, repo forgeapi.RepoRef, pr 
 		return nil
 	}
 	return c.core.Fail(ctx, op, transport.REST(http.MethodPost), resp, "", forgeapi.KindUpstream,
-		"the cancel answered status "+strconv.Quote(resp.Quote(answer.Status))+", which says neither that it disarmed the auto-merge nor that none was armed")
+		"the cancel answered status "+strconv.Quote(resp.Quote(answer.Status).String())+", which says neither that it disarmed the auto-merge nor that none was armed")
 }
 
 // CommitStatus implements [forgeapi.Checks].
@@ -1217,7 +1217,7 @@ func (c *Client) commitOf(ctx context.Context, op string, repo forgeapi.RepoRef,
 	}
 	if !commitID(commit.ID) {
 		return "", c.core.Fail(ctx, op, transport.REST(http.MethodGet), resp, "", forgeapi.KindUpstream,
-			"the commit read for "+strconv.Quote(ref)+" answered id "+strconv.Quote(resp.Quote(commit.ID))+", which is no full commit id")
+			"the commit read for "+strconv.Quote(ref)+" answered id "+strconv.Quote(resp.Quote(commit.ID).String())+", which is no full commit id")
 	}
 	return commit.ID, nil
 }

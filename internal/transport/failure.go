@@ -38,42 +38,53 @@ func failureOf(err error) (code string, kind forgeapi.ErrorKind) {
 	return forgeapi.CodeUnreachable, forgeapi.KindTransient
 }
 
-// transportError maps a failure that never reached a status. The operation's
-// own context having ended is returned unchanged; a sentinel in the chain while
-// that context is live is a dial timeout, classified as unreachable so its host
-// is kept. A *forgeapi.Error this library produced below the call, such as the
-// redirect policy's inside net/http's *url.Error, is recovered rather than
-// rebuilt, so a containment refusal stays permanent and a stale reference keeps
-// its successor. An attempt the attempt hook refused is answered first, since the
-// hook's own error may itself be a *forgeapi.Error.
-func (c *Conn) transportError(ctx context.Context, req *Request, err error, started time.Time) error {
+// transportError maps a failure that never reached a status, its text quoted by
+// q, the connection's where q is nil ([causeText]). The operation's own context
+// having ended is returned unchanged; a live context's sentinel is a dial timeout,
+// classified as unreachable so its host is kept. A *forgeapi.Error from below the
+// call (the redirect policy's, a credential source's) is recovered, keeping its code
+// and successor, and answered as a copy, since a source's may be a shared sentinel;
+// q quotes its message unless [sourceError] or [policyError] marks it. An attempt
+// the attempt hook refused is answered first, since its error may be one too.
+func (c *Conn) transportError(ctx context.Context, req *Request, err error, started time.Time, q *quoter) error {
+	q = c.orAmbient(q)
 	if ctxErr := ctx.Err(); ctxErr != nil && contextSentinel(err) != nil {
-		c.log(ctx, req, exchange(req), 0, "", "", forgeapi.KindUnknown, nil, started, ctxErr.Error(), true)
+		c.log(ctx, req, exchange(req), 0, "", "", forgeapi.KindUnknown, nil, started, own(ctxErr.Error()), true)
 		return ctxErr
 	}
 	if refused, ok := errors.AsType[*refusedAttemptError](err); ok {
-		fe := c.fail(req.Op, forgeapi.CodeAttemptRefused, forgeapi.KindUnknown, 0, causeText(refused.err))
+		said := causeText(refused.err, q)
+		fe := c.fail(req.Op, forgeapi.CodeAttemptRefused, forgeapi.KindUnknown, 0, said)
 		fe.Refusal = refused.err
-		c.log(ctx, req, exchange(req), 0, fe.Code, fe.DiagID, fe.Kind, nil, started, fe.Message, true)
+		c.log(ctx, req, exchange(req), 0, fe.Code, fe.DiagID, fe.Kind, nil, started, said, true)
 		return fe
 	}
-	if own, ok := errors.AsType[*forgeapi.Error](err); ok {
-		if own.Op == "" {
-			own.Op = req.Op
+	if below, ok := errors.AsType[*forgeapi.Error](err); ok {
+		fe := *below
+		if fe.Op == "" {
+			fe.Op = req.Op
 		}
-		if own.DiagID == "" {
-			own.DiagID = diagID()
+		if fe.DiagID == "" {
+			fe.DiagID = diagID()
 		}
-		c.log(ctx, req, exchange(req), own.Status, own.Code, own.DiagID, own.Kind, nil, started, own.Message, true)
-		return own
+		said := q.quote(fe.Message)
+		if _, hop := errors.AsType[*policyError](err); hop {
+			said = own(fe.Message)
+		} else if source, sourced := errors.AsType[*sourceError](err); sourced {
+			said = c.ambient().with(source.token).quote(fe.Message)
+		}
+		fe.Message = said.String()
+		c.log(ctx, req, exchange(req), fe.Status, fe.Code, fe.DiagID, fe.Kind, nil, started, said, true)
+		return &fe
 	}
 	code, kind := failureOf(err)
-	message := causeText(err)
+	cause := httpclient.LogSafeError(err).Error()
 	if code == forgeapi.CodeUnreachable {
-		message = "cannot reach " + c.hostOf(req, err) + ": " + message
+		cause = "cannot reach " + hostOf(c.urlFor(req), err) + ": " + cause
 	}
-	fe := c.fail(req.Op, code, kind, 0, message)
-	c.log(ctx, req, exchange(req), 0, fe.Code, fe.DiagID, fe.Kind, nil, started, fe.Message, true)
+	said := q.quote(cause)
+	fe := c.fail(req.Op, code, kind, 0, said)
+	c.log(ctx, req, exchange(req), 0, fe.Code, fe.DiagID, fe.Kind, nil, started, said, true)
 	return fe
 }
 
@@ -82,31 +93,31 @@ func (c *Conn) transportError(ctx context.Context, req *Request, err error, star
 // over the bound is the instance's answer and the same again next time, a body cut
 // short is the network's.
 func (c *Conn) bodyError(ctx context.Context, req *Request, answer *Response, err error, started time.Time) error {
+	q := c.quoterOf(answer)
 	if ctxErr := ctx.Err(); ctxErr != nil && contextSentinel(err) != nil {
-		c.log(ctx, req, exchange(req), answer.Status, "", "", forgeapi.KindUnknown, nil, started, ctxErr.Error(), true)
+		c.log(ctx, req, exchange(req), answer.Status, "", "", forgeapi.KindUnknown, nil, started, own(ctxErr.Error()), true)
 		return ctxErr
 	}
-	var fe *forgeapi.Error
-	if _, tooLarge := errors.AsType[*httpclient.ResponseTooLargeError](err); tooLarge {
-		fe = c.answered(req.Op, forgeapi.CodeResponseTooLarge, forgeapi.KindUpstream, answer, sanitize(err.Error()))
-	} else {
-		fe = c.answered(req.Op, "", forgeapi.KindTransient, answer,
-			"lost the answer from "+c.hostOf(req, err)+": "+sanitize(err.Error()))
+	code, kind, cause := forgeapi.CodeResponseTooLarge, forgeapi.KindUpstream, err.Error()
+	if _, tooLarge := errors.AsType[*httpclient.ResponseTooLargeError](err); !tooLarge {
+		code, kind, cause = "", forgeapi.KindTransient, "lost the answer from "+hostOf(c.urlFor(req), err)+": "+cause
 	}
-	c.log(ctx, req, exchange(req), answer.Status, fe.Code, fe.DiagID, fe.Kind, nil, started, fe.Message, true)
+	said := q.quote(cause)
+	fe := c.answered(req.Op, code, kind, answer, said)
+	c.log(ctx, req, exchange(req), answer.Status, fe.Code, fe.DiagID, fe.Kind, nil, started, said, true)
 	return fe
 }
 
 // hostOf is the host a failed request went to: the one net/http names where the
-// failure carries a URL, which is the hop that failed, else the request's own.
-func (c *Conn) hostOf(req *Request, err error) string {
+// failure carries a URL, which is the hop that failed, else target's.
+func hostOf(target string, err error) string {
 	if ue, ok := errors.AsType[*url.Error](err); ok {
 		if u, parseErr := url.Parse(ue.URL); parseErr == nil && u.Host != "" {
-			return sanitize(u.Hostname())
+			return u.Hostname()
 		}
 	}
-	if u, parseErr := url.Parse(c.urlFor(req)); parseErr == nil {
-		return sanitize(u.Hostname())
+	if u, parseErr := url.Parse(target); parseErr == nil {
+		return u.Hostname()
 	}
 	return ""
 }

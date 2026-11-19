@@ -178,8 +178,10 @@ const (
 
 	// CodeConnectionInvalid is a [Connection] a client cannot serve: no web
 	// base URL, a half-present client-certificate pair, a [Connection.Proxy]
-	// that does not parse or has no scheme this library proxies over, or a
-	// [Header] entry outside net/http's field grammar.
+	// that does not parse, carries userinfo or has no scheme this library
+	// proxies over, proxy credentials [Connection.ProxyUsername] or
+	// [Connection.ProxyPassword] refuses, or a [Header] entry outside
+	// net/http's field grammar.
 	CodeConnectionInvalid = "connection_invalid"
 	// CodeAnonymousRefused is a client built with no [CredentialSource], whose
 	// requests would be anonymous. The remedy is a credential.
@@ -395,13 +397,14 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// than 501, 505, 506, 508, 510 and 511, whose answer repeats. Whether to
 	// try again, and when, is the caller's decision.
 	Retryable bool
-	// Message is upstream's own message, with the request's credential and the
-	// connection's own header values redacted out of it, sanitized and bounded.
+	// Message is upstream's own message, with every secret the exchange carried
+	// (the request's credential, the connection's own header values and its
+	// proxy password) redacted out of it, on one line and bounded.
 	// It is never classified on: a caller branches on Code and Kind.
 	Message string
 	// RetryAfter is the wait upstream asked for, zero when it named none.
 	RetryAfter time.Duration
-	// Pool is the rate-limit pool the failing answer names, as it names it:
+	// Pool is the rate-limit pool the failing answer names, quoted as Message is:
 	// GitHub's X-RateLimit-Resource, GitLab's RateLimit-Name, empty where the
 	// answer names none, as no product of the Gitea family does. A secondary
 	// limit names its pool too; that it holds every pool is [Error.Secondary]'s
@@ -443,9 +446,9 @@ type Error struct { //nolint:govet // fieldalignment: field order here is declar
 	// [CodeCapabilityUnsupported] and zero everywhere else: the value
 	// [Capabilities.ConnectionCaps] renders beside a disabled control.
 	Evidence Evidence
-	// Needs is what the forge says the call needs, as the forge spells it,
-	// such as a permission or a scope list; empty where its answer names
-	// nothing. It is carried on [CodeScopeInsufficient].
+	// Needs is what the forge says the call needs, such as a permission or a
+	// scope list, as the forge spells it and quoted as Message is; empty where
+	// its answer names nothing. It is carried on [CodeScopeInsufficient].
 	Needs string
 	// Refusal is the error a [WithAttemptObserver] hook answered in place of
 	// sending an attempt, carried on [CodeAttemptRefused] and nil everywhere

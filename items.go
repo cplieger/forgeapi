@@ -320,7 +320,7 @@ type Label struct {
 type CheckContext struct {
 	// Name is the context name upstream reported.
 	Name string
-	// Description is upstream's own description, sanitized and bounded.
+	// Description is upstream's own description, as it answered it.
 	Description string
 	// TargetURL is where a human reads the check, empty where none was given.
 	TargetURL string

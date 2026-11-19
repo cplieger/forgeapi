@@ -10,6 +10,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/go/masked"
 )
 
 // mapBackend is a Backend a consumer could write: records in a map, a swap that
@@ -115,8 +116,8 @@ func TestNewStore_commits_a_rotation_through_the_backends_swap(t *testing.T) {
 		t.Errorf("Swap(prev) differs from the stored record at %q (swapped %v), want the record the rotation started from", field, calls[0].swapped)
 	}
 	rec := load(t, store, "conn")
-	if rec.Token != "token-new" || rec.RefreshToken != "refresh-new" {
-		t.Errorf("stored pair = (%q, %q), want (%q, %q)", rec.Token, rec.RefreshToken, "token-new", "refresh-new")
+	if rec.Token.Reveal() != "token-new" || rec.RefreshToken.Reveal() != "refresh-new" {
+		t.Errorf("stored pair = (%q, %q), want (%q, %q)", rec.Token.Reveal(), rec.RefreshToken.Reveal(), "token-new", "refresh-new")
 	}
 }
 
@@ -124,7 +125,7 @@ func TestNewStore_keeps_a_record_saved_while_the_rotation_was_in_flight(t *testi
 	backend := newMapBackend()
 	store := creds.NewStore(backend)
 	var ep *endpoint
-	reconnected := creds.Record{Family: forgeapi.FamilyGitHub, Kind: forgeapi.CredKindStaticPAT, Token: "token-reconnected"}
+	reconnected := creds.Record{Family: forgeapi.FamilyGitHub, Kind: forgeapi.CredKindStaticPAT, Token: masked.NewSecret("token-reconnected")}
 	ep = newEndpoint(t, func(int, exchange) (int, string) {
 		reconnected.WebBaseURL = ep.srv.URL
 		if err := store.Save("conn", reconnected); err != nil {
@@ -141,8 +142,8 @@ func TestNewStore_keeps_a_record_saved_while_the_rotation_was_in_flight(t *testi
 	if calls := backend.calls(); len(calls) != 1 || calls[0].swapped {
 		t.Errorf("the backend received swaps %+v, want one that answered false", calls)
 	}
-	if rec := load(t, store, "conn"); rec.Token != "token-reconnected" {
-		t.Errorf("stored Token = %q, want %q", rec.Token, "token-reconnected")
+	if rec := load(t, store, "conn"); rec.Token.Reveal() != "token-reconnected" {
+		t.Errorf("stored Token = %q, want %q", rec.Token.Reveal(), "token-reconnected")
 	}
 }
 
@@ -177,8 +178,8 @@ func TestNewStore_holds_a_pair_the_backend_refused_and_stores_it_next(t *testing
 			if n := len(ep.requests()); n != 1 {
 				t.Errorf("the endpoint received %d request(s), want 1: the held pair is stored, not refreshed again", n)
 			}
-			if rec := load(t, store, "conn"); rec.Token != "token-new" || rec.RefreshToken != "refresh-new" {
-				t.Errorf("stored pair = (%q, %q), want (%q, %q)", rec.Token, rec.RefreshToken, "token-new", "refresh-new")
+			if rec := load(t, store, "conn"); rec.Token.Reveal() != "token-new" || rec.RefreshToken.Reveal() != "refresh-new" {
+				t.Errorf("stored pair = (%q, %q), want (%q, %q)", rec.Token.Reveal(), rec.RefreshToken.Reveal(), "token-new", "refresh-new")
 			}
 		})
 	}
@@ -187,11 +188,11 @@ func TestNewStore_holds_a_pair_the_backend_refused_and_stores_it_next(t *testing
 func TestNewStore_answers_what_its_backend_holds(t *testing.T) {
 	backend := newMapBackend()
 	store := creds.NewStore(backend)
-	rec := creds.Record{Family: forgeapi.FamilyGitLab, WebBaseURL: "https://gitlab.example", Kind: forgeapi.CredKindStaticPAT, Token: "token-static"}
+	rec := creds.Record{Family: forgeapi.FamilyGitLab, WebBaseURL: "https://gitlab.example", Kind: forgeapi.CredKindStaticPAT, Token: masked.NewSecret("token-static")}
 	save(t, store, "one", rec)
 	save(t, store, "two", rec)
 
-	if got, ok, err := backend.Load("one"); err != nil || !ok || got.Token != "token-static" {
+	if got, ok, err := backend.Load("one"); err != nil || !ok || got.Token.Reveal() != "token-static" {
 		t.Errorf("the backend's Load(one) after Save = (%+v, %v, %v), want the saved record", got, ok, err)
 	}
 	keys, err := store.Keys()
@@ -229,10 +230,10 @@ func TestRecord_Equal_compares_every_field(t *testing.T) {
 		{name: "family", change: func(r *creds.Record) { r.Family = forgeapi.FamilyGitLab }},
 		{name: "web_base_url", change: func(r *creds.Record) { r.WebBaseURL = "https://other.example" }},
 		{name: "kind", change: func(r *creds.Record) { r.Kind = forgeapi.CredKindStaticPAT }},
-		{name: "token", change: func(r *creds.Record) { r.Token = "token-other" }},
+		{name: "token", change: func(r *creds.Record) { r.Token = masked.NewSecret("token-other") }},
 		{name: "issued", change: func(r *creds.Record) { r.Issued = r.Issued.Add(time.Second) }},
 		{name: "expiry", change: func(r *creds.Record) { r.Expiry = r.Expiry.Add(time.Second) }},
-		{name: "refresh_token", change: func(r *creds.Record) { r.RefreshToken = "refresh-other" }},
+		{name: "refresh_token", change: func(r *creds.Record) { r.RefreshToken = masked.NewSecret("refresh-other") }},
 		{name: "refresh_expiry", change: func(r *creds.Record) { r.RefreshExpiry = r.RefreshExpiry.Add(time.Second) }},
 		{name: "client_id", change: func(r *creds.Record) { r.ClientID = "other-client-id" }},
 		{name: "scopes_in_another_order", change: func(r *creds.Record) { r.Scopes = []string{"read:org", "repo"} }},

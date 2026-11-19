@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/go/httpclient"
+	"github.com/cplieger/go/masked"
 )
 
 // maxEndpointBytes bounds one OAuth endpoint answer, which is a handful of short
@@ -41,56 +42,53 @@ func OpenEndpoint(conn *forgeapi.Connection, set *forgeapi.Settings, family forg
 }
 
 // PostForm sends one form-encoded POST to path under the web base and answers the
-// response whatever its status, since an OAuth endpoint answers its outcomes in the
-// body, at 200 on one product and 400 on another. A body that could not be read
-// answers the status and headers beside the failure, because a token endpoint's
-// success means a token was issued whether or not its body arrived; every other
-// failure answers no response. It takes one attempt, because a lost answer has
-// already spent the code or refresh token it carried, and meets neither the
-// mutation gate nor the interval, which govern forge objects, not credentials.
-func (c *Conn) PostForm(ctx context.Context, op, path string, form url.Values) (*Response, error) {
+// response whatever its status: an OAuth endpoint answers its outcomes in the body,
+// at 200 on one product and 400 on another. An unreadable body answers the status
+// and headers beside the failure, since a token may have been issued; every other
+// failure answers no response. It takes one attempt, since a lost answer spent the
+// code or refresh token it carried, and meets neither the mutation gate nor the
+// interval, which govern forge objects. Every text it answers is quoted without
+// secrets, the form's values that are credentials; its other values are kept.
+func (c *Conn) PostForm(ctx context.Context, op, path string, form url.Values, secrets ...masked.Secret) (*Response, error) {
 	target := strings.TrimSuffix(c.web.String(), "/") + path
 	req := &Request{Op: op, Method: http.MethodPost, AbsoluteURL: target}
 	ctx, cancel := c.withDeadline(ctx)
 	defer cancel()
 	ctx = withRecord(ctx, op)
 	started := time.Now()
+	q := c.quotes.with(secrets...)
 	if err := c.acquire(ctx, req); err != nil {
-		return nil, c.transportError(ctx, req, err, started)
+		return nil, c.transportError(ctx, req, err, started, q)
 	}
 	defer c.release(req)
 
 	payload := []byte(form.Encode())
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
+	r, err := http.NewRequestWithContext(withQuoter(ctx, q), http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
-		return nil, c.transportError(ctx, req, err, started)
+		return nil, c.transportError(ctx, req, err, started, q)
 	}
 	r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(payload)), nil }
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.Header.Set("Accept", "application/json")
 	r.Header.Set("User-Agent", userAgent)
 	for _, h := range c.headers {
-		r.Header.Set(h.Name, h.Value)
+		r.Header.Set(h.Name, h.Value.Reveal())
 	}
 	//nolint:bodyclose // httpclient.ReadLimitedBody below always closes the body, which the analyzer cannot follow
 	resp, err := c.mutate.Do(r)
 	if err != nil {
-		return nil, c.transportError(ctx, req, err, started)
+		return nil, c.transportError(ctx, req, err, started, q)
 	}
 	body, err := httpclient.ReadLimitedBody(resp.Body, maxEndpointBytes)
 	if err != nil {
-		lost := &Response{Header: resp.Header, Status: resp.StatusCode, quote: c.quoter("")}
+		lost := &Response{Header: resp.Header, Status: resp.StatusCode, quote: q}
 		return lost, c.bodyError(ctx, req, lost, err, started)
 	}
 	return &Response{
-		Header: resp.Header, Body: body, Status: resp.StatusCode, quote: c.quoter(""),
+		Header: resp.Header, Body: body, Status: resp.StatusCode, quote: q,
 		Redirected: followed(resp, target), Ended: ended(resp, target),
 	}, nil
 }
-
-// Sanitize bounds and rune-sanitizes untrusted upstream text for a package that
-// carries it on an error or a log line without importing the sanitizer itself.
-func Sanitize(s string) string { return sanitize(s) }
 
 // RetryAfter is the wait a response's Retry-After header asks for, uncapped,
 // and zero where the header is absent or malformed.

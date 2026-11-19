@@ -690,8 +690,8 @@ var mergeMethods = []string{memberMerge, memberSquash, "rebase"}
 // unmapped is what every one of this family's totality tables does with a value it
 // does not carry: count it by family and field, and log the value, which is what
 // tells a maintainer the upstream enumeration grew rather than leaving an unknown
-// with no cause. The value is the instance's own text, so it is bounded and
-// rune-sanitized before it reaches a handler this library cannot see. The field names the TRANSPORT as well as the enumeration, because
+// with no cause. The value is the instance's own text, so it is quoted
+// ([transport.Conn.Quote]) before it reaches a handler this library cannot see. The field names the TRANSPORT as well as the enumeration, because
 // the two send the same members in two cases and which one grew is the first thing a
 // maintainer needs.
 func (c *Client) unmapped(field, value string) {
@@ -699,7 +699,7 @@ func (c *Client) unmapped(field, value string) {
 		counters.UnknownEnumValue(forgeapi.FamilyGitHub, field)
 	}
 	c.core.Logger().Warn("forgeapi unmapped enumeration value",
-		"family", forgeapi.FamilyGitHub.String(), "field", field, "value", transport.Sanitize(value))
+		"family", forgeapi.FamilyGitHub.String(), "field", field, "value", c.core.Quote(value))
 }
 
 // member folds an enumeration value onto the spelling the tables are keyed on, which

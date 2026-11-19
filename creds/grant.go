@@ -9,6 +9,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/internal/transport"
+	"github.com/cplieger/go/masked"
 )
 
 // defaultInterval is the polling interval of a device-code answer that states
@@ -42,7 +43,7 @@ type DeviceGrant struct { //nolint:govet // fieldalignment: the exported fields 
 	ep         *transport.Conn
 	granted    *Record
 	ended      error
-	deviceCode string
+	deviceCode masked.Secret
 	clientID   string
 	webBase    string
 	grantPath  string
@@ -89,7 +90,7 @@ func StartDeviceGrant(ctx context.Context, conn forgeapi.Connection, family forg
 	return &DeviceGrant{
 		UserCode: a.UserCode, VerificationURI: a.VerificationURI,
 		Expires: time.Now().Add(seconds(*a.ExpiresIn)), Interval: interval,
-		ep: ep, deviceCode: a.DeviceCode, clientID: req.ClientID,
+		ep: ep, deviceCode: a.DeviceCode.Secret, clientID: req.ClientID,
 		webBase: conn.WebBaseURL, grantPath: ends.grant, family: family,
 	}, nil
 }
@@ -114,8 +115,8 @@ func (g *DeviceGrant) Poll(ctx context.Context) (Record, bool, error) {
 		return Record{}, false, g.end(endpointFailure(g.family, reply{}, forgeapi.CodeGrantExpired, forgeapi.KindUnauthorized,
 			"the device codes expired before the grant was approved"))
 	}
-	form := url.Values{formClientID: {g.clientID}, "device_code": {g.deviceCode}, "grant_type": {deviceGrantType}}
-	a, r, err := post(ctx, g.ep, "Poll", g.grantPath, form)
+	form := url.Values{formClientID: {g.clientID}, "device_code": {g.deviceCode.Reveal()}, "grant_type": {deviceGrantType}}
+	a, r, err := post(ctx, g.ep, "Poll", g.grantPath, form, g.deviceCode)
 	status := r.status
 	switch {
 	case err != nil && status != 0 && a.succeeded(status):

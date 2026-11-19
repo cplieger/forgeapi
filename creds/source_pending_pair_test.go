@@ -46,7 +46,7 @@ func TestStoredSource_stores_the_rotated_pair_on_the_next_call_after_a_failed_ro
 				t.Errorf("the token endpoint received %d request(s), want 1: the pending pair is stored, not refreshed again", n)
 			}
 			rec := load(t, reopen(t, dir), "conn")
-			if rec.Token != "token-new" || rec.RefreshToken != "refresh-new" || rec.Usability != markUnmarked {
+			if rec.Token.Reveal() != "token-new" || rec.RefreshToken.Reveal() != "refresh-new" || rec.Usability != markUnmarked {
 				t.Errorf("the record another process reads = (%q, %q, %s), want (%q, %q, unmarked): a live pair is held, so nothing is spent",
 					rec.Token, rec.RefreshToken, markNames[rec.Usability], "token-new", "refresh-new")
 			}
@@ -86,7 +86,7 @@ func TestStoredSource_keeps_the_rotated_pair_pending_through_a_second_failed_wri
 		t.Errorf("Token() with the store still refusing writes = (%q, %v), want no token and the store's failure", token, err)
 	}
 	restore()
-	if rec := load(t, reopen(t, dir), "conn"); rec.Token != "token-old" || rec.Usability != markUnmarked {
+	if rec := load(t, reopen(t, dir), "conn"); rec.Token.Reveal() != "token-old" || rec.Usability != markUnmarked {
 		t.Errorf("the record another process reads after two failed writes = (%q, %s), want (%q, unmarked): nothing reached the store",
 			rec.Token, markNames[rec.Usability], "token-old")
 	}
@@ -109,7 +109,7 @@ func TestStoredSource_drops_a_pending_pair_whose_base_record_was_marked(t *testi
 	save(t, reopen(t, dir), "conn", withMark(base, markReconnectRequired))
 
 	checkDeclinedFor(t, src, ep, 1, markReconnectRequired)
-	if rec := load(t, reopen(t, dir), "conn"); rec.Token != "token-old" || rec.Usability != markReconnectRequired {
+	if rec := load(t, reopen(t, dir), "conn"); rec.Token.Reveal() != "token-old" || rec.Usability != markReconnectRequired {
 		t.Errorf("the stored record = (%q, %s), want (%q, reconnect required): the pending pair is not written over a record it does not belong to",
 			rec.Token, markNames[rec.Usability], "token-old")
 	}
@@ -209,7 +209,7 @@ func TestStoredSource_a_call_waiting_behind_a_failed_rotation_write_stores_the_p
 		t.Errorf("the token endpoint received %d request(s), want 1: the waiting call stores the pair, it does not refresh with the token that pair replaced", n)
 	}
 	rec := load(t, reopen(t, dir), "conn")
-	if rec.Token != "token-new" || rec.RefreshToken != "refresh-new" || rec.Usability != markUnmarked {
+	if rec.Token.Reveal() != "token-new" || rec.RefreshToken.Reveal() != "refresh-new" || rec.Usability != markUnmarked {
 		t.Errorf("the stored record = (%q, %q, %s), want (%q, %q, unmarked)",
 			rec.Token, rec.RefreshToken, markNames[rec.Usability], "token-new", "refresh-new")
 	}

@@ -157,7 +157,7 @@ type Counters struct {
 	// learns an upstream enumeration grew. It carries the family and field and
 	// never the value, which is upstream-controlled and unbounded and would hand
 	// a labelled metric unbounded cardinality; the log line names the value,
-	// bounded and rune-sanitized.
+	// bounded, on one line and with the connection's secrets redacted.
 	UnknownEnumValue func(family Family, field string)
 	// CapabilityContradicted fires where an inferred capability is later
 	// contradicted by a probe.
@@ -185,7 +185,7 @@ type Counters struct {
 	// show; a token that is really revoked surfaces through the probe.
 	HelperErase func(family Family)
 	// EnvelopeError fires per document-envelope error, by upstream's own error
-	// type.
+	// type, on one line, bounded and with the connection's secrets redacted.
 	EnvelopeError func(family Family, errType string)
 	// SunsetSeen fires when an instance announces that a pinned API version is
 	// closing down. It is DORMANT at 1.0: the version this library pins has no
