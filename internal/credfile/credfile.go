@@ -2,8 +2,10 @@
 // custody the credential store's file needs, and the one package of this module
 // that names the atomic-file dependency.
 //
-// Its errors carry the dependency's text and never its values, so nothing a
-// consumer can match with errors.Is or errors.As reaches the published surface.
+// Its errors keep the dependency's text, save the mode refusal's, and wrap only
+// this package's sentinels and the platform's errno, never the dependency's values,
+// so nothing a consumer matches with errors.Is or errors.As ties it to that
+// dependency's next major.
 package credfile
 
 import (
@@ -26,6 +28,14 @@ const (
 	maxFileBytes = 1 << 20
 )
 
+var (
+	// ErrNotPrivate is a directory with group or other access or another owner.
+	ErrNotPrivate = errors.New("creds: the credential directory is not private to this process")
+	// ErrNotSynced is an Open failure that left the directory in place; calling Open
+	// again is safe.
+	ErrNotSynced = errors.New("creds: the credential directory's parent was not synced; opening it again is safe")
+)
+
 // Dir is one private directory under a retained root handle.
 type Dir struct {
 	root   *os.Root
@@ -34,14 +44,15 @@ type Dir struct {
 }
 
 // Open establishes custody of one directory level: created at 0700 where absent,
-// refused where it pre-exists with group or other access or another owner, and then
-// held as a root whose own handle is checked again, because opening the root by
-// name re-resolves the path the custody check vouched for. Every call into the
-// dependency carries logger, since the dependency otherwise logs to a sink this
-// library does not own.
+// refused with ErrNotPrivate where it pre-exists with group or other access or
+// another owner, and then held as a root whose own handle is checked again,
+// because opening the root by name re-resolves the path the custody check vouched
+// for. A failure matching ErrNotSynced leaves the directory in place, and calling
+// Open again is safe. Every call into the dependency carries logger, since the
+// dependency otherwise logs to a sink this library does not own.
 func Open(dir string, logger *slog.Logger) (*Dir, error) {
 	if _, err := filesafe.EnsurePrivateDir(dir, filesafe.WithLogger(logger)); err != nil {
-		return nil, fmt.Errorf("credential directory %s: %v", dir, err)
+		return nil, dirRefusal("credential directory "+dir, err)
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -55,21 +66,13 @@ func Open(dir string, logger *slog.Logger) (*Dir, error) {
 	return d, nil
 }
 
-// verify stats the directory through the retained handle and refuses it unless
-// this process owns it and no group or other access is granted. It runs before
-// every read and write, so a directory widened after Open fails the next access
-// rather than holding a credential in the open.
+// verify refuses the directory, through the retained handle, with ErrNotPrivate
+// unless this process owns it and no group or other access is granted. It runs
+// before every read and write, so a directory widened after Open fails the next
+// access rather than holding a credential in the open.
 func (d *Dir) verify() error {
-	fi, err := d.root.Stat(".")
-	if err != nil {
-		return fmt.Errorf("credential directory %s: %w", d.path, err)
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok || int(st.Uid) != os.Geteuid() {
-		return fmt.Errorf("credential directory %s: not owned by this process", d.path)
-	}
-	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-		return fmt.Errorf("credential directory %s: mode %v grants group or other access; narrow it to 0700", d.path, perm)
+	if err := filesafe.CheckPrivateDirInRoot(d.root, "."); err != nil {
+		return dirRefusal("credential directory "+d.path, err)
 	}
 	return nil
 }
@@ -85,7 +88,7 @@ func (d *Dir) Read(ctx context.Context, name string) (data []byte, found bool, e
 		return nil, false, nil
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("credential file %s: %v", name, err)
+		return nil, false, detach("credential file "+name, err)
 	}
 	return data, true, nil
 }
@@ -100,7 +103,58 @@ func (d *Dir) Write(ctx context.Context, name string, data []byte) (bool, error)
 	res, err := filesafe.WriteFileInRoot(ctx, d.root, name, data,
 		filesafe.WithMode(fileMode), filesafe.WithMaxBytes(maxFileBytes), filesafe.WithLogger(d.logger))
 	if err != nil {
-		return false, fmt.Errorf("credential file %s: %v", name, err)
+		return false, detach("credential file "+name, err)
 	}
 	return res.Durable, nil
+}
+
+// detached is a dependency failure as this package returns it.
+type detached struct {
+	text    string
+	wrapped []error
+}
+
+func (e *detached) Error() string   { return e.text }
+func (e *detached) Unwrap() []error { return e.wrapped }
+
+// detach answers err, a failure about subject, wrapping this package's sentinel
+// for each dependency sentinel the store documents and the errno beneath it.
+func detach(subject string, err error) *detached {
+	e := &detached{text: subject + ": " + err.Error()}
+	switch {
+	case errors.Is(err, filesafe.ErrModeTooOpen), errors.Is(err, filesafe.ErrNotOwned):
+		e.wrapped = append(e.wrapped, ErrNotPrivate)
+	case errors.Is(err, filesafe.ErrParentNotSynced):
+		e.wrapped = append(e.wrapped, ErrNotSynced)
+	}
+	if errno, ok := errors.AsType[syscall.Errno](err); ok {
+		e.wrapped = append(e.wrapped, errno)
+	}
+	return e
+}
+
+// dirRefusal is detach for a check of the directory itself. Its mode refusal names
+// the mode the check read and one remedy for Open and every access, because the
+// dependency's text at Open names an option no caller here can pass.
+func dirRefusal(subject string, err error) error {
+	e := detach(subject, err)
+	if tooOpen, ok := errors.AsType[*filesafe.ModeTooOpenError](err); ok {
+		e.text = fmt.Sprintf("%s: mode %#o grants group or other access; narrow it to 0700", subject, chmodBits(tooOpen.Mode))
+	}
+	return e
+}
+
+// chmodBits answers mode in chmod(1)'s numbering, special bits included.
+func chmodBits(mode fs.FileMode) uint32 {
+	bits := uint32(mode.Perm())
+	if mode&fs.ModeSetuid != 0 {
+		bits |= 0o4000
+	}
+	if mode&fs.ModeSetgid != 0 {
+		bits |= 0o2000
+	}
+	if mode&fs.ModeSticky != 0 {
+		bits |= 0o1000
+	}
+	return bits
 }

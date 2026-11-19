@@ -2,6 +2,8 @@ package creds_test
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/cplieger/forgeapi/v3"
 	"github.com/cplieger/forgeapi/v3/creds"
+	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/masked"
 )
 
@@ -73,7 +76,8 @@ func TestFileStore_writes_its_file_private_under_an_open_umask(t *testing.T) {
 }
 
 // A credential directory somebody widened is exactly the case a failed load exists
-// for, so it is refused rather than repaired.
+// for, so it is refused rather than repaired, with this module's value and never
+// its file dependency's.
 func TestFileStore_refuses_a_widened_directory_without_repairing_it(t *testing.T) {
 	for _, mode := range []fs.FileMode{0o750, 0o705, 0o770, 0o777} {
 		t.Run(mode.String(), func(t *testing.T) {
@@ -85,12 +89,18 @@ func TestFileStore_refuses_a_widened_directory_without_repairing_it(t *testing.T
 				t.Fatalf("Setup: Chmod = error %v", err)
 			}
 
-			store, err := creds.OpenFileStore(dir)
-			if err == nil {
-				_, _, err = store.Load("conn")
+			_, err := creds.OpenFileStore(dir)
+			if !errors.Is(err, creds.ErrDirNotPrivate) {
+				t.Errorf("OpenFileStore over a directory at %v = error %v, want one matching ErrDirNotPrivate", mode, err)
 			}
-			if err == nil {
-				t.Errorf("OpenFileStore and Load over a directory at %v both succeeded, want the load failed", mode)
+			if errors.Is(err, filesafe.ErrModeTooOpen) {
+				t.Errorf("OpenFileStore over a directory at %v = error %v, which matches filesafe.ErrModeTooOpen; the store's errors carry none of the dependency's values", mode, err)
+			}
+			if want := fmt.Sprintf("mode %#o grants", mode); err != nil && !strings.Contains(err.Error(), want) {
+				t.Errorf("OpenFileStore over a directory at %v = error %q, want its text to name the mode as %q", mode, err, want)
+			}
+			if errors.Is(err, creds.ErrDirNotSynced) {
+				t.Errorf("OpenFileStore over a directory at %v = error %v, which matches ErrDirNotSynced; a refusal is not worth a retry", mode, err)
 			}
 			info, statErr := os.Stat(dir)
 			if statErr != nil {
