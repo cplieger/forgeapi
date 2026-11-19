@@ -52,7 +52,9 @@ expect "the message escapes %, CR and LF and keeps : and ," \
 expect "the title also escapes : and ," \
   '::error title=50%25 a%3Ab%2Cc%0D%0AX%0A%3A%3Aerror%3A%3Ay::50%25 a:b,c%0D%0AX%0A::error::y' \
   error "$hostile" "$hostile"
-expect "% is escaped first, so an escape in the input is not decoded" \
+expect "% is escaped before the escapes it introduces" \
+  '::notice title=%25%0D::%25%0A' notice $'%\r' $'%\n'
+expect "a literal %0A or %0D in the input is escaped, not passed through" \
   '::notice title=%250A::%250D' notice '%0A' '%0D'
 expect "a trailing LF in a value is escaped, not dropped" \
   '::warning title=t%0A::m%0A' warning $'t\n' $'m\n'

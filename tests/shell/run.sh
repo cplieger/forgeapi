@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Shell unit tests for the workflow-command helper the workflows write every
-# annotation and mask through. The Go suite cannot reach it: it runs only inside
-# a workflow, where a value it fails to escape ends the command line and starts
-# a second workflow command.
+# Shell unit tests for .github/scripts/workflow-command.sh, which writes every
+# workflow command that carries a value. The Go suite cannot reach it: it runs
+# only inside a workflow, where a value it fails to escape ends the command line
+# and starts a second workflow command.
 set -u
 
 cd -- "$(dirname -- "$0")" || exit 1
