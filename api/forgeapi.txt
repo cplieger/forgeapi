@@ -721,6 +721,8 @@ type DeviceGrant struct {
 }
 func (g *DeviceGrant) Close()
 func (g *DeviceGrant) Poll(ctx context.Context) (Record, bool, error)
+var ErrDirNotPrivate = credfile.ErrNotPrivate
+var ErrDirNotSynced = credfile.ErrNotSynced
 type FileStore struct {
 	// contains unexported members
 }

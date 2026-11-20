@@ -38,6 +38,8 @@ A rotation whose write to the store fails keeps the new pair in memory. That cal
 
 `creds.OpenFileStore` keeps every record in one file at mode 0600, in a directory at mode 0700 that the process owns.
 
+A directory with group or other access, or owned by another user, is refused with an error matching `creds.ErrDirNotPrivate`, when the store opens and at every later read or write. The store never repairs a directory it did not create. An `OpenFileStore` error matching `creds.ErrDirNotSynced` means the directory is in place and its parent could not be synced, so calling `OpenFileStore` again is safe.
+
 To keep the records in storage of your own, such as an encrypted database, implement `creds.Backend` and pass it to `creds.NewStore`. The library keeps the refresh custody around your backend: one rotation per key, a rotated pair your backend could not take, and a mark it still owes. Your backend supplies five methods:
 
 - `Load`, `Keys`, `Put` and `Delete` read and write records by key.

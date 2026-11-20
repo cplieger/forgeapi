@@ -140,10 +140,22 @@ func (c *custodian) free(r *rotation) {
 	delete(c.custody, r.key)
 }
 
+// ErrDirNotPrivate is a [FileStore] directory refused for granting group or other
+// access, or for another owner. The remedy is the operator's, a directory at 0700
+// this process owns: the store never repairs a directory it did not create.
+var ErrDirNotPrivate = credfile.ErrNotPrivate
+
+// ErrDirNotSynced is an [OpenFileStore] failure that left the directory in place:
+// the sync of its parent, which makes the directory survive a crash, failed, and
+// calling OpenFileStore again is safe.
+var ErrDirNotSynced = credfile.ErrNotSynced
+
 // FileStore is the [Store] over one file, credentials.json at mode 0600, in a
 // directory at mode 0700 this process owns. Every read re-reads the file, so two
 // stores on one directory, a server's and a git credential helper's, each read what
-// the other last wrote. It is safe for concurrent use.
+// the other last wrote. It is safe for concurrent use. Every read and write checks
+// the directory again first, and fails with [ErrDirNotPrivate] once it grants group
+// or other access or has another owner.
 type FileStore struct {
 	store *custodian
 }
@@ -151,9 +163,9 @@ type FileStore struct {
 var _ Store = (*FileStore)(nil)
 
 // OpenFileStore opens the store in dir, an absolute path, creating that one
-// directory level at 0700 where it is absent. A directory with group or other
-// access, or owned by another user, is refused, then and at every later read or
-// write. It reads the logger and the counters from opts.
+// directory level at 0700 where absent and refusing one with group or other access
+// or another owner ([ErrDirNotPrivate]). After [ErrDirNotSynced] calling it again
+// is safe. It reads the logger and the counters from opts.
 //
 // Exactly one process may refresh from a directory, the one calling
 // [StoredSource.Token]; readers such as the git credential helper may share it.
